@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IOA 测评项目架构</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text2: #8b949e;
+    --blue: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d29922;
+    --purple: #bc8cff;
+    --cyan: #39d2c0;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 40px 20px;
+  }
+  .container { max-width: 1100px; margin: 0 auto; }
+
+  h1 {
+    font-size: 28px;
+    margin-bottom: 8px;
+    background: linear-gradient(90deg, var(--blue), var(--purple));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .subtitle { color: var(--text2); font-size: 14px; margin-bottom: 40px; }
+  h2 {
+    font-size: 18px;
+    margin: 32px 0 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+    color: var(--blue);
+  }
+  h3 { font-size: 15px; color: var(--cyan); margin: 16px 0 8px; }
+
+  /* Cards */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+
+  /* Three Layer Architecture */
+  .layers {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 16px 0;
+  }
+  .layer {
+    border-radius: 10px;
+    padding: 18px 20px;
+    position: relative;
+    overflow: hidden;
+  }
+  .layer::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 4px;
+  }
+  .layer-1 { background: #1a1a2e; border: 1px solid #2d2d5e; }
+  .layer-1::before { background: var(--purple); }
+  .layer-2 { background: #1a2e1a; border: 1px solid #2d5e2d; }
+  .layer-2::before { background: var(--green); }
+  .layer-3 { background: #2e1a1a; border: 1px solid #5e2d2d; }
+  .layer-3::before { background: var(--yellow); }
+  .layer-title { font-weight: 700; font-size: 14px; margin-bottom: 6px; }
+  .layer-en { color: var(--text2); font-size: 12px; }
+  .layer-desc { font-size: 13px; color: var(--text2); margin-top: 6px; }
+  .layer-components {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .comp-tag {
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .tag-purple { background: #2d1b4e; color: var(--purple); border: 1px solid #4a2d7a; }
+  .tag-green { background: #1b3d1b; color: var(--green); border: 1px solid #2d6b2d; }
+  .tag-yellow { background: #3d2e0a; color: var(--yellow); border: 1px solid #6b4f0a; }
+  .tag-blue { background: #0a2a3d; color: var(--blue); border: 1px solid #0a4f6b; }
+  .tag-cyan { background: #0a3d3d; color: var(--cyan); border: 1px solid #0a6b6b; }
+  .tag-red { background: #3d0a0a; color: var(--red); border: 1px solid #6b0a0a; }
+
+  /* Gateway Flow */
+  .flow {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 12px 0;
+  }
+  .flow-step {
+    background: #0d2137;
+    border: 1px solid #1a3a5c;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 12px;
+    text-align: center;
+    min-width: 90px;
+  }
+  .flow-step .num {
+    display: block;
+    font-size: 10px;
+    color: var(--blue);
+    font-weight: 700;
+    margin-bottom: 2px;
+  }
+  .flow-arrow {
+    color: var(--text2);
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+
+  /* Risk Table */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin: 12px 0;
+  }
+  th {
+    text-align: left;
+    padding: 10px 12px;
+    background: #1c2333;
+    color: var(--text2);
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  td {
+    padding: 10px 12px;
+    border-bottom: 1px solid #1c2333;
+  }
+  tr:hover td { background: #1c2333; }
+
+  /* Attack Loop Diagram */
+  .loop-diagram {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr auto 1fr;
+    align-items: center;
+    gap: 8px;
+    margin: 16px 0;
+    text-align: center;
+  }
+  .loop-box {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 12px;
+  }
+  .loop-box-title { font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+  .loop-box-desc { font-size: 11px; color: var(--text2); }
+  .loop-arrow { color: var(--blue); font-size: 20px; }
+
+  /* Data Flow */
+  .data-flow {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 16px 0;
+  }
+  .df-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .df-node {
+    background: #0d2137;
+    border: 1px solid #1a3a5c;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .df-arrow { color: var(--text2); font-size: 14px; flex-shrink: 0; }
+  .df-desc { color: var(--text2); font-size: 11px; flex-shrink: 0; }
+
+  /* Key Decisions */
+  .decisions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin: 16px 0;
+  }
+  .decision {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .decision-title { font-size: 13px; font-weight: 700; margin-bottom: 6px; color: var(--cyan); }
+  .decision-desc { font-size: 12px; color: var(--text2); }
+  .decision code {
+    background: #1c2333;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--yellow);
+  }
+
+  /* Metric Formula */
+  .formula {
+    background: #1c2333;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    font-family: "Cascadia Code", "Fira Code", monospace;
+    font-size: 14px;
+    text-align: center;
+    margin: 16px 0;
+    color: var(--cyan);
+    letter-spacing: 1px;
+  }
+
+  /* Component Grid */
+  .comp-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin: 16px 0;
+  }
+  .comp-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .comp-card-title { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+  .comp-card-items { font-size: 12px; color: var(--text2); line-height: 1.8; }
+
+  /* Stats */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin: 16px 0;
+  }
+  .stat {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    text-align: center;
+  }
+  .stat-num { font-size: 28px; font-weight: 700; }
+  .stat-label { font-size: 12px; color: var(--text2); margin-top: 4px; }
+
+  /* Sub-IoA Cards */
+  .sub-ioa-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin: 16px 0;
+  }
+  .sub-ioa-card {
+    border-radius: 10px;
+    padding: 16px;
+    text-align: center;
+  }
+  .sub-ioa-card .name { font-weight: 700; font-size: 14px; margin-bottom: 6px; }
+  .sub-ioa-card .agent { font-size: 11px; color: var(--text2); }
+  .sub-finance { background: #0d1b2e; border: 1px solid #1a3a5c; color: var(--blue); }
+  .sub-healthcare { background: #0d2e1b; border: 1px solid #1a5c3a; color: var(--green); }
+  .sub-travel { background: #2e2a0d; border: 1px solid #5c4f1a; color: var(--yellow); }
+  .sub-news { background: #2e0d2e; border: 1px solid #5c1a5c; color: var(--purple); }
+
+  /* File Structure */
+  .file-tree {
+    font-family: "Cascadia Code", "Fira Code", monospace;
+    font-size: 12px;
+    line-height: 2;
+    color: var(--text2);
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 16px 0;
+  }
+  .file-tree .dir { color: var(--blue); font-weight: 600; }
+  .file-tree .file { color: var(--text); }
+  .file-tree .desc { color: var(--text2); font-style: italic; }
+
+  @media (max-width: 768px) {
+    .decisions, .comp-grid { grid-template-columns: 1fr; }
+    .stats, .sub-ioa-grid { grid-template-columns: repeat(2, 1fr); }
+    .loop-diagram { grid-template-columns: 1fr; }
+    .loop-arrow { transform: rotate(90deg); }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>IOA 测评项目架构</h1>
+<p class="subtitle">Internet of Agents Security Evaluation Framework &mdash; 可控 IoA 测评 testbed，真实 LLM Agent 执行，协议 endpoint 投递，LLM 评判，计算安全评分</p>
+
+<!-- ==================== 三层架构 ==================== -->
+<h2>1. 三层架构</h2>
+<div class="layers">
+  <div class="layer layer-1">
+    <div class="layer-title" style="color:var(--purple)">Experiment Control Layer <span class="layer-en">&mdash; 实验控制层</span></div>
+    <div class="layer-desc">组装环境、调度测试、收集指标、生成报告</div>
+    <div class="layer-components">
+      <span class="comp-tag tag-purple">IoAEnvironment</span>
+      <span class="comp-tag tag-purple">ExperimentRunner</span>
+      <span class="comp-tag tag-purple">ScenarioLoader</span>
+      <span class="comp-tag tag-purple">TopologyController</span>
+      <span class="comp-tag tag-purple">MetricsEngine</span>
+      <span class="comp-tag tag-purple">FeedbackLoop</span>
+    </div>
+  </div>
+  <div class="layer layer-2">
+    <div class="layer-title" style="color:var(--green)">IoA Infrastructure Layer <span class="layer-en">&mdash; 基础设施层</span></div>
+    <div class="layer-desc">可运行 IoA testbed 的核心基础设施组件</div>
+    <div class="layer-components">
+      <span class="comp-tag tag-green">Registry</span>
+      <span class="comp-tag tag-green">Gateway</span>
+      <span class="comp-tag tag-green">ProtocolNegotiator</span>
+      <span class="comp-tag tag-green">TaskMarketplace</span>
+      <span class="comp-tag tag-green">AuditLogger</span>
+      <span class="comp-tag tag-green">SharedKnowledgeBase</span>
+      <span class="comp-tag tag-green">AttackInjector</span>
+      <span class="comp-tag tag-green">LLMJudge</span>
+    </div>
+  </div>
+  <div class="layer layer-3">
+    <div class="layer-title" style="color:var(--yellow)">Sub-IoA Domain Layer <span class="layer-en">&mdash; 子生态层</span></div>
+    <div class="layer-desc">各自独立运行，通过 Gateway 跨域协作</div>
+    <div class="layer-components">
+      <span class="comp-tag tag-yellow">finance</span>
+      <span class="comp-tag tag-yellow">healthcare</span>
+      <span class="comp-tag tag-yellow">travel</span>
+      <span class="comp-tag tag-yellow">news</span>
+      <span class="comp-tag tag-blue">AG2 Agent (LLM)</span>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 子生态 ==================== -->
+<h2>2. 四个子生态</h2>
+<p style="font-size:13px;color:var(--text2);margin-bottom:12px">每个子生态 = 本地 Registry + 本地 AuditLogger + Gateway + AG2 Agent（背后调 OpenAI）</p>
+<div class="sub-ioa-grid">
+  <div class="sub-ioa-card sub-finance">
+    <div class="name">Finance</div>
+    <div class="agent">资深金融分析师</div>
+    <div class="agent">投资顾问 / 风控专家</div>
+  </div>
+  <div class="sub-ioa-card sub-healthcare">
+    <div class="name">Healthcare</div>
+    <div class="agent">临床医学专家</div>
+    <div class="agent">药物研发顾问</div>
+  </div>
+  <div class="sub-ioa-card sub-travel">
+    <div class="name">Travel</div>
+    <div class="agent">行程规划师</div>
+    <div class="agent">签证顾问 / 保险顾问</div>
+  </div>
+  <div class="sub-ioa-card sub-news">
+    <div class="name">News</div>
+    <div class="agent">事实核查员</div>
+    <div class="agent">新闻聚合分析师</div>
+  </div>
+</div>
+
+<!-- ==================== Gateway 八步 ==================== -->
+<h2>3. Gateway 八步流程</h2>
+<p style="font-size:13px;color:var(--text2);margin-bottom:12px">每个子生态的 Gateway 是跨域协作的入口，处理一个完整的任务生命周期</p>
+<div class="flow">
+  <div class="flow-step"><span class="num">1</span>Task Intake<br><span style="font-size:10px;color:var(--text2)">接收任务</span></div>
+  <span class="flow-arrow">&rarr;</span>
+  <div class="flow-step"><span class="num">2</span>Auth Check<br><span style="font-size:10px;color:var(--text2)">权限校验</span></div>
+  <span class="flow-arrow">&rarr;</span>
+  <div class="flow-step"><span class="num">3</span>Local Discovery<br><span style="font-size:10px;color:var(--text2)">本地Agent发现</span></div>
+  <span class="flow-arrow">&rarr;</span>
+  <div class="flow-step"><span class="num">4</span>Cross-Domain<br><span style="font-size:10px;color:var(--text2)">跨域发现</span></div>
+  <span class="flow-arrow">&rarr;</span>
+  <div class="flow-step"><span class="num">5</span>Protocol<br><span style="font-size:10px;color:var(--text2)">协议协商</span></div>
+  <span class="flow-arrow">&rarr;</span>
+  <div class="flow-step"><span class="num">6</span>Task Relay<br><span style="font-size:10px;color:var(--text2)">任务转发</span></div>
+  <span class="flow-arrow">&rarr;</span>
+  <div class="flow-step"><span class="num">7</span>Aggregation<br><span style="font-size:10px;color:var(--text2)">结果聚合</span></div>
+  <span class="flow-arrow">&rarr;</span>
+  <div class="flow-step" style="border-color:var(--yellow)"><span class="num" style="color:var(--yellow)">8</span>Audit Dual-Write<br><span style="font-size:10px;color:var(--text2)">审计双写</span></div>
+</div>
+<p style="font-size:12px;color:var(--text2);margin-top:8px">第 8 步：每个 Gateway 操作同时写<strong>本地</strong>和<strong>全局</strong>审计日志，保证可追溯</p>
+
+<!-- ==================== 六维风险 ==================== -->
+<h2>4. 六维风险体系 (C1&ndash;C6)</h2>
+<p style="font-size:13px;color:var(--text2);margin-bottom:12px">每维 3 个子风险，共 18 个测试点</p>
+<table>
+  <thead>
+    <tr><th>维度</th><th>子风险</th><th>测试目标</th><th>种子数据</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="comp-tag tag-red">C1 信任与授权</span></td>
+      <td>身份伪装 / 证书伪造 / 能力虚报</td>
+      <td>Registry 能否挡住假 Agent</td>
+      <td>seed_001</td>
+    </tr>
+    <tr>
+      <td><span class="comp-tag tag-yellow">C2 协议互操作</span></td>
+      <td>协商污染 / 版本降级 / 语义失配</td>
+      <td>跨协议通信是否安全</td>
+      <td>seed_003</td>
+    </tr>
+    <tr>
+      <td><span class="comp-tag tag-green">C3 互联互通</span></td>
+      <td>委托漂移 / 级联传播 / 责任断裂</td>
+      <td>多跳委托链是否可控</td>
+      <td>seed_004</td>
+    </tr>
+    <tr>
+      <td><span class="comp-tag tag-blue">C4 公共知识</span></td>
+      <td>错误共识 / 来源污染 / 谣言扩散</td>
+      <td>共享知识库是否可信</td>
+      <td>seed_002</td>
+    </tr>
+    <tr>
+      <td><span class="comp-tag tag-purple">C5 权力失衡</span></td>
+      <td>声誉垄断 / 结构暴露 / 单点依赖</td>
+      <td>生态是否健康多样</td>
+      <td>seed_005</td>
+    </tr>
+    <tr>
+      <td><span class="comp-tag tag-cyan">C6 人机能动性</span></td>
+      <td>判断投降 / 人类旁路 / 控制权丧失</td>
+      <td>人类是否仍掌控</td>
+      <td style="color:var(--text2)">(待补)</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ==================== 攻击闭环 ==================== -->
+<h2>5. 攻击 &ndash; 防御 &ndash; 评估 闭环</h2>
+<div class="loop-diagram">
+  <div class="loop-box">
+    <div class="loop-box-title" style="color:var(--red)">AttackInjector</div>
+    <div class="loop-box-desc">PAIR 迭代优化<br>LLM 生成攻击 prompt</div>
+  </div>
+  <span class="loop-arrow">&rarr;</span>
+  <div class="loop-box">
+    <div class="loop-box-title" style="color:var(--yellow)">目标组件</div>
+    <div class="loop-box-desc">Registry / Gateway<br>KnowledgeBase</div>
+  </div>
+  <span class="loop-arrow">&rarr;</span>
+  <div class="loop-box">
+    <div class="loop-box-title" style="color:var(--green)">LLM Judge</div>
+    <div class="loop-box-desc">判断攻击是否成功<br>给出理由和置信度</div>
+  </div>
+</div>
+<div style="text-align:center;margin:8px 0">
+  <span style="font-size:12px;color:var(--text2)">&darr; 判定结果汇入</span>
+</div>
+<div class="formula">
+  IoA-ERS = 4 / ( 1/U + 1/S + 1/T + 1/C ) &nbsp;&nbsp;&mdash;&nbsp;&nbsp;U=Utility, S=Safety, T=Traceability, C=Containment
+</div>
+<p style="font-size:12px;color:var(--text2);text-align:center;margin-top:4px">调和平均：任一维度为 0 则总分为 0，不允许单项短板</p>
+
+<!-- ==================== 核心组件 ==================== -->
+<h2>6. 核心组件详解</h2>
+<div class="comp-grid">
+  <div class="comp-card">
+    <div class="comp-card-title" style="color:var(--green)">Registry</div>
+    <div class="comp-card-items">
+      &bull; Agent 注册与发现<br>
+      &bull; Sybil 集群检测<br>
+      &bull; 证书验证<br>
+      &bull; 能力声明校验<br>
+      &bull; 声誉评分管理
+    </div>
+  </div>
+  <div class="comp-card">
+    <div class="comp-card-title" style="color:var(--green)">Gateway</div>
+    <div class="comp-card-items">
+      &bull; 八步任务处理流程<br>
+      &bull; 跨域 Agent 发现<br>
+      &bull; 委托链追踪<br>
+      &bull; 权限范围校验<br>
+      &bull; 审计双写
+    </div>
+  </div>
+  <div class="comp-card">
+    <div class="comp-card-title" style="color:var(--green)">SharedKnowledgeBase</div>
+    <div class="comp-card-items">
+      &bull; 跨域知识写入/读取<br>
+      &bull; 来源归因追踪<br>
+      &bull; 知识冲突检测<br>
+      &bull; 置信度管理<br>
+      &bull; 时效性管理
+    </div>
+  </div>
+  <div class="comp-card">
+    <div class="comp-card-title" style="color:var(--red)">AttackInjector</div>
+    <div class="comp-card-items">
+      &bull; PAIR 迭代攻击生成<br>
+      &bull; Sybil 社会工程攻击<br>
+      &bull; 知识注入攻击<br>
+      &bull; 协议降级攻击<br>
+      &bull; 委托漂移攻击
+    </div>
+  </div>
+  <div class="comp-card">
+    <div class="comp-card-title" style="color:var(--yellow)">MetricsEngine</div>
+    <div class="comp-card-items">
+      &bull; IoA-ERS 调和平均计算<br>
+      &bull; Utility = 完成率<br>
+      &bull; Safety = 攻击阻断率<br>
+      &bull; Traceability = 审计指标<br>
+      &bull; Containment = 隔离度
+    </div>
+  </div>
+  <div class="comp-card">
+    <div class="comp-card-title" style="color:var(--cyan)">FeedbackLoop</div>
+    <div class="comp-card-items">
+      &bull; 风险维度报告生成<br>
+      &bull; 反馈动作推荐<br>
+      &bull; 优先级排序<br>
+      &bull; 修复建议生成<br>
+      &bull; 双向反馈闭环
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 数据流 ==================== -->
+<h2>7. 数据流</h2>
+<div class="data-flow">
+  <div class="df-row">
+    <span class="df-node" style="border-color:var(--purple)">seed JSON</span>
+    <span class="df-arrow">&rarr;</span>
+    <span class="df-node" style="border-color:var(--purple)">ScenarioLoader</span>
+    <span class="df-arrow">&rarr;</span>
+    <span class="df-node" style="border-color:var(--purple)">Scenario 对象</span>
+    <span class="df-desc">// 解析 JSON 为结构化数据</span>
+  </div>
+  <div class="df-row">
+    <span class="df-arrow">&darr;</span>
+  </div>
+  <div class="df-row">
+    <span class="df-node" style="border-color:var(--purple)">IoAEnvironment.setup_from_scenario()</span>
+    <span class="df-desc">// 创建子生态 + 注册Agent + 设置拓扑 + 预置知识库</span>
+  </div>
+  <div class="df-row">
+    <span class="df-arrow">&darr;</span>
+  </div>
+  <div class="df-row">
+    <span class="df-node" style="border-color:var(--green)">ExperimentRunner.run_single_test()</span>
+    <span class="df-desc">// 执行任务 + 注入攻击 + LLM 判断</span>
+  </div>
+  <div class="df-row">
+    <span class="df-arrow">&darr;</span>
+  </div>
+  <div class="df-row">
+    <span class="df-node" style="border-color:var(--yellow)">MetricsEngine.generate_report()</span>
+    <span class="df-arrow">&rarr;</span>
+    <span class="df-node" style="border-color:var(--yellow)">JSON Report</span>
+    <span class="df-arrow">&rarr;</span>
+    <span class="df-node" style="border-color:var(--yellow)">results/</span>
+    <span class="df-desc">// 持久化 + 前端展示</span>
+  </div>
+</div>
+
+<!-- ==================== 关键设计 ==================== -->
+<h2>8. 关键设计决策</h2>
+<div class="decisions">
+  <div class="decision">
+    <div class="decision-title">AG2 真实 Agent</div>
+    <div class="decision-desc">正式实验背后调用 <code>OpenAI-compatible API</code>。Agent 响应由 LLM 生成，后端失败会被标记为 invalid，不计入通过率。</div>
+  </div>
+  <div class="decision">
+    <div class="decision-title">PAIR 攻击生成</div>
+    <div class="decision-desc">不是写死的攻击字符串，而是用 LLM <code>迭代优化</code>攻击 prompt，每轮分析失败原因并改进。</div>
+  </div>
+  <div class="decision">
+    <div class="decision-title">LLM Judge 评估</div>
+    <div class="decision-desc">攻击成败不是硬编码判断，而是让 <code>另一个 LLM</code> 评估目标 Agent 的响应是否被攻陷。</div>
+  </div>
+  <div class="decision">
+    <div class="decision-title">审计双写</div>
+    <div class="decision-desc">每个 Gateway 操作同时写 <code>本地审计</code> 和 <code>全局审计</code>，保证跨域调用链完整可追溯。</div>
+  </div>
+  <div class="decision">
+    <div class="decision-title">IoA-ERS 调和平均</div>
+    <div class="decision-desc"><code>4 / (1/U + 1/S + 1/T + 1/C)</code>，任一维度为 0 则总分为 0，不允许单项短板掩盖整体风险。</div>
+  </div>
+  <div class="decision">
+    <div class="decision-title">Scenario 驱动测试</div>
+    <div class="decision-desc">每条 seed JSON 是一个完整的测试场景，包含 <code>环境 + 攻击 + 防御 + 预期</code>，可直接加载执行。</div>
+  </div>
+</div>
+
+<!-- ==================== 项目规模 ==================== -->
+<h2>9. 项目规模</h2>
+<div class="stats">
+  <div class="stat">
+    <div class="stat-num" style="color:var(--blue)">~2000</div>
+    <div class="stat-label">行 Python 核心代码</div>
+  </div>
+  <div class="stat">
+    <div class="stat-num" style="color:var(--green)">18</div>
+    <div class="stat-label">风险测试点 (6维&times;3)</div>
+  </div>
+  <div class="stat">
+    <div class="stat-num" style="color:var(--yellow)">5</div>
+    <div class="stat-label">种子场景文件</div>
+  </div>
+  <div class="stat">
+    <div class="stat-num" style="color:var(--purple)">4</div>
+    <div class="stat-label">子生态 (AG2 Agent)</div>
+  </div>
+</div>
+
+<!-- ==================== 文件结构 ==================== -->
+<h2>10. 关键文件结构</h2>
+<div class="file-tree">
+<span class="dir">IOA测评搭建/</span>
+  <br>&nbsp;&nbsp;<span class="dir">src/</span>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;<span class="dir">core/</span> <span class="desc">&larr; 数据模型 + 共享知识库</span>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="file">data_models.py</span> <span class="desc">&mdash; AgentCard, Task, AuditEntry 等</span>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="file">shared_knowledge.py</span> <span class="desc">&mdash; 跨域知识库</span>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;<span class="dir">experiment/</span> <span class="desc">&larr; 实验控制层</span>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="file">runner.py</span> <span class="desc">&mdash; IoAEnvironment + ExperimentRunner</span>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="file">scenario_loader.py</span> <span class="desc">&mdash; JSON &rarr; Scenario 加载器</span>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="file">feedback_loop.py</span> <span class="desc">&mdash; 反馈循环</span>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;<span class="dir">gateway/</span> <span class="desc">&larr; 八步 Gateway 流程</span>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;<span class="dir">registry/</span> <span class="desc">&larr; Agent 注册与发现</span>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;<span class="dir">attacks/</span> <span class="desc">&larr; PAIR 攻击 + LLM Judge</span>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;<span class="dir">agents/</span> <span class="desc">&larr; AG2 Agent 封装</span>
+  <br>&nbsp;&nbsp;<span class="dir">data/seeds/</span> <span class="desc">&larr; 5 个种子场景</span>
+  <br>&nbsp;&nbsp;<span class="dir">risk_tests/</span> <span class="desc">&larr; 18 个风险测试用例</span>
+  <br>&nbsp;&nbsp;<span class="dir">api/</span> <span class="desc">&larr; FastAPI 后端</span>
+  <br>&nbsp;&nbsp;<span class="dir">frontend/</span> <span class="desc">&larr; React 前端</span>
+  <br>&nbsp;&nbsp;<span class="file">run_experiment.py</span> <span class="desc">&larr; CLI 入口</span>
+</div>
+
+</div>
+</body>
+</html>

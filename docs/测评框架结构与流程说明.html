@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IoA 层智能体安全测评框架结构与流程说明</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --ink: #182230;
+      --muted: #667085;
+      --line: #d9e2ec;
+      --blue: #2563eb;
+      --cyan: #0891b2;
+      --green: #16803c;
+      --amber: #b7791f;
+      --red: #c2413d;
+      --violet: #6d28d9;
+      --soft-blue: #eaf2ff;
+      --soft-cyan: #e7f7fb;
+      --soft-green: #e9f7ef;
+      --soft-amber: #fff4da;
+      --soft-red: #fff0ee;
+      --soft-violet: #f3edff;
+      --code: #0f172a;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+      line-height: 1.72;
+    }
+
+    .page {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 32px 24px 56px;
+    }
+
+    header {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 28px;
+      margin-bottom: 20px;
+    }
+
+    .eyebrow {
+      color: var(--blue);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0;
+      margin-bottom: 8px;
+    }
+
+    h1 {
+      font-size: 30px;
+      line-height: 1.25;
+      margin: 0 0 12px;
+    }
+
+    .subtitle {
+      max-width: 920px;
+      color: var(--muted);
+      font-size: 15px;
+      margin: 0;
+    }
+
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    .meta div {
+      background: #f8fafc;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      min-height: 76px;
+    }
+
+    .meta strong {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .meta span {
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 20px;
+    }
+
+    nav a {
+      color: var(--ink);
+      text-decoration: none;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 7px 11px;
+      font-size: 13px;
+    }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 24px;
+      margin: 16px 0;
+    }
+
+    h2 {
+      font-size: 21px;
+      margin: 0 0 14px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h3 {
+      font-size: 16px;
+      margin: 18px 0 8px;
+    }
+
+    p { margin: 8px 0; }
+
+    .lead {
+      font-size: 16px;
+      color: #344054;
+    }
+
+    .grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+    .box {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #fbfdff;
+    }
+
+    .box strong {
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .tag {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      font-weight: 700;
+      margin-right: 6px;
+      margin-bottom: 5px;
+      border: 1px solid transparent;
+    }
+
+    .blue { background: var(--soft-blue); color: var(--blue); border-color: #bed5ff; }
+    .cyan { background: var(--soft-cyan); color: var(--cyan); border-color: #bdeaf3; }
+    .green { background: var(--soft-green); color: var(--green); border-color: #bdebd0; }
+    .amber { background: var(--soft-amber); color: var(--amber); border-color: #f6dda0; }
+    .red { background: var(--soft-red); color: var(--red); border-color: #ffc7c1; }
+    .violet { background: var(--soft-violet); color: var(--violet); border-color: #d8c8ff; }
+
+    code {
+      color: var(--code);
+      background: #edf2f7;
+      border: 1px solid #dbe4ee;
+      border-radius: 5px;
+      padding: 1px 5px;
+      font-family: Consolas, "SFMono-Regular", Menlo, monospace;
+      font-size: 12px;
+    }
+
+    .diagram {
+      display: grid;
+      gap: 10px;
+      margin: 14px 0;
+    }
+
+    .layer {
+      border: 1px solid var(--line);
+      border-left: 6px solid var(--blue);
+      border-radius: 8px;
+      padding: 14px;
+      background: #fbfdff;
+    }
+
+    .layer:nth-child(2) { border-left-color: var(--green); }
+    .layer:nth-child(3) { border-left-color: var(--amber); }
+
+    .layer-title {
+      font-size: 16px;
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+      align-items: stretch;
+      margin: 14px 0;
+    }
+
+    .step {
+      min-height: 94px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      background: #fbfdff;
+      position: relative;
+    }
+
+    .step::after {
+      content: "→";
+      position: absolute;
+      right: -13px;
+      top: 35%;
+      color: var(--muted);
+      font-weight: 800;
+      z-index: 1;
+    }
+
+    .step:nth-child(5n)::after,
+    .step:last-child::after { display: none; }
+
+    .step b {
+      display: block;
+      font-size: 13px;
+      color: var(--blue);
+      margin-bottom: 4px;
+    }
+
+    .step span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0;
+      font-size: 13px;
+    }
+
+    th, td {
+      border: 1px solid var(--line);
+      padding: 8px 9px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f1f5f9;
+      font-weight: 800;
+    }
+
+    tbody tr:nth-child(even) td { background: #fbfdff; }
+
+    .note {
+      border-left: 4px solid var(--cyan);
+      background: var(--soft-cyan);
+      border-radius: 8px;
+      padding: 12px 14px;
+      color: #164e63;
+      margin: 12px 0;
+    }
+
+    .status {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .status .box {
+      background: var(--soft-green);
+      border-color: #bdebd0;
+    }
+
+    .status strong { color: var(--green); }
+
+    ul {
+      margin: 8px 0 8px 20px;
+      padding: 0;
+    }
+
+    li { margin: 4px 0; }
+
+    footer {
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+      margin-top: 22px;
+    }
+
+    @media (max-width: 900px) {
+      .meta, .grid.two, .grid.three, .grid.four, .status { grid-template-columns: 1fr; }
+      .flow { grid-template-columns: 1fr; }
+      .step::after { display: none; }
+      .page { padding: 18px 14px 36px; }
+      header, section { padding: 18px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header>
+      <div class="eyebrow">IoA Layer Evaluation Framework v0.1</div>
+      <h1>IoA 层智能体安全测评框架结构、内部实现与整体流程</h1>
+      <p class="subtitle">
+        本页面用于说明当前 IOA 测评搭建项目的可交付内容：它不是单一 Agent 的能力测试，而是面向开放智能体生态的安全测评环境。框架通过 Sub-IoA 子生态、注册发现、网关协同、协议适配、共享知识、审计链路、攻击注入和 LLM Judge，把“开放生态中的安全风险”转化为可运行、可记录、可复现实验。
+      </p>
+      <div class="meta">
+        <div><strong>项目定位</strong><span>Agent 安全层级中的 IoA 层</span></div>
+        <div><strong>核心对象</strong><span>开放智能体生态协作风险</span></div>
+        <div><strong>当前覆盖</strong><span>6 类风险 × 3 个子风险</span></div>
+        <div><strong>交付形态</strong><span>代码框架 + seed 场景 + 报告 + 前端</span></div>
+      </div>
+    </header>
+
+    <nav>
+      <a href="#position">定位</a>
+      <a href="#architecture">三层架构</a>
+      <a href="#modules">内部模块</a>
+      <a href="#flow">整体流程</a>
+      <a href="#gateway">网关流程</a>
+      <a href="#risk-matrix">风险矩阵</a>
+      <a href="#report">结果报告</a>
+      <a href="#status">当前状态</a>
+      <a href="#next">后续完善</a>
+    </nav>
+
+    <section id="position">
+      <h2>一、框架定位：为什么要单独做 IoA 层测评</h2>
+      <p class="lead">
+        IoA 层关注的是多个异构智能体系统连接之后产生的生态级风险。传统单 Agent 安全测评通常检查模型输出是否有害、工具调用是否越权、单次任务是否成功；而 IoA 场景中，风险往往来自跨域发现、身份信任、协议转换、委托链路、共享知识污染、声誉机制操纵、群体讨论偏移等“系统交互效应”。
+      </p>
+      <div class="grid three">
+        <div class="box">
+          <strong>不是普通 MAS Demo</strong>
+          当前框架强调开放生态中的动态注册、跨域发现和异构协议，而不是预先写死的多智能体协作脚本。
+        </div>
+        <div class="box">
+          <strong>不是只测模型回答</strong>
+          风险判断同时看任务结果、审计链、授权范围、注册信息、知识库冲突、协议协商和攻击后状态变化。
+        </div>
+        <div class="box">
+          <strong>面向论文实验</strong>
+          每条 seed 场景都对应风险维度、攻击方法、防御要求、预期指标，便于后续扩展为 benchmark 和消融实验。
+        </div>
+      </div>
+      <div class="note">
+        对学长可以这样概括：本项目已经把“IoA 层风险分类”落成了一个可运行测评框架，能把风险 taxonomy 里的 18 个子风险映射为场景、攻击、执行链路和实验报告。
+      </div>
+    </section>
+
+    <section id="architecture">
+      <h2>二、总体三层架构</h2>
+      <div class="diagram">
+        <div class="layer">
+          <div class="layer-title">1. 实验控制层 Experiment Control Layer</div>
+          <p>
+            负责实验编排、拓扑控制、场景加载、攻击注入、指标计算、LLM Judge 判定和报告生成。核心入口集中在 <code>src/experiment/runner.py</code> 与 <code>run_experiment.py</code>。
+          </p>
+          <span class="tag blue">IoAEnvironment</span>
+          <span class="tag blue">ExperimentRunner</span>
+          <span class="tag blue">TopologyController</span>
+          <span class="tag blue">MetricsEngine</span>
+          <span class="tag blue">AttackInjector</span>
+          <span class="tag blue">LLMJudge</span>
+        </div>
+        <div class="layer">
+          <div class="layer-title">2. IoA 基础设施层 IoA Infrastructure Layer</div>
+          <p>
+            提供开放智能体生态的公共基础设施，包括全局注册表、任务市场、协议协商与适配、共享知识库、全局审计日志。它构成可控 IoA testbed，用于复现不同 Sub-IoA 之间通过基础设施互联后的安全行为。
+          </p>
+          <span class="tag green">Global Registry</span>
+          <span class="tag green">Task Marketplace</span>
+          <span class="tag green">Protocol Adapter</span>
+          <span class="tag green">Shared Knowledge Base</span>
+          <span class="tag green">Global Audit Logger</span>
+        </div>
+        <div class="layer">
+          <div class="layer-title">3. 子生态层 Sub-IoA Layer</div>
+          <p>
+            每个 Sub-IoA 表示一个局部智能体生态，例如金融、医疗、旅行、新闻。每个子生态拥有本地注册表、本地审计、唯一网关和若干 Agent，外部请求必须经由 Gateway 进入。
+          </p>
+          <span class="tag amber">Finance</span>
+          <span class="tag amber">Healthcare</span>
+          <span class="tag amber">Travel</span>
+          <span class="tag amber">News</span>
+          <span class="tag amber">Local Registry</span>
+          <span class="tag amber">Gateway</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="modules">
+      <h2>三、内部实现模块</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>模块</th>
+            <th>主要文件</th>
+            <th>内部职责</th>
+            <th>在测评中的作用</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>实验环境与运行器</td>
+            <td><code>src/experiment/runner.py</code><br><code>run_experiment.py</code></td>
+            <td>创建全局基础设施、添加 Sub-IoA、注册 Agent/Gateway、运行风险测试、生成报告。</td>
+            <td>把所有模块串成一次完整实验，是命令行测评入口。</td>
+          </tr>
+          <tr>
+            <td>场景加载器</td>
+            <td><code>src/experiment/scenario_loader.py</code></td>
+            <td>把 seed JSON 解析成 <code>Scenario</code>、<code>ScenarioRisk</code>、<code>ScenarioTask</code>、<code>ScenarioAttack</code> 等数据类。</td>
+            <td>实现数据驱动测评，让 benchmark 场景能直接进入环境。</td>
+          </tr>
+          <tr>
+            <td>核心数据模型</td>
+            <td><code>src/core/data_models.py</code></td>
+            <td>定义 <code>AgentCard</code>、<code>Task</code>、<code>TaskResult</code>、<code>Artifact</code>、<code>AuditEntry</code>、<code>TestResult</code> 等。</td>
+            <td>统一 Agent 注册、任务、产物、审计和测试结果的数据格式。</td>
+          </tr>
+          <tr>
+            <td>注册与发现</td>
+            <td><code>src/registry/registry.py</code></td>
+            <td>维护 AgentCard，支持注册、发现、身份校验、声誉分数、能力匹配和可控恶意注册注入。</td>
+            <td>支撑身份伪装、注册表污染、声誉垄断、节点操纵等风险测试。</td>
+          </tr>
+          <tr>
+            <td>网关代理</td>
+            <td><code>src/gateway/gateway.py</code></td>
+            <td>每个 Sub-IoA 的唯一外部入口，执行鉴权、本地发现、跨域发现、协议协商、任务中继、安全检查和审计双写。</td>
+            <td>是 IoA 协作链路的核心，也是跨域授权、协议失配、问责断裂测试的关键观察点。</td>
+          </tr>
+          <tr>
+            <td>任务市场</td>
+            <td><code>src/marketplace/marketplace.py</code></td>
+            <td>支持任务发布、选择网关、执行单域任务、跨域任务、多跳任务和 artifact 复用任务。</td>
+            <td>执行开放生态中任务被分发、委托、转发和复用的流程，并受 topology 与授权策略约束。</td>
+          </tr>
+          <tr>
+            <td>协议适配</td>
+            <td><code>src/protocol/adapters.py</code></td>
+            <td>实现 A2A、MCP、PRIVATE_API 协议适配器、协议协商器和语义失配可控变异器；协议投递走真实 HTTP endpoint。</td>
+            <td>支撑协议协商污染、互操作失配和跨协议问责断裂测试。</td>
+          </tr>
+          <tr>
+            <td>共享知识库</td>
+            <td><code>src/core/shared_knowledge.py</code></td>
+            <td>维护公共知识、来源、置信度、更新时间和冲突检测。</td>
+            <td>用于生态共识污染、谣言传播、规范漂移等公共知识失真风险。</td>
+          </tr>
+          <tr>
+            <td>审计日志</td>
+            <td><code>src/audit/audit_logger.py</code></td>
+            <td>记录调用、发现、授权、协议、产物输入输出、父子 trace，并计算链路完整性等指标。</td>
+            <td>让测评不只看最终回答，还能检查风险在链路中如何出现和传播。</td>
+          </tr>
+          <tr>
+            <td>攻击与裁判</td>
+            <td><code>src/attacks/attack_injector.py</code><br><code>src/attacks/llm_judge.py</code></td>
+            <td>注入攻击行为，并用 LLM Judge 对特定风险类型进行辅助判定。</td>
+            <td>参考 TrinityGuard 式测试思想，将风险转化为攻击任务、判定准则和证据记录。</td>
+          </tr>
+          <tr>
+            <td>风险测试注册表</td>
+            <td><code>risk_tests/registry.py</code></td>
+            <td>统一收集 18 个 IoA 风险测试，并按类别和 test_id 建索引。</td>
+            <td>提供代码级风险测试集，是当前 18/18 验证的来源。</td>
+          </tr>
+          <tr>
+            <td>前端与 API</td>
+            <td><code>api/main.py</code><br><code>frontend/</code></td>
+            <td>提供可视化入口，用于展示测评、场景和结果。</td>
+            <td>支持对外演示和后续交付，不影响核心实验框架。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="flow">
+      <h2>四、整体测评流程</h2>
+      <p>
+        当前框架有两条互补路径：第一条是代码级风险测试路径，直接运行 <code>risk_tests</code> 中的 18 个测试；第二条是数据驱动 benchmark 路径，从 <code>data/seeds/*.json</code> 加载场景，构建环境并执行对应任务。两条路径最终都汇入统一报告。
+      </p>
+
+      <h3>4.1 数据驱动 benchmark 流程</h3>
+      <div class="flow">
+        <div class="step"><b>1. Seed JSON</b><span>每条 seed 描述风险维度、子风险、Sub-IoA、Agent、任务、攻击、防御和预期指标。</span></div>
+        <div class="step"><b>2. ScenarioLoader</b><span>解析为 Scenario 数据类，避免临时字符串拼接，保证字段结构稳定。</span></div>
+        <div class="step"><b>3. setup_from_scenario</b><span>创建子生态、注册 AgentCard、注册 Gateway、加载共享知识和拓扑。</span></div>
+        <div class="step"><b>4. TaskMarketplace</b><span>根据任务类型选择单域、跨域、多跳或 artifact 复用执行方式。</span></div>
+        <div class="step"><b>5. Gateway</b><span>执行鉴权、发现、验证、协议协商、任务中继和安全检查。</span></div>
+        <div class="step"><b>6. Agent 执行</b><span>Gateway 通过协议适配器 POST 到 Agent endpoint；本地 endpoint 再调用对应 AgentCard 的真实 LLM runtime。</span></div>
+        <div class="step"><b>7. Audit & Artifact</b><span>记录任务链路、参与 Agent、协议、授权、输入输出产物和安全状态。</span></div>
+        <div class="step"><b>8. Attack Injector</b><span>在指定组件上注入身份、注册、协议、知识、声誉或人机能动性相关攻击。</span></div>
+        <div class="step"><b>9. Judge & Metrics</b><span>结合规则指标与 LLM Judge，判断攻击是否成功、防御是否生效。</span></div>
+        <div class="step"><b>10. Report</b><span>输出 summary、category_breakdown、test_results、task_results 和反馈建议。</span></div>
+      </div>
+
+      <h3>4.2 代码级风险测试流程</h3>
+      <div class="grid two">
+        <div class="box">
+          <strong>测试入口</strong>
+          <p><code>risk_tests/registry.py</code> 中的 <code>ALL_TESTS</code> 注册 18 个风险测试。运行实验时，Runner 逐个调用测试对象，测试对象操作环境状态并返回 <code>TestResult</code>。</p>
+        </div>
+        <div class="box">
+          <strong>测试输出</strong>
+          <p>每个测试输出是否通过、风险等级、观测指标、证据和说明。最后由 <code>MetricsEngine.generate_report()</code> 汇总到 JSON 报告。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="gateway">
+      <h2>五、Gateway 内部 8 步执行逻辑</h2>
+      <p>
+        Gateway 是当前框架中最能体现 IoA 特征的模块。每个 Sub-IoA 对外只暴露 Gateway，所有跨域调用都必须经过它，因此它天然成为授权、协议、审计和责任归因的控制点。
+      </p>
+      <div class="flow">
+        <div class="step"><b>Step 1 Task Intake</b><span>接收任务，写入调用审计，生成 trace。</span></div>
+        <div class="step"><b>Step 2 Auth Check</b><span>检查 requester 是否存在、是否 active、权限范围是否覆盖任务。</span></div>
+        <div class="step"><b>Step 3 Local Discovery</b><span>在本地 Registry 中按能力搜索候选 Agent。</span></div>
+        <div class="step"><b>Step 4 Cross-Domain</b><span>本地无匹配时转向 Global Registry 跨域发现。</span></div>
+        <div class="step"><b>Step 5 Verify & Rank</b><span>过滤未验证、异常或声誉不足候选，并按优先因子排序。</span></div>
+        <div class="step"><b>Step 6 Negotiation</b><span>在 A2A、MCP、PRIVATE_API 中协商可用协议。</span></div>
+        <div class="step"><b>Step 7 Relay</b><span>将任务转换为目标协议消息，调用目标 Agent 或目标 Gateway。</span></div>
+        <div class="step"><b>Step 8 Security & Audit</b><span>检查输出 artifact 安全性，写入本地和全局审计日志。</span></div>
+      </div>
+      <div class="note">
+        最近已补齐 Gateway 自身的基础设施身份注册：跨域转发时，源 Gateway 会作为 requester 进入对方 Registry 的鉴权逻辑，因此 Gateway 也需要被注册为拥有 relay/delegate 权限的基础设施 AgentCard。这个修复解决了跨域场景中的授权失败问题。
+      </div>
+    </section>
+
+    <section id="risk-matrix">
+      <h2>六、18 个 IoA 风险测试矩阵</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>风险维度</th>
+            <th>子风险</th>
+            <th>测试类/场景含义</th>
+            <th>主要观察点</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td rowspan="3">C1 信任与授权失灵</td><td>身份伪装</td><td><code>IdentitySpoofingTest</code></td><td>伪造 AgentCard、冒充可信智能体、鉴权是否阻断。</td></tr>
+          <tr><td>注册表污染</td><td><code>RegistryDistortionTest</code></td><td>恶意注册、能力虚标、候选发现排序是否被操纵。</td></tr>
+          <tr><td>委托漂移</td><td><code>DelegationDriftTest</code></td><td>任务委托后权限边界是否扩大，授权范围是否被继承滥用。</td></tr>
+          <tr><td rowspan="3">C2 协议互操作失配</td><td>协议协商污染</td><td><code>NegotiationPollutionTest</code></td><td>协商过程是否被恶意偏转到低安全协议。</td></tr>
+          <tr><td>互操作语义失配</td><td><code>InteropMismatchTest</code></td><td>跨协议字段映射、语义转换是否导致任务含义变化。</td></tr>
+          <tr><td>问责断裂</td><td><code>AccountabilityBreakTest</code></td><td>跨协议、跨域后 trace、artifact、责任主体是否丢失。</td></tr>
+          <tr><td rowspan="3">C3 互联扩散与可推断性</td><td>级联传播</td><td><code>CascadePropagationTest</code></td><td>一个节点的错误、污染或攻击是否扩散到多 Sub-IoA。</td></tr>
+          <tr><td>结构暴露</td><td><code>StructureExposureTest</code></td><td>拓扑、节点角色、能力分布是否被过度暴露。</td></tr>
+          <tr><td>行为推断</td><td><code>BehaviorInferenceTest</code></td><td>攻击者是否能通过调用痕迹推断生态行为模式。</td></tr>
+          <tr><td rowspan="3">C4 公共知识失真</td><td>生态共识污染</td><td><code>EcosystemConsensusTest</code></td><td>共享知识库中的冲突、来源和置信度是否被检测。</td></tr>
+          <tr><td>谣言传播</td><td><code>RumorSpreadTest</code></td><td>错误知识是否通过多个智能体持续传播。</td></tr>
+          <tr><td>规范漂移</td><td><code>NormDriftTest</code></td><td>公共规范、操作准则或安全边界是否逐步偏移。</td></tr>
+          <tr><td rowspan="3">C5 生态权力失衡</td><td>声誉垄断</td><td><code>ReputationMonopolyTest</code></td><td>少数节点是否因声誉机制长期占据任务入口。</td></tr>
+          <tr><td>激励不一致</td><td><code>IncentiveMismatchTest</code></td><td>任务市场选择是否因收益或评分偏置偏离安全目标。</td></tr>
+          <tr><td>节点操纵</td><td><code>NodeManipulationTest</code></td><td>节点状态、连接或评分是否能被攻击者操控。</td></tr>
+          <tr><td rowspan="3">C6 人机能动性侵蚀</td><td>判断让渡</td><td><code>JudgmentSurrenderTest</code></td><td>人类是否被系统建议诱导放弃关键判断。</td></tr>
+          <tr><td>讨论扭曲</td><td><code>DiscussionDistortionTest</code></td><td>多 Agent 讨论是否被带偏，异议是否被压制。</td></tr>
+          <tr><td>能动性侵蚀</td><td><code>AgencyErosionTest</code></td><td>系统是否越过辅助边界，替代人类作高影响决策。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="report">
+      <h2>七、报告与指标体系</h2>
+      <p>
+        实验报告由 <code>MetricsEngine</code> 生成，主要包括摘要、分类统计、单项测试结果、任务执行结果和审计指标。当前指标核心是把任务可用性、安全性、可追踪性、风险遏制能力放入统一评估框架。
+      </p>
+      <div class="grid four">
+        <div class="box"><strong>Utility</strong><p>任务完成率。衡量系统在安全约束下是否仍能完成协作。</p></div>
+        <div class="box"><strong>Safety</strong><p>攻击是否被阻断，输出 artifact 是否安全，风险是否被判定。</p></div>
+        <div class="box"><strong>Traceability</strong><p>审计链完整性、归因准确性、来源覆盖率。</p></div>
+        <div class="box"><strong>Containment</strong><p>风险是否被限制在局部，是否出现跨域或多跳扩散。</p></div>
+      </div>
+      <h3>报告结构</h3>
+      <table>
+        <thead>
+          <tr><th>字段</th><th>含义</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>summary</code></td><td>总测试数、通过数、失败数、任务完成率、审计指标。</td></tr>
+          <tr><td><code>category_breakdown</code></td><td>按 6 个风险维度统计每类风险的测试通过情况。</td></tr>
+          <tr><td><code>test_results</code></td><td>每个风险测试的判定结果、风险等级、指标和证据。</td></tr>
+          <tr><td><code>task_results</code></td><td>任务执行输出、参与 Agent、产物 artifact 和状态。</td></tr>
+          <tr><td><code>feedback_loop/actions</code></td><td>后续可加入自动反馈、修复建议或防御策略迭代。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="status">
+      <h2>八、当前实现状态与可交付程度</h2>
+      <p>
+        当前版本已经达到“阶段性可交付”的标准：能够展示 IoA 测评框架结构，能够运行 18 个风险测试，能够加载 18 条 seed 场景，能够产出实验报告，并且前端能够构建通过。它适合作为向学长汇报的 v0.1 原型和后续论文实验底座。
+      </p>
+      <div class="status">
+        <div class="box"><strong>18/18</strong><p>代码级风险测试全部通过。</p></div>
+        <div class="box"><strong>18 seeds</strong><p>覆盖 6 类风险 × 3 子风险。</p></div>
+        <div class="box"><strong>Scenario PASS</strong><p><code>data/seeds</code> 批量场景验证通过。</p></div>
+        <div class="box"><strong>Frontend OK</strong><p><code>npm run build</code> 构建通过。</p></div>
+      </div>
+      <h3>已验证报告</h3>
+      <p>
+        最近一次完整验证报告位于：<code>D:\个人文件\学习文件\实习\IOA测评搭建\results\_final_verify\experiment_report_20260516_000815.json</code>。
+      </p>
+      <div class="note">
+        注意：完整实验会调用配置中的真实 LLM API，并通过 HTTP endpoint 传递协议消息。正式实验不使用 mock 或 dry-run；开发阶段只用单元测试验证框架逻辑。
+      </div>
+    </section>
+
+    <section id="next">
+      <h2>九、后续补充与论文化方向</h2>
+      <div class="grid two">
+        <div class="box">
+          <strong>1. 增加实验重复与统计检验</strong>
+          <p>正式实验保持 live LLM 与真实 endpoint，增加重复运行、均值、方差、置信区间和无效样本统计。</p>
+        </div>
+        <div class="box">
+          <strong>2. 扩充 benchmark 规模</strong>
+          <p>当前每个子风险有 1 条 seed，后续可扩为每个子风险 3 到 5 条，形成更稳定的统计结果。</p>
+        </div>
+        <div class="box">
+          <strong>3. 指标体系论文化</strong>
+          <p>把 Utility、Safety、Traceability、Containment 和 IoA-ERS 明确定义为公式、测量方法和实验表格。</p>
+        </div>
+        <div class="box">
+          <strong>4. 做消融实验</strong>
+          <p>比较关闭 Gateway 鉴权、关闭审计、关闭共享知识冲突检测、不同拓扑结构下的风险变化。</p>
+        </div>
+        <div class="box">
+          <strong>5. 与 TrinityGuard 方法对齐</strong>
+          <p>把“攻击构造、目标系统执行、判据裁判、证据记录、风险分级”整理成统一实验协议。</p>
+        </div>
+        <div class="box">
+          <strong>6. 前端可视化增强</strong>
+          <p>增加拓扑图、审计链路图、风险热力图、单个 seed 的执行轨迹回放，提升答辩展示效果。</p>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      IoA 测评搭建项目说明页，基于当前本地代码结构整理。建议作为阶段汇报、README 扩展和论文实验设计草稿使用。
+    </footer>
+  </main>
+</body>
+</html>
