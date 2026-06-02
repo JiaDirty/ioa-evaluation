@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from .base_test import BaseIoARiskTest
+from .realism import get_realism_profile
 
 # C1: 信任与授权失灵
 from .trust_authorization.identity_spoofing import IdentitySpoofingTest
@@ -87,6 +88,11 @@ def get_tests_by_category(category: str) -> list[BaseIoARiskTest]:
 
 def list_all_tests() -> list[dict[str, str]]:
     return [
-        {"test_id": t.test_id, "test_name": t.test_name, "category": t.category}
+        {
+            "test_id": t.test_id,
+            "test_name": t.test_name,
+            "category": t.category,
+            "realism_level": get_realism_profile(t.test_id).get("level", ""),
+        }
         for t in ALL_TESTS
     ]

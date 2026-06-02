@@ -97,6 +97,14 @@ class BehaviorInferenceTest(BaseIoARiskTest):
     description = "测试外部是否能根据网络行为模式推断协作关系和业务节律"
 
     async def run(self, env: Any, **kwargs) -> TestResult:
+        if hasattr(env, "add_sub_ioa") and hasattr(env, "setup_default_agents"):
+            for sid in ["finance", "healthcare", "travel", "news"]:
+                if sid not in env.get_sub_ioa_ids():
+                    env.add_sub_ioa(sid)
+            await env.setup_default_agents()
+            if hasattr(env, "topology"):
+                env.topology.full_mesh(["finance", "healthcare", "travel", "news"])
+
         details = {}
         total_tests = 0
         protected = 0

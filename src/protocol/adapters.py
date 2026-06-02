@@ -1,6 +1,6 @@
 """Protocol Adapters — 协议适配器。
 
-实现 A2A、MCP、Private API 三种协议适配器，以及跨协议语义转换。
+实现官方 A2A v1 core JSON-RPC、MCP、Private API 三种协议适配器，以及跨协议语义转换。
 核心目标：通过真实 HTTP endpoint 投递异构协议消息，并支持可控语义错配攻击测试。
 """
 
@@ -31,18 +31,22 @@ def _post_json_endpoint(
     encoded: str,
     protocol: str,
     timeout_seconds: int = 120,
+    extra_headers: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     if not target_endpoint:
         raise ProtocolDeliveryError(
             f"No endpoint configured for {protocol}; refusing to simulate delivery"
         )
+    headers = {
+        "Content-Type": "application/json",
+        "X-IoA-Protocol": protocol,
+    }
+    if extra_headers:
+        headers.update(extra_headers)
     request = urllib.request.Request(
         target_endpoint,
         data=encoded.encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "X-IoA-Protocol": protocol,
-        },
+        headers=headers,
         method="POST",
     )
     try:
@@ -100,16 +104,15 @@ class ProtocolAdapter(ABC):
 
 
 # ============================================================
-# A2A-like 协议适配器
+# 官方 A2A v1 core JSON-RPC 协议适配器
 # ============================================================
 
 class A2AAdapter(ProtocolAdapter):
-    """类 A2A（Agent-to-Agent）协议适配器。
+    """Official A2A v1 JSON-RPC protocol adapter.
 
-    消息格式特点：
-    - JSON-RPC 风格
-    - 支持 request/response/notification
-    - 字段：method, params, id, jsonrpc
+    The IoA runtime still uses ``ProtocolMessage`` internally, but the HTTP
+    boundary uses the official A2A core method and object names:
+    ``SendMessage``, ``GetTask`` and ``CancelTask``.
     """
 
     protocol_type = ProtocolType.A2A
@@ -126,7 +129,14 @@ class A2AAdapter(ProtocolAdapter):
         """发送 A2A 格式消息。"""
         encoded = self.encode(message)
         logger.debug("A2A send to %s: %s", target_endpoint, encoded[:200])
-        result = _post_json_endpoint(target_endpoint, encoded, "a2a")
+        from .a2a_official import A2A_PROTOCOL_VERSION
+
+        result = _post_json_endpoint(
+            target_endpoint,
+            encoded,
+            "a2a",
+            extra_headers={"A2A-Version": A2A_PROTOCOL_VERSION},
+        )
         result["message_id"] = message.message_id
         return result
 
@@ -135,25 +145,23 @@ class A2AAdapter(ProtocolAdapter):
         return self.decode(raw)
 
     def encode(self, message: ProtocolMessage) -> str:
-        """编码为 JSON-RPC 格式。"""
+        """编码为官方 A2A v1 JSON-RPC 格式。"""
         import json
-        return json.dumps({
-            "jsonrpc": "2.0",
-            "method": message.method,
-            "params": message.params,
-            "id": message.message_id,
-            "metadata": {
-                "source_agent": message.source_agent_id,
-                "target_agent": message.target_agent_id,
-                "trace_id": message.trace_id,
-                **message.metadata,
-            },
-        })
+        from .a2a_official import build_jsonrpc_request
+
+        return json.dumps(build_jsonrpc_request(message), ensure_ascii=False)
 
     def decode(self, raw: bytes | str) -> ProtocolMessage:
-        """解码 JSON-RPC 消息。"""
+        """解码官方 A2A v1 JSON-RPC 消息，兼容旧 IoA A2A-like envelope。"""
         import json
+        from .a2a_official import A2A_METHOD_SEND_MESSAGE, decode_jsonrpc_request
+
         data = json.loads(raw) if isinstance(raw, str) else json.loads(raw.decode())
+        if data.get("method") == A2A_METHOD_SEND_MESSAGE or (
+            data.get("method") in {"GetTask", "CancelTask"}
+            and isinstance(data.get("params"), dict)
+        ):
+            return decode_jsonrpc_request(data)
         return ProtocolMessage(
             message_id=data.get("id", ""),
             source_protocol=ProtocolType.A2A,
@@ -165,6 +173,29 @@ class A2AAdapter(ProtocolAdapter):
             params=data.get("params", {}),
             metadata=data.get("metadata", {}),
         )
+
+    def decode_delivery_result(self, result: dict[str, Any]) -> dict[str, Any]:
+        body = result.get("body", "")
+        if isinstance(body, dict):
+            parsed = body
+        elif not body:
+            return {"status": "completed", "content": ""}
+        else:
+            try:
+                parsed = json.loads(body)
+            except json.JSONDecodeError:
+                return {"status": "completed", "content": body}
+        if isinstance(parsed, dict) and (
+            parsed.get("jsonrpc") == "2.0"
+            or "task" in parsed
+            or "message" in parsed
+        ):
+            from .a2a_official import normalize_response
+
+            return normalize_response(parsed)
+        if isinstance(parsed, dict):
+            return parsed
+        return {"status": "completed", "content": parsed}
 
 
 # ============================================================
@@ -409,6 +440,11 @@ class ProtocolNegotiator:
         ProtocolType.MCP: 2,
         ProtocolType.PRIVATE_API: 1,
     }
+    PREFERENCE_ORDER = {
+        ProtocolType.A2A: 3,
+        ProtocolType.MCP: 2,
+        ProtocolType.PRIVATE_API: 1,
+    }
 
     async def negotiate(
         self,
@@ -428,9 +464,21 @@ class ProtocolNegotiator:
             return NegotiationResult(success=False, reason="No common protocol")
 
         if prefer_secure:
-            best = max(common, key=lambda p: self.SECURITY_LEVELS.get(p, 0))
+            best = max(
+                common,
+                key=lambda p: (
+                    self.SECURITY_LEVELS.get(p, 0),
+                    self.PREFERENCE_ORDER.get(p, 0),
+                ),
+            )
         else:
-            best = min(common, key=lambda p: self.SECURITY_LEVELS.get(p, 0))
+            best = min(
+                common,
+                key=lambda p: (
+                    self.SECURITY_LEVELS.get(p, 0),
+                    -self.PREFERENCE_ORDER.get(p, 0),
+                ),
+            )
 
         return NegotiationResult(
             success=True,

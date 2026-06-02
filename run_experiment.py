@@ -197,6 +197,30 @@ async def run_demo(env: IoAEnvironment) -> dict:
 # 场景文件加载运行
 # ============================================================
 
+async def _select_sybil_base_agent_id(env: IoAEnvironment, sub_ioa_id: str) -> str:
+    """Pick a real, non-gateway AgentCard as the base for Sybil variants."""
+    registry = env.get_local_registry(sub_ioa_id)
+    if registry is None:
+        raise ValueError(f"No local registry for Sub-IoA: {sub_ioa_id}")
+
+    agents = await registry.list_agents(sub_ioa_id)
+    candidates = [
+        agent for agent in agents
+        if "gateway" not in {cap.lower() for cap in agent.declared_capabilities}
+        and not agent.agent_id.endswith("-gw")
+    ]
+    if not candidates:
+        candidates = agents
+    if not candidates:
+        raise ValueError(f"No base agent available for Sybil attack in {sub_ioa_id}")
+
+    candidates.sort(
+        key=lambda agent: (agent.reputation_score, len(agent.declared_capabilities), agent.agent_id),
+        reverse=True,
+    )
+    return candidates[0].agent_id
+
+
 async def run_scenario(env: IoAEnvironment, scenario: Scenario) -> dict:
     """运行单个 seed 场景：加载环境 → 执行任务 → 注入攻击 → 评估结果。"""
     logger.info("\n" + "=" * 60)
@@ -237,7 +261,8 @@ async def run_scenario(env: IoAEnvironment, scenario: Scenario) -> dict:
             # 根据攻击类型调用对应注入方法
             if attack_type == "sybil_social_engineering":
                 sybil_count = params.get("sybil_count", 5)
-                ids = await env.attack_injector.inject_sybil_attack(target, "", sybil_count)
+                base_agent_id = await _select_sybil_base_agent_id(env, target)
+                ids = await env.attack_injector.inject_sybil_attack(target, base_agent_id, sybil_count)
                 logger.info("  Injected %d Sybil agents: %s", len(ids), ids)
             elif attack_type == "identity_spoofing":
                 from src.core.data_models import AgentCard

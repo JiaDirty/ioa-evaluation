@@ -61,7 +61,11 @@ class ProtocolRealDeliveryTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result["status"], "delivered")
             self.assertEqual(_CaptureHandler.received["path"], "/a2a")
             self.assertEqual(_CaptureHandler.received["protocol"], "a2a")
-            self.assertEqual(_CaptureHandler.received["body"]["method"], "execute_task")
+            self.assertEqual(_CaptureHandler.received["body"]["method"], "SendMessage")
+            self.assertEqual(
+                _CaptureHandler.received["body"]["params"]["message"]["parts"][0]["text"],
+                "hello",
+            )
         finally:
             server.shutdown()
             thread.join(timeout=3)

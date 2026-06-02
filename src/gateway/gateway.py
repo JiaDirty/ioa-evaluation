@@ -490,7 +490,14 @@ class Gateway:
                     "protocol": delivery.get("protocol"),
                     "http_status": delivery.get("http_status"),
                     "message_id": delivery.get("message_id"),
+                    "a2a_task_id": decoded_response.get("a2a_task_id"),
+                    "a2a_context_id": decoded_response.get("a2a_context_id"),
                 },
+                "a2a_compliance": (
+                    "official_v1_core_jsonrpc"
+                    if neg_result.agreed_protocol == ProtocolType.A2A
+                    else None
+                ),
                 "semantic_mismatch_findings": semantic_findings,
                 "validity_note": (
                     "The selected AgentCard was dispatched through the negotiated "

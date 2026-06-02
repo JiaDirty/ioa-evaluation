@@ -34,9 +34,14 @@ class _AgentEndpointHandler(BaseHTTPRequestHandler):
 
 
 class GatewayProtocolEndpointDispatchTest(unittest.IsolatedAsyncioTestCase):
-    async def _build_gateway(self, endpoint: str) -> Gateway:
+    async def _build_gateway(
+        self,
+        endpoint: str,
+        target_protocols: list[ProtocolType] | None = None,
+    ) -> Gateway:
         local = Registry("finance-local")
         global_reg = Registry("global", is_global=True)
+        target_protocols = target_protocols or [ProtocolType.A2A]
         target = AgentCard(
             agent_id="finance-agent-1",
             display_name="Finance Agent",
@@ -44,7 +49,7 @@ class GatewayProtocolEndpointDispatchTest(unittest.IsolatedAsyncioTestCase):
             sub_ioa_id="finance",
             declared_capabilities=["financial_analysis"],
             actual_capabilities=["financial_analysis"],
-            supported_protocols=[ProtocolType.A2A],
+            supported_protocols=target_protocols,
             endpoint=endpoint,
             certificate="cert-finance-agent-1",
             reputation_score=0.9,
@@ -92,10 +97,46 @@ class GatewayProtocolEndpointDispatchTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result.status, TaskStatus.COMPLETED)
             self.assertEqual(result.output, "endpoint response")
             self.assertEqual(_AgentEndpointHandler.received["protocol"], "a2a")
-            self.assertEqual(_AgentEndpointHandler.received["body"]["method"], "execute_task")
+            self.assertEqual(_AgentEndpointHandler.received["body"]["method"], "SendMessage")
+            self.assertEqual(
+                _AgentEndpointHandler.received["body"]["params"]["message"]["parts"][0]["text"],
+                "Analyze risk",
+            )
             self.assertEqual(
                 result.artifacts[0].metadata["execution_transport"],
                 "protocol_http_endpoint",
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=3)
+            server.server_close()
+
+    async def test_gateway_prefers_official_a2a_for_multi_protocol_agent(self):
+        server = HTTPServer(("127.0.0.1", 0), _AgentEndpointHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            _AgentEndpointHandler.received = {}
+            endpoint = f"http://127.0.0.1:{server.server_port}/agents/finance-agent-1"
+            gateway = await self._build_gateway(
+                endpoint,
+                target_protocols=[ProtocolType.MCP, ProtocolType.A2A, ProtocolType.PRIVATE_API],
+            )
+            task = Task(
+                task_type=TaskType.SINGLE_DOMAIN,
+                description="Analyze risk through the strongest common protocol",
+                required_capabilities=["financial_analysis"],
+                payload={"target_sub_ioa": "finance"},
+            )
+
+            result = await gateway.handle_task(task, requester_id="finance-gw")
+
+            self.assertEqual(result.status, TaskStatus.COMPLETED)
+            self.assertEqual(_AgentEndpointHandler.received["protocol"], "a2a")
+            self.assertEqual(_AgentEndpointHandler.received["body"]["method"], "SendMessage")
+            self.assertEqual(
+                result.artifacts[0].metadata["a2a_compliance"],
+                "official_v1_core_jsonrpc",
             )
         finally:
             server.shutdown()

@@ -10,6 +10,7 @@ from typing import Any
 
 from src.core.data_models import RiskLevel, TaskResult, TaskStatus, TestResult
 from src.experiment.exceptions import EvaluationInvalidError
+from .realism import get_realism_profile
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ class BaseIoARiskTest(ABC):
         explanation: str = "",
         metrics: dict[str, float] | None = None,
         details: dict[str, Any] | None = None,
+        realism: dict[str, Any] | None = None,
     ) -> TestResult:
         return TestResult(
             test_id=self.test_id,
@@ -49,6 +51,7 @@ class BaseIoARiskTest(ABC):
             explanation=explanation,
             metrics=metrics or {},
             details=details or {},
+            realism=realism or get_realism_profile(self.test_id),
         )
 
     async def run_agent_task(self, env: Any, sub_ioa_id: str, task: str) -> str:

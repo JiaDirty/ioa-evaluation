@@ -120,6 +120,118 @@ class MetricsEngine:
         metrics = await self.audit_logger.compute_metrics()
         return (metrics.chain_completeness + metrics.attribution_accuracy + metrics.source_coverage) / 3
 
+    def summarize_realism(self, test_results: list[TestResult]) -> dict[str, Any]:
+        levels = ["mechanism_real", "hybrid_controlled", "concept_probe", "unspecified"]
+        level_counts = {level: 0 for level in levels}
+        agent_in_loop_tests = 0
+        gateway_mediated_tests = 0
+        high_integration_tests = 0
+        low_integration_tests: list[str] = []
+        limitations: set[str] = set()
+
+        for result in test_results:
+            profile = result.realism or {}
+            level = str(profile.get("level") or "unspecified")
+            if level not in level_counts:
+                level_counts[level] = 0
+            level_counts[level] += 1
+
+            if bool(profile.get("agent_in_loop")):
+                agent_in_loop_tests += 1
+
+            chain = [str(item).lower() for item in profile.get("communication_chain", [])]
+            components = [str(item).lower() for item in profile.get("infrastructure_components", [])]
+            combined = chain + components
+            gateway_mediated = any("gateway" in item for item in combined)
+            task_mediated = any("task" in item or "marketplace" in item for item in combined)
+            if gateway_mediated:
+                gateway_mediated_tests += 1
+
+            high_integration = (
+                level != "concept_probe"
+                and bool(profile.get("agent_in_loop"))
+                and gateway_mediated
+                and task_mediated
+                and len(profile.get("evidence", [])) >= 2
+            )
+            if high_integration:
+                high_integration_tests += 1
+            else:
+                low_integration_tests.append(result.test_id)
+
+            for limitation in profile.get("limitations", []):
+                if limitation:
+                    limitations.add(str(limitation))
+
+        total = len(test_results)
+        return {
+            "level_counts": level_counts,
+            "agent_in_loop_tests": agent_in_loop_tests,
+            "gateway_mediated_tests": gateway_mediated_tests,
+            "high_integration_tests": high_integration_tests,
+            "low_integration_tests": low_integration_tests,
+            "meets_high_integration_floor": not low_integration_tests,
+            "agent_in_loop_rate": agent_in_loop_tests / total if total else 0.0,
+            "gateway_mediated_rate": gateway_mediated_tests / total if total else 0.0,
+            "high_integration_rate": high_integration_tests / total if total else 0.0,
+            "limitations": sorted(limitations),
+        }
+
+    def summarize_a2a_compliance(self, task_results: list[TaskResult]) -> dict[str, Any]:
+        protocol_http_endpoint_tasks = 0
+        a2a_tasks = 0
+        official_core_tasks = 0
+        non_official_a2a_task_ids: list[str] = []
+        evidence_task_ids: list[str] = []
+        a2a_task_ids: list[str] = []
+        a2a_context_ids: list[str] = []
+
+        for result in task_results:
+            artifacts = result.artifacts or []
+            task_uses_endpoint = False
+            task_uses_a2a = False
+            task_is_official = False
+
+            for artifact in artifacts:
+                metadata = artifact.metadata or {}
+                delivery = metadata.get("delivery", {})
+                if metadata.get("execution_transport") == "protocol_http_endpoint":
+                    task_uses_endpoint = True
+                if isinstance(delivery, dict) and delivery.get("protocol") == ProtocolType.A2A.value:
+                    task_uses_a2a = True
+                if metadata.get("a2a_compliance") == "official_v1_core_jsonrpc":
+                    task_is_official = True
+                    if isinstance(delivery, dict):
+                        if delivery.get("a2a_task_id"):
+                            a2a_task_ids.append(str(delivery["a2a_task_id"]))
+                        if delivery.get("a2a_context_id"):
+                            a2a_context_ids.append(str(delivery["a2a_context_id"]))
+
+            if task_uses_endpoint:
+                protocol_http_endpoint_tasks += 1
+            if task_uses_a2a:
+                a2a_tasks += 1
+                if task_is_official:
+                    official_core_tasks += 1
+                    evidence_task_ids.append(result.task_id)
+                else:
+                    non_official_a2a_task_ids.append(result.task_id)
+
+        return {
+            "protocol_http_endpoint_tasks": protocol_http_endpoint_tasks,
+            "a2a_tasks": a2a_tasks,
+            "official_v1_core_jsonrpc_tasks": official_core_tasks,
+            "all_a2a_endpoint_tasks_official_core": a2a_tasks == official_core_tasks,
+            "non_official_a2a_task_ids": non_official_a2a_task_ids,
+            "evidence_task_ids": evidence_task_ids,
+            "a2a_task_ids": sorted(set(a2a_task_ids)),
+            "a2a_context_ids": sorted(set(a2a_context_ids)),
+            "compliance_scope": (
+                "official A2A v1 mandatory core over JSON-RPC/HTTP+JSON; "
+                "optional streaming, push notification, and gRPC are not declared"
+            ),
+        }
+
     async def generate_report(
         self, test_results: list[TestResult], task_results: list[TaskResult],
     ) -> dict[str, Any]:
@@ -157,9 +269,12 @@ class MetricsEngine:
                 "passed": tr.passed,
                 "risk_level": tr.risk_level.value,
                 "metrics": tr.metrics,
+                "realism": tr.realism,
             })
 
         valid_total = len(valid_results)
+        realism_summary = self.summarize_realism(test_results)
+        a2a_compliance = self.summarize_a2a_compliance(task_results)
         return {
             "timestamp": datetime.now().isoformat(),
             "summary": {
@@ -176,6 +291,8 @@ class MetricsEngine:
                 ),
                 "utility": utility,
                 "audit_metrics": audit_metrics.model_dump(),
+                "realism": realism_summary,
+                "a2a_compliance": a2a_compliance,
             },
             "category_breakdown": category_stats,
             "test_results": [r.model_dump() for r in test_results],
@@ -464,6 +581,8 @@ class IoAEnvironment:
         if not card.endpoint:
             card = card.model_copy()
             card.endpoint = self._ensure_local_endpoint_server().endpoint_for(card.agent_id)
+        if ProtocolType.A2A in card.supported_protocols:
+            self._ensure_local_endpoint_server().register_agent_card(card)
         agent_id = await local.register(card)
         await self.global_registry.register(card)
         self._agent_sub_ioa_index[agent_id] = card.sub_ioa_id

@@ -276,5 +276,5 @@ class TestResult(BaseModel):
     explanation: str = ""
     metrics: dict[str, float] = Field(default_factory=dict)
     details: dict[str, Any] = Field(default_factory=dict)
+    realism: dict[str, Any] = Field(default_factory=dict)
     execution_time: float = 0.0
-
