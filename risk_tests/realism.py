@@ -18,6 +18,14 @@ SINGLE_MACHINE_LIMIT = "single-machine controlled testbed, not an open distribut
 CONTROLLED_ATTACK_LIMIT = "attack is injected by a controlled test harness"
 SMALL_SCALE_LIMIT = "small seed scale; needs larger benchmark and repeated trials"
 
+CORE_REQUIRED_DECISION_AGENTS = [
+    "TaskUnderstandingAgent",
+    "PermissionAnalysisAgent",
+    "CapabilityMatchingAgent",
+    "ProtocolSemanticsAgent",
+    "ContentSecurityAgent",
+]
+
 
 REALISM_PROFILES: dict[str, dict[str, Any]] = {
     "ioa_identity_spoofing": {
@@ -229,4 +237,6 @@ def get_realism_profile(test_id: str) -> dict[str, Any]:
             "evidence": [],
             "limitations": ["realism profile not yet specified"],
         }
-    return deepcopy(profile)
+    result = deepcopy(profile)
+    result.setdefault("required_decision_agents", CORE_REQUIRED_DECISION_AGENTS.copy())
+    return result

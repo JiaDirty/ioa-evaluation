@@ -233,6 +233,58 @@ class MetricsEngine:
             ),
         }
 
+    def summarize_agentic_decisions(
+        self, test_results: list[TestResult], task_results: list[TaskResult]
+    ) -> dict[str, Any]:
+        required: list[str] = []
+        for result in test_results:
+            for agent in (result.realism or {}).get("required_decision_agents", []):
+                if agent not in required:
+                    required.append(str(agent))
+
+        observed: set[str] = set()
+        decision_task_ids: set[str] = set()
+        event_count = 0
+        semantic_rule_fallback_count = 0
+        keyword_match_usage_count = 0
+
+        for result in task_results:
+            for artifact in result.artifacts or []:
+                metadata = artifact.metadata or {}
+                decisions = metadata.get("decision_agents", {})
+                if decisions:
+                    decision_task_ids.add(result.task_id)
+                for envelope in decisions.values():
+                    if not isinstance(envelope, dict):
+                        continue
+                    agent_name = envelope.get("agent_name") or envelope.get("agent")
+                    if agent_name:
+                        observed.add(str(agent_name))
+                    event_count += 1
+                    if envelope.get("fallback_used"):
+                        semantic_rule_fallback_count += 1
+                security_check = metadata.get("security_check", {})
+                keyword_hits = security_check.get("keyword_hits", [])
+                keyword_match_usage_count += len(keyword_hits)
+
+        missing = [agent for agent in required if agent not in observed]
+        if required:
+            coverage = (len(required) - len(missing)) / len(required)
+        else:
+            coverage = 1.0 if event_count else 0.0
+
+        return {
+            "decision_agent_tasks": len(decision_task_ids),
+            "decision_agent_event_count": event_count,
+            "agentic_decision_coverage": coverage,
+            "keyword_match_usage_count": keyword_match_usage_count,
+            "semantic_rule_fallback_count": semantic_rule_fallback_count,
+            "required_decision_agents": required,
+            "observed_decision_agents": sorted(observed),
+            "missing_required_decision_agents": missing,
+            "missing_by_trace": {},
+        }
+
     async def generate_report(
         self, test_results: list[TestResult], task_results: list[TaskResult],
     ) -> dict[str, Any]:
@@ -276,6 +328,7 @@ class MetricsEngine:
         valid_total = len(valid_results)
         realism_summary = self.summarize_realism(test_results)
         a2a_compliance = self.summarize_a2a_compliance(task_results)
+        agentic_decisions = self.summarize_agentic_decisions(test_results, task_results)
         return {
             "timestamp": datetime.now().isoformat(),
             "summary": {
@@ -294,6 +347,7 @@ class MetricsEngine:
                 "audit_metrics": audit_metrics.model_dump(),
                 "realism": realism_summary,
                 "a2a_compliance": a2a_compliance,
+                "agentic_decisions": agentic_decisions,
             },
             "category_breakdown": category_stats,
             "test_results": [r.model_dump() for r in test_results],

@@ -21,6 +21,7 @@ class RealismReportingTest(unittest.IsolatedAsyncioTestCase):
             self.assertIsInstance(result.realism["agent_in_loop"], bool, test.test_id)
             self.assertIsInstance(result.realism["communication_chain"], list, test.test_id)
             self.assertTrue(result.realism["limitations"], test.test_id)
+            self.assertTrue(result.realism["required_decision_agents"], test.test_id)
 
     async def test_report_summarizes_realism_strength(self):
         metrics_engine = MetricsEngine(AuditLogger("global"))
