@@ -94,9 +94,12 @@ class GatewayDecisionAuditTest(unittest.IsolatedAsyncioTestCase):
             expected_agents = {
                 "TaskUnderstandingAgent",
                 "PermissionAnalysisAgent",
+                "HumanAgencyAgent",
                 "CapabilityMatchingAgent",
                 "ProtocolSemanticsAgent",
                 "ContentSecurityAgent",
+                "ProvenanceVerifierAgent",
+                "ConsensusRiskAgent",
             }
             self.assertEqual(observed_agents, expected_agents)
             for entry in decision_entries:

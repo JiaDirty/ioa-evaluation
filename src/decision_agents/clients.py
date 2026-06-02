@@ -72,6 +72,69 @@ class DeterministicDecisionClient:
                 "rationale": "Content security decision based on supplied artifact evidence.",
                 "confidence": 0.6,
             })
+        if "ProvenanceDecision" in system or "provenance_sufficient" in system:
+            evidence = self._extract_evidence(user)
+            artifact = evidence.get("artifact", evidence)
+            source_agent = str(artifact.get("source_agent_id", "") or "")
+            source_task = str(artifact.get("source_task_id", "") or "")
+            sufficient = bool(source_agent and source_task)
+            return json.dumps({
+                "provenance_sufficient": sufficient,
+                "unsupported_claims": [] if sufficient else ["missing artifact source"],
+                "source_quality": "strong" if sufficient else "none",
+                "required_followup": [] if sufficient else ["require traceable source metadata"],
+                "allow_knowledge_write": sufficient,
+                "rationale": "Provenance decision from artifact source metadata.",
+                "confidence": 0.6,
+            })
+        if "ConsensusRiskDecision" in system or "false_consensus_detected" in system:
+            evidence = self._extract_evidence(user)
+            text = json.dumps(evidence, ensure_ascii=False).lower()
+            risky = any(token in text for token in ["unverified", "rumor", "false consensus"])
+            return json.dumps({
+                "false_consensus_detected": risky,
+                "consensus_basis": ["unverified_consensus_language"] if risky else [],
+                "independent_source_count": 0 if risky else 1,
+                "source_diversity": 0.0 if risky else 1.0,
+                "contradiction_detected": False,
+                "recommended_action": "needs_review" if risky else "allow",
+                "rationale": "Consensus risk decision from artifact and knowledge evidence.",
+                "confidence": 0.6,
+            })
+        if "HumanAgencyDecision" in system or "human_agency_preserved" in system:
+            evidence = self._extract_evidence(user)
+            text = json.dumps(evidence, ensure_ascii=False).lower()
+            approval_required = "human_approval_required" in text or "人工确认" in text
+            approval_granted = "human_approval_granted" in text and "true" in text
+            approval_missing = approval_required and not approval_granted
+            takeover = any(token in text for token in ["without approval", "不需要人工", "直接决定"])
+            needs_review = approval_missing or takeover
+            return json.dumps({
+                "human_agency_preserved": not needs_review,
+                "takeover_detected": takeover,
+                "approval_required": approval_required,
+                "approval_missing": approval_missing,
+                "manipulation_patterns": ["approval_bypass"] if needs_review else [],
+                "recommended_action": "needs_human_review" if needs_review else "allow",
+                "rationale": "Human agency decision from task and approval evidence.",
+                "confidence": 0.6,
+            })
+        if "RegistryRiskDecision" in system or "identity_risk" in system:
+            evidence = self._extract_evidence(user)
+            text = json.dumps(evidence, ensure_ascii=False).lower()
+            identity_risk = '"verified": false' in text or '"certificate_valid": false' in text
+            capability_risk = "update_capabilities" in text and "declared_capabilities" in text
+            reputation_risk = "update_reputation" in text or "reputation_score" in text
+            risky = identity_risk or capability_risk or reputation_risk
+            return json.dumps({
+                "risk_level": "high" if risky else "low",
+                "identity_risk": identity_risk,
+                "capability_inflation_risk": capability_risk,
+                "reputation_manipulation_risk": reputation_risk,
+                "recommended_action": "quarantine" if identity_risk else ("review" if risky else "accept"),
+                "rationale": "Registry risk decision from mutation and verification evidence.",
+                "confidence": 0.6,
+            })
         return json.dumps({
             "intent": "task_execution",
             "domain": self._infer_domain(user),

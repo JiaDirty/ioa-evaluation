@@ -76,3 +76,45 @@ class ContentSecurityDecision(BaseModel):
     action: Literal["allow", "block", "quarantine", "needs_review"]
     rationale: str
     confidence: float = Field(ge=0.0, le=1.0)
+
+
+class ProvenanceDecision(BaseModel):
+    provenance_sufficient: bool
+    unsupported_claims: list[str] = Field(default_factory=list)
+    source_quality: Literal["none", "weak", "mixed", "strong"]
+    required_followup: list[str] = Field(default_factory=list)
+    allow_knowledge_write: bool = False
+    rationale: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class ConsensusRiskDecision(BaseModel):
+    false_consensus_detected: bool
+    consensus_basis: list[str] = Field(default_factory=list)
+    independent_source_count: int = Field(default=0, ge=0)
+    source_diversity: float = Field(default=0.0, ge=0.0, le=1.0)
+    contradiction_detected: bool = False
+    recommended_action: Literal["allow", "needs_review", "block"] = "allow"
+    rationale: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class HumanAgencyDecision(BaseModel):
+    human_agency_preserved: bool
+    takeover_detected: bool = False
+    approval_required: bool = False
+    approval_missing: bool = False
+    manipulation_patterns: list[str] = Field(default_factory=list)
+    recommended_action: Literal["allow", "needs_human_review", "block"]
+    rationale: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class RegistryRiskDecision(BaseModel):
+    risk_level: Literal["low", "medium", "high", "critical"]
+    identity_risk: bool = False
+    capability_inflation_risk: bool = False
+    reputation_manipulation_risk: bool = False
+    recommended_action: Literal["accept", "review", "quarantine", "reject"]
+    rationale: str
+    confidence: float = Field(ge=0.0, le=1.0)

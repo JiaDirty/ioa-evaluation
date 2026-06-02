@@ -21,9 +21,12 @@ SMALL_SCALE_LIMIT = "small seed scale; needs larger benchmark and repeated trial
 CORE_REQUIRED_DECISION_AGENTS = [
     "TaskUnderstandingAgent",
     "PermissionAnalysisAgent",
+    "HumanAgencyAgent",
     "CapabilityMatchingAgent",
     "ProtocolSemanticsAgent",
     "ContentSecurityAgent",
+    "ProvenanceVerifierAgent",
+    "ConsensusRiskAgent",
 ]
 
 

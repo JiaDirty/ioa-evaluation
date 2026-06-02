@@ -33,12 +33,15 @@ from ..core.data_models import (
 )
 from ..decision_agents import (
     CapabilityMatchingAgent,
+    ConsensusRiskAgent,
     ContentSecurityAgent,
     DecisionAgentError,
     DecisionContext,
     DecisionEnvelope,
     DeterministicDecisionClient,
+    HumanAgencyAgent,
     PermissionAnalysisAgent,
+    ProvenanceVerifierAgent,
     ProtocolSemanticsAgent,
     TaskUnderstandingAgent,
 )
@@ -118,9 +121,12 @@ class Gateway:
         return {
             "task_understanding": TaskUnderstandingAgent(decision_client),
             "permission_analysis": PermissionAnalysisAgent(decision_client),
+            "human_agency": HumanAgencyAgent(decision_client),
             "capability_matching": CapabilityMatchingAgent(decision_client),
             "protocol_semantics": ProtocolSemanticsAgent(decision_client),
             "content_security": ContentSecurityAgent(decision_client),
+            "provenance_verifier": ProvenanceVerifierAgent(decision_client),
+            "consensus_risk": ConsensusRiskAgent(decision_client),
         }
 
     # ------------------------------------------------------------------
@@ -274,6 +280,15 @@ class Gateway:
                 self._decision_context(task, requester_id, "permission_analysis"),
             )
             decision_envelopes["permission_analysis"] = permission_env
+            _, human_env = await self._run_decision(
+                "human_agency",
+                {
+                    "task": task.model_dump(mode="json"),
+                    "permission_analysis": permission_decision.model_dump(mode="json"),
+                },
+                self._decision_context(task, requester_id, "human_agency"),
+            )
+            decision_envelopes["human_agency"] = human_env
         except ProtocolDeliveryError as e:
             return TaskResult(
                 task_id=task.task_id,
@@ -743,10 +758,37 @@ class Gateway:
             artifact.metadata.setdefault("decision_agents", {})["content_security"] = (
                 content_env.model_dump(mode="json")
             )
+            provenance_decision, provenance_env = await self._run_decision(
+                "provenance_verifier",
+                {"artifact": artifact.model_dump(mode="json")},
+                content_ctx.model_copy(update={"stage": "provenance_verifier"}),
+            )
+            artifact.metadata.setdefault("decision_agents", {})["provenance_verifier"] = (
+                provenance_env.model_dump(mode="json")
+            )
+            consensus_decision, consensus_env = await self._run_decision(
+                "consensus_risk",
+                {
+                    "content": artifact.content,
+                    "metadata": artifact.metadata,
+                    "provenance": provenance_decision.model_dump(mode="json"),
+                },
+                content_ctx.model_copy(update={"stage": "consensus_risk"}),
+            )
+            artifact.metadata.setdefault("decision_agents", {})["consensus_risk"] = (
+                consensus_env.model_dump(mode="json")
+            )
         except ProtocolDeliveryError:
             raise
 
         is_safe = bool(getattr(content_decision, "safe", True)) and not keyword_hits
+        if not getattr(provenance_decision, "provenance_sufficient", True):
+            is_safe = False
+        if (
+            getattr(consensus_decision, "false_consensus_detected", False)
+            and getattr(consensus_decision, "recommended_action", "") in {"needs_review", "block"}
+        ):
+            is_safe = False
 
         judge_verdict = None
         if is_safe and self._safety_judge is not None:

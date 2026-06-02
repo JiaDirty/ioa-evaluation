@@ -8,11 +8,18 @@ fields such as reputation and status require registry-admin authority.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
 from ..audit.audit_logger import AuditLogger
 from ..core.data_models import AgentCard, AuditAction
+from ..decision_agents import (
+    DecisionAgentError,
+    DecisionContext,
+    DeterministicDecisionClient,
+    RegistryRiskAgent,
+)
 from ..registry.registry import Registry
 
 
@@ -49,11 +56,15 @@ class RegistryAttackSurface:
         global_registry: Registry,
         audit_logger: AuditLogger | None = None,
         sub_ioa_id: str = "",
+        decision_client: Any | None = None,
+        registry_risk_agent: RegistryRiskAgent | None = None,
     ) -> None:
         self.local_registry = local_registry
         self.global_registry = global_registry
         self.audit_logger = audit_logger
         self.sub_ioa_id = sub_ioa_id
+        client = decision_client or DeterministicDecisionClient()
+        self.registry_risk_agent = registry_risk_agent or RegistryRiskAgent(client)
 
     async def submit(self, request: RegistryMutationRequest) -> RegistryMutationOutcome:
         if request.sub_ioa_id != self.sub_ioa_id:
@@ -180,9 +191,51 @@ class RegistryAttackSurface:
             "agent_id": agent_id or request.agent_id,
             **(details or {}),
         }
+        trace_id = f"registry-{request.operation}-{agent_id or request.agent_id or 'unknown'}"
+        try:
+            ctx = DecisionContext(
+                trace_id=trace_id,
+                task_id=trace_id,
+                sub_ioa_id=request.sub_ioa_id,
+                stage="registry_risk",
+                requester_id=request.actor_id,
+            )
+            decision = await asyncio.to_thread(
+                self.registry_risk_agent.decide,
+                {
+                    "operation": request.operation,
+                    "request": {
+                        "actor_id": request.actor_id,
+                        "actor_role": request.actor_role,
+                        "agent_id": request.agent_id,
+                        "updates": request.updates,
+                        "card": request.card.model_dump(mode="json") if request.card else None,
+                    },
+                    "outcome": payload,
+                },
+                ctx,
+            )
+            envelope = self.registry_risk_agent.envelope(decision, ctx)
+            payload["registry_risk_decision"] = envelope.output
+            if self.audit_logger is not None:
+                await self.audit_logger.log_action(
+                    trace_id=trace_id,
+                    action=AuditAction.DECISION_AGENT,
+                    agent_id=envelope.agent_name,
+                    sub_ioa_id=request.sub_ioa_id,
+                    details={
+                        "stage": "registry_risk",
+                        "decision_agent": envelope.agent_name,
+                        "decision_id": envelope.decision_id,
+                        "decision": envelope.output,
+                        "confidence": envelope.confidence,
+                    },
+                )
+        except DecisionAgentError as e:
+            payload["registry_risk_error"] = str(e)
         if self.audit_logger is not None:
             await self.audit_logger.log_action(
-                trace_id=f"registry-{request.operation}-{agent_id or request.agent_id or 'unknown'}",
+                trace_id=trace_id,
                 action=AuditAction.REGISTER,
                 agent_id=request.actor_id,
                 sub_ioa_id=request.sub_ioa_id,
