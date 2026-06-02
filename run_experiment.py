@@ -2,6 +2,7 @@
 
 用法：
     python run_experiment.py                  # 运行所有 18 个风险测试
+    python run_experiment.py --offline-deterministic  # 离线确定性运行所有 18 个风险测试
     python run_experiment.py --test C1        # 运行 C1 类别的测试
     python run_experiment.py --test ioa_identity_spoofing  # 运行单个测试
     python run_experiment.py --demo           # 运行演示场景
@@ -39,13 +40,37 @@ logger = logging.getLogger("ioa-experiment")
 # 环境初始化
 # ============================================================
 
-async def setup_environment() -> IoAEnvironment:
+def build_environment_config(args: argparse.Namespace | None = None) -> dict:
+    """Build runtime config for live or offline deterministic evaluation."""
+    offline = bool(
+        args
+        and (
+            getattr(args, "offline", False)
+            or getattr(args, "offline_deterministic", False)
+            or getattr(args, "deterministic", False)
+        )
+    )
+    if not offline:
+        return {}
+    return {
+        "execution_mode": "offline_deterministic",
+        "offline_deterministic": True,
+        "create_agent_runtimes": False,
+        "enable_live_attack_injector": False,
+        "enable_live_decision_agents": False,
+        "enable_live_judges": False,
+        "enable_safety_judge": False,
+        "auto_bind_deterministic_runtimes": True,
+    }
+
+
+async def setup_environment(config: dict | None = None) -> IoAEnvironment:
     """初始化完整的 IoA 测试环境。"""
     logger.info("=" * 60)
     logger.info("Initializing IoA Evaluation Environment")
     logger.info("=" * 60)
 
-    env = IoAEnvironment()
+    env = IoAEnvironment(config)
 
     # 添加 4 个 Sub-IoA
     for sub_ioa_id in ["finance", "healthcare", "travel", "news"]:
@@ -324,7 +349,7 @@ async def run_scenario(env: IoAEnvironment, scenario: Scenario) -> dict:
     return report
 
 
-async def run_scenario_dir(scenario_dir: str) -> list[dict]:
+async def run_scenario_dir(scenario_dir: str, env_config: dict | None = None) -> list[dict]:
     """运行目录下所有 seed 场景。"""
     scenarios = load_all_seeds(scenario_dir)
     if not scenarios:
@@ -335,7 +360,7 @@ async def run_scenario_dir(scenario_dir: str) -> list[dict]:
     reports = []
 
     for scenario in scenarios:
-        env = IoAEnvironment()
+        env = IoAEnvironment(env_config)
         report = await run_scenario(env, scenario)
         reports.append(report)
 
@@ -387,13 +412,20 @@ async def main():
                         help="Directory containing seed_*.json files")
     parser.add_argument("--output", type=str, default="results",
                         help="Output directory for reports")
+    parser.add_argument("--offline", action="store_true",
+                        help="Run a deterministic offline framework validation without live LLM/AG2 calls")
+    parser.add_argument("--offline-deterministic", action="store_true",
+                        help="Explicit alias for --offline")
+    parser.add_argument("--deterministic", action="store_true",
+                        help="Alias for --offline")
     args = parser.parse_args()
+    env_config = build_environment_config(args)
 
     # 场景文件模式
     if args.scenario:
         loader = ScenarioLoader(args.scenario)
         scenario = loader.load()
-        env = IoAEnvironment()
+        env = IoAEnvironment(env_config)
         report = await run_scenario(env, scenario)
         if report:
             save_report(report, args.output)
@@ -402,7 +434,7 @@ async def main():
 
     # 场景目录模式
     if args.scenario_dir:
-        reports = await run_scenario_dir(args.scenario_dir)
+        reports = await run_scenario_dir(args.scenario_dir, env_config)
         for i, report in enumerate(reports):
             if report:
                 save_report(report, args.output)
@@ -410,7 +442,7 @@ async def main():
         return
 
     # 标准模式：初始化默认环境
-    env = await setup_environment()
+    env = await setup_environment(env_config)
 
     if args.demo:
         report = await run_demo(env)
