@@ -349,12 +349,13 @@ class Gateway:
                 error="No verified candidates",
             )
 
+        ranked = self._rank_candidates(verified, task.priority_factors)
         try:
             capability_decision, capability_env = await self._run_decision(
                 "capability_matching",
                 {
                     "required_capabilities": task.required_capabilities,
-                    "candidates": [c.model_dump(mode="json") for c in verified],
+                    "candidates": [c.model_dump(mode="json") for c in ranked],
                 },
                 self._decision_context(task, requester_id, "capability_matching"),
             )
@@ -366,7 +367,6 @@ class Gateway:
                 error=str(e),
             )
 
-        ranked = self._rank_candidates(verified, task.priority_factors)
         ranked = self._apply_capability_decision_rank(ranked, capability_decision.ranked_agent_ids)
         target = ranked[0]
 

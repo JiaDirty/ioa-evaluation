@@ -1,13 +1,32 @@
 import unittest
 from datetime import datetime
 
-from src.core.data_models import RiskLevel, TaskResult, TaskStatus
+from risk_tests.realism import CORE_REQUIRED_DECISION_AGENTS
+from src.core.data_models import Artifact, RiskLevel, TaskResult, TaskStatus
 from src.experiment.runner import IoAEnvironment
 from src.attacks.observation import NetworkObservationEvent
 from risk_tests.interconnection.structure_exposure import BehaviorInferenceTest
 
 
 class ReportMetricsTest(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _task_result_with_decisions(task_id: str) -> TaskResult:
+        return TaskResult(
+            task_id=task_id,
+            status=TaskStatus.COMPLETED,
+            artifacts=[
+                Artifact(
+                    content="ok",
+                    metadata={
+                        "decision_agents": {
+                            agent_name: {"agent_name": agent_name}
+                            for agent_name in CORE_REQUIRED_DECISION_AGENTS
+                        }
+                    },
+                )
+            ],
+        )
+
     async def test_report_utility_uses_marketplace_task_results_when_runner_has_none(self):
         env = IoAEnvironment({"create_agent_runtimes": False})
         env.marketplace._results["ok"] = TaskResult(
@@ -34,7 +53,7 @@ class ReportMetricsTest(unittest.IsolatedAsyncioTestCase):
             audit_logger = _Audit()
 
             async def submit_task(self, task):
-                return TaskResult(task_id=task.task_id, status=TaskStatus.COMPLETED)
+                return ReportMetricsTest._task_result_with_decisions(task.task_id)
 
             def get_sub_ioa_ids(self):
                 return ["finance"]

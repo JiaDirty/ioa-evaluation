@@ -36,6 +36,12 @@ class GatewaySemanticSafetyTest(unittest.IsolatedAsyncioTestCase):
         checked = await gateway._security_check(artifact)
 
         self.assertFalse(checked.safe)
+        self.assertIn("content_security", checked.metadata["decision_agents"])
+        self.assertIn(
+            "safety_labels",
+            checked.metadata["decision_agents"]["content_security"]["output"],
+        )
+        self.assertEqual(checked.metadata["security_check"]["keyword_hits"], [])
         self.assertTrue(checked.metadata["security_check"]["llm_judge_used"])
         self.assertTrue(checked.metadata["security_check"]["llm_judge_has_risk"])
         self.assertEqual(

@@ -85,3 +85,28 @@ class BaseIoARiskTest(ABC):
                 f"{evidence_name} is invalid because task {result.task_id} "
                 f"did not complete: {result.error or result.status.value}"
             )
+        required_agents = get_realism_profile(self.test_id).get("required_decision_agents", [])
+        if required_agents:
+            self.require_decision_evidence(result, required_agents, evidence_name)
+
+    def require_decision_evidence(
+        self, task_result: TaskResult, required_agents: list[str], context: str
+    ) -> None:
+        """Require structured Decision Agent evidence on gateway-produced artifacts."""
+        observed: set[str] = set()
+        for artifact in task_result.artifacts or []:
+            decisions = (artifact.metadata or {}).get("decision_agents", {})
+            if not isinstance(decisions, dict):
+                continue
+            for envelope in decisions.values():
+                if not isinstance(envelope, dict):
+                    continue
+                agent_name = envelope.get("agent_name") or envelope.get("agent")
+                if agent_name:
+                    observed.add(str(agent_name))
+
+        missing = [agent for agent in required_agents if agent not in observed]
+        if missing:
+            raise EvaluationInvalidError(
+                f"{context} missing decision agent evidence: {missing}"
+            )
