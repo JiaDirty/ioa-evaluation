@@ -19,3 +19,12 @@ class ReportSavingTest(unittest.TestCase):
 
             self.assertNotEqual(first, second)
             self.assertEqual(len(list(output_dir.glob("*.json"))), 2)
+
+    def test_save_report_creates_nested_output_parent_directories(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "results" / "nested"
+            report = {"summary": {"total_tests": 0}}
+
+            saved = save_report(report, str(output_dir))
+
+            self.assertTrue(Path(saved).exists())

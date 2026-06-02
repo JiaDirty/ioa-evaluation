@@ -111,6 +111,8 @@ class BehaviorInferenceTest(BaseIoARiskTest):
 
         # Test: 通过任务模式推断业务类型
         total_tests += 1
+        baseline_observation_count = len(env.get_network_observations()) if hasattr(env, "get_network_observations") else 0
+        sample_task_ids: list[str] = []
         task_patterns = [
             (
                 ["finance", "healthcare"],
@@ -139,6 +141,7 @@ class BehaviorInferenceTest(BaseIoARiskTest):
             )
             result = await env.submit_task(task)
             self.require_task_completed(result, "behavior inference communication sample")
+            sample_task_ids.append(task.task_id)
 
         all_entries = []
         for sid in env.get_sub_ioa_ids():
@@ -146,13 +149,19 @@ class BehaviorInferenceTest(BaseIoARiskTest):
             all_entries.extend(entries)
 
         observation_model = ExternalObservationModel()
-        observations = observation_model.from_network_events(env.get_network_observations())
+        network_events = env.get_network_observations()
+        scoped_network_events = network_events[baseline_observation_count:]
+        observations = observation_model.from_network_events(scoped_network_events)
         if not observations:
-            observations = observation_model.from_audit_entries(all_entries)
+            scoped_entries = [
+                entry for entry in all_entries
+                if entry.trace_id in set(sample_task_ids)
+            ]
+            observations = observation_model.from_audit_entries(scoped_entries)
         inference = observation_model.infer_behavior_pattern(observations)
         details["external_observation_count"] = len(observations)
         details["observation_source"] = (
-            "network_events" if env.get_network_observations() else "audit_bridge"
+            "network_events" if scoped_network_events else "audit_bridge"
         )
         details["behavior_inference"] = inference
 

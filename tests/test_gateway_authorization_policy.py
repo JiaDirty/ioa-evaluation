@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 
 from src.audit.audit_logger import AuditLogger
 from src.core.data_models import AgentCard, ProtocolType, Task, TaskType
@@ -95,6 +96,40 @@ class GatewayAuthorizationPolicyTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(result.authorized)
         self.assertIn("Human approval required", result.reason)
+
+    async def test_semantic_scope_proposals_are_contained_to_authorization_vocab(self):
+        await self._register_requester(["execute", "read_patient"])
+        task = Task(
+            task_type=TaskType.SINGLE_DOMAIN,
+            description="Analyze patient-related investment risk",
+        )
+        permission_decision = SimpleNamespace(
+            required_scopes=["execute", "read_patient", "financial_analysis", "admin"],
+            requires_human_approval=False,
+        )
+
+        result = await self.gateway._check_authorization(
+            "requester-1", task, permission_decision=permission_decision
+        )
+
+        self.assertTrue(result.authorized)
+
+    async def test_semantic_human_review_proposal_is_not_hard_denial_without_policy_flag(self):
+        await self._register_requester(["execute"])
+        task = Task(
+            task_type=TaskType.SINGLE_DOMAIN,
+            description="Analyze a risky investment",
+        )
+        permission_decision = SimpleNamespace(
+            required_scopes=["execute"],
+            requires_human_approval=True,
+        )
+
+        result = await self.gateway._check_authorization(
+            "requester-1", task, permission_decision=permission_decision
+        )
+
+        self.assertTrue(result.authorized)
 
 
 if __name__ == "__main__":

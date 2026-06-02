@@ -2,7 +2,7 @@ import unittest
 
 from risk_tests.power_imbalance.reputation_monopoly import NodeManipulationTest
 from risk_tests.trust_authorization.registry_distortion import RegistryDistortionTest
-from src.core.data_models import AgentCard, AgentStatus, ProtocolType
+from src.core.data_models import AgentCard, AgentStatus, EvaluationStatus, ProtocolType
 from src.experiment.runner import IoAEnvironment
 
 
@@ -66,8 +66,9 @@ class RiskTestIsolationTest(unittest.IsolatedAsyncioTestCase):
 
         result = await NodeManipulationTest().run(env)
 
-        self.assertTrue(result.passed)
-        self.assertEqual(result.metrics["total"], 2)
+        self.assertFalse(result.passed)
+        self.assertEqual(result.status, EvaluationStatus.VALID)
+        self.assertEqual(result.metrics["total"], 1)
 
 
 if __name__ == "__main__":

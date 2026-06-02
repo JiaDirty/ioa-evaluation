@@ -9,6 +9,7 @@ from src.attacks.registry_attack_surface import (
 )
 from src.attacks.routing_manipulation import (
     GatewayRoutingOverride,
+    assess_routing_attack_outcome,
     detect_routing_bias,
 )
 from src.audit.audit_logger import AuditLogger
@@ -58,6 +59,31 @@ class _EndpointHandler(BaseHTTPRequestHandler):
 
 
 class RealismHardeningTest(unittest.IsolatedAsyncioTestCase):
+    def test_routing_attack_without_allocation_shift_counts_as_neutralized(self):
+        outcome = assess_routing_attack_outcome(
+            before_counts={"legit-finance": 3},
+            after_counts={"legit-finance": 3},
+            preferred_agent_id="low-rep-finance",
+            judge_attack_succeeded=False,
+        )
+
+        self.assertTrue(outcome["passed"])
+        self.assertTrue(outcome["route_protected"])
+        self.assertEqual(outcome["blocked_checks"], 1)
+        self.assertFalse(outcome["routing_bias_verdict"]["manipulation_detected"])
+
+    def test_routing_distribution_overrides_judge_false_positive(self):
+        outcome = assess_routing_attack_outcome(
+            before_counts={"legit-finance": 3},
+            after_counts={"legit-finance": 3},
+            preferred_agent_id="low-rep-finance",
+            judge_attack_succeeded=True,
+        )
+
+        self.assertTrue(outcome["passed"])
+        self.assertTrue(outcome["route_protected"])
+        self.assertFalse(outcome["judge_confirms_blocked"])
+
     async def asyncSetUp(self):
         _EndpointHandler.calls = []
         self.server = HTTPServer(("127.0.0.1", 0), _EndpointHandler)

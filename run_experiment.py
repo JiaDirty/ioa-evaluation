@@ -349,7 +349,7 @@ async def run_scenario_dir(scenario_dir: str) -> list[dict]:
 def save_report(report: dict, output_dir: str = "results") -> str:
     """保存实验报告。"""
     output_path = Path(__file__).parent / output_dir
-    output_path.mkdir(exist_ok=True)
+    output_path.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     scenario_id = report.get("scenario", {}).get("scenario_id")

@@ -28,6 +28,7 @@ from ..core.data_models import (
 from ..core.shared_knowledge import SharedKnowledgeBase
 from ..decision_agents import DeterministicDecisionClient
 from ..gateway.gateway import Gateway
+from ..llm.client import get_judge_llm_client
 from ..marketplace.marketplace import TaskMarketplace
 from ..protocol.local_endpoint import LocalAgentEndpointServer
 from ..protocol.adapters import ProtocolNegotiator, SemanticMismatchSimulator
@@ -392,7 +393,7 @@ class IoAEnvironment:
         self.attack_injector = AttackInjector()
         self.attack_injector.set_environment(self)
         self._judges: dict[str, LLMJudge] = {}
-        self._decision_client = self.config.get("decision_client") or DeterministicDecisionClient()
+        self._decision_client = self._create_decision_client()
 
         # 指标引擎
         self.metrics_engine = MetricsEngine(self.audit_logger, self.marketplace)
@@ -401,6 +402,21 @@ class IoAEnvironment:
         self.mismatch_simulator = SemanticMismatchSimulator()
         self.protocol_negotiator = ProtocolNegotiator()
         self.marketplace.set_topology(self.topology)
+
+    def _create_decision_client(self):
+        if self.config.get("decision_client") is not None:
+            return self.config["decision_client"]
+        live_enabled = self.config.get(
+            "enable_live_decision_agents",
+            self.create_agent_runtimes,
+        )
+        if not live_enabled:
+            return DeterministicDecisionClient()
+        try:
+            return get_judge_llm_client()
+        except Exception as e:
+            logger.warning("Decision Agent LLM client unavailable, using deterministic fallback: %s", e)
+            return DeterministicDecisionClient()
 
     # ------------------------------------------------------------------
     # 子生态管理

@@ -52,26 +52,71 @@ class ReportMetricsTest(unittest.IsolatedAsyncioTestCase):
         class _Env:
             audit_logger = _Audit()
 
+            def __init__(self):
+                self.events = []
+
             async def submit_task(self, task):
+                for i in range(4):
+                    self.events.append(NetworkObservationEvent(
+                        timestamp=datetime.now(),
+                        trace_id=f"{task.task_id}-{i}",
+                        source_domain="finance",
+                        target_domain_hint="healthcare",
+                        protocol="a2a",
+                    ))
                 return ReportMetricsTest._task_result_with_decisions(task.task_id)
 
             def get_sub_ioa_ids(self):
                 return ["finance"]
 
             def get_network_observations(self):
-                return [
-                    NetworkObservationEvent(
-                        timestamp=datetime.now(),
-                        trace_id=f"trace-{i}",
-                        source_domain="finance",
-                        target_domain_hint="healthcare",
-                        protocol="a2a",
-                    )
-                    for i in range(4)
-                ]
+                return list(self.events)
 
         test = BehaviorInferenceTest()
         result = await test.run(_Env())
 
         self.assertFalse(result.passed)
         self.assertEqual(result.risk_level, RiskLevel.MEDIUM)
+
+    async def test_behavior_inference_scopes_network_observations_to_current_test(self):
+        class _Audit:
+            async def query_by_sub_ioa(self, sid):
+                return []
+
+        class _Env:
+            audit_logger = _Audit()
+
+            def __init__(self):
+                self.events = [
+                    NetworkObservationEvent(
+                        timestamp=datetime.now(),
+                        trace_id=f"old-trace-{i}",
+                        source_domain="finance",
+                        target_domain_hint="finance",
+                        protocol="a2a",
+                    )
+                    for i in range(12)
+                ]
+
+            async def submit_task(self, task):
+                for sid in task.payload["target_sub_ioas"]:
+                    self.events.append(NetworkObservationEvent(
+                        timestamp=datetime.now(),
+                        trace_id=task.task_id,
+                        source_domain=sid,
+                        target_domain_hint=sid,
+                        protocol="a2a",
+                    ))
+                return ReportMetricsTest._task_result_with_decisions(task.task_id)
+
+            def get_sub_ioa_ids(self):
+                return ["finance", "healthcare", "travel", "news"]
+
+            def get_network_observations(self):
+                return list(self.events)
+
+        result = await BehaviorInferenceTest().run(_Env())
+
+        self.assertTrue(result.passed)
+        self.assertEqual(result.details["external_observation_count"], 6)
+        self.assertTrue(result.details["pattern_not_inferable"])

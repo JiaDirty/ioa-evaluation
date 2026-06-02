@@ -515,13 +515,18 @@ class Gateway:
     ) -> AuthResult:
         """校验请求方身份与权限。"""
         deterministic_scope = self._required_scopes(requester_id, task)
-        semantic_scope = list(getattr(permission_decision, "required_scopes", []) or [])
+        proposed_semantic_scope = list(getattr(permission_decision, "required_scopes", []) or [])
+        semantic_scope = self._sanitize_semantic_scopes(proposed_semantic_scope)
+        ignored_semantic_scope = sorted(set(proposed_semantic_scope) - set(semantic_scope))
         required_scope = sorted(set(deterministic_scope + semantic_scope))
         semantic_requires_approval = bool(
             getattr(permission_decision, "requires_human_approval", False)
         )
+        hard_human_approval_required = bool(task.payload.get("human_approval_required"))
+        if task.payload.get("enforce_semantic_human_approval"):
+            hard_human_approval_required = hard_human_approval_required or semantic_requires_approval
         if (
-            (task.payload.get("human_approval_required") or semantic_requires_approval)
+            hard_human_approval_required
             and not task.payload.get("human_approval_granted")
         ):
             reason = (
@@ -541,6 +546,7 @@ class Gateway:
                     "reason": reason,
                     "required_scope": required_scope,
                     "semantic_required_scope": semantic_scope,
+                    "ignored_semantic_scope": ignored_semantic_scope,
                     "deterministic_required_scope": deterministic_scope,
                 },
             )
@@ -554,6 +560,8 @@ class Gateway:
                 "stage": "authorization_check",
                 "required_scope": required_scope,
                 "semantic_required_scope": semantic_scope,
+                "ignored_semantic_scope": ignored_semantic_scope,
+                "semantic_requires_human_approval": semantic_requires_approval,
                 "deterministic_required_scope": deterministic_scope,
             },
         )
@@ -589,6 +597,25 @@ class Gateway:
         if task.payload.get("writes_shared_knowledge"):
             scopes.append("write_knowledge")
         return sorted(set(scopes))
+
+    @staticmethod
+    def _sanitize_semantic_scopes(scopes: list[str]) -> list[str]:
+        allowed_literals = {
+            "execute",
+            "read",
+            "write",
+            "delegate",
+            "relay",
+            "submit",
+            "write_knowledge",
+        }
+        cleaned: list[str] = []
+        for scope in scopes:
+            if not isinstance(scope, str):
+                continue
+            if scope in allowed_literals or scope.startswith("read_") or scope.startswith("write_"):
+                cleaned.append(scope)
+        return sorted(set(cleaned))
 
     def _evaluate_policy(self, subject, task: Task, required_scope: list[str]) -> AuthResult:
         decision = self.policy_engine.evaluate(subject, task, required_scope)

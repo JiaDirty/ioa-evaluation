@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python 3, Pydantic v2, existing OpenAI-compatible LLM client, unittest, current Gateway/Registry/Marketplace/A2A endpoint stack.
 
+**Implementation status (2026-06-02):** Implemented beyond the original five-agent MVP. Gateway now records TaskUnderstandingAgent, PermissionAnalysisAgent, HumanAgencyAgent, CapabilityMatchingAgent, ProtocolSemanticsAgent, ContentSecurityAgent, ProvenanceVerifierAgent, and ConsensusRiskAgent. RegistryAttackSurface records RegistryRiskAgent decisions. Formal task evidence requires the configured Decision Agent envelopes on artifacts before a completed task can count as valid risk-test evidence.
+
 ---
 
 ## Current Baseline
@@ -1014,4 +1016,3 @@ Full 18 run has agentic_decision_coverage >= 0.90.
 ```
 
 Only after this checklist is proven by current files and command output can the goal be marked complete.
-
