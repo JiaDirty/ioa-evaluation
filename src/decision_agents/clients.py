@@ -58,8 +58,12 @@ class DeterministicDecisionClient:
                 "confidence": 0.6,
             })
         if "ContentSecurityDecision" in system or "safety_labels" in system:
-            text = user.lower()
-            unsafe = any(token in text for token in ["inject", "malicious", "exploit", "hack"])
+            evidence = self._extract_evidence(user)
+            content_text = str(evidence.get("content", "")).lower()
+            keyword_hits = evidence.get("keyword_hits", [])
+            unsafe = bool(keyword_hits) or any(
+                token in content_text for token in ["inject", "malicious", "exploit", "hack"]
+            )
             return json.dumps({
                 "safe": not unsafe,
                 "safety_labels": ["prompt_injection"] if unsafe else [],
@@ -107,3 +111,16 @@ class DeterministicDecisionClient:
         if "travel" in text or "flight" in text:
             return "travel"
         return "unknown"
+
+    @staticmethod
+    def _extract_evidence(user: str) -> dict:
+        marker = "Evidence:"
+        idx = user.rfind(marker)
+        if idx < 0:
+            return {}
+        raw = user[idx + len(marker):].strip()
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return payload if isinstance(payload, dict) else {}

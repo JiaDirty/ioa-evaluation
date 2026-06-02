@@ -31,6 +31,17 @@ from ..core.data_models import (
     TaskType,
     ProtocolMessage,
 )
+from ..decision_agents import (
+    CapabilityMatchingAgent,
+    ContentSecurityAgent,
+    DecisionAgentError,
+    DecisionContext,
+    DecisionEnvelope,
+    DeterministicDecisionClient,
+    PermissionAnalysisAgent,
+    ProtocolSemanticsAgent,
+    TaskUnderstandingAgent,
+)
 from ..protocol.adapters import (
     ProtocolDeliveryError,
     ProtocolNegotiator,
@@ -80,6 +91,8 @@ class Gateway:
         local_audit_logger: AuditLogger | None = None,
         agent_runner: Callable[[str, str, str], str] | None = None,
         safety_judge: Callable[[str, dict[str, Any]], Any] | None = None,
+        decision_agents: dict[str, Any] | None = None,
+        decision_client: Any | None = None,
     ) -> None:
         self.gateway_id = gateway_id
         self.sub_ioa_id = sub_ioa_id
@@ -92,9 +105,23 @@ class Gateway:
         self.policy_engine = AuthorizationPolicyEngine()
         self._agent_runner = agent_runner
         self._safety_judge = safety_judge
+        self._decision_client = decision_client or DeterministicDecisionClient()
+        self._decision_agents = decision_agents or self._build_default_decision_agents(
+            self._decision_client
+        )
 
         # 授权范围记录（用于检测越权漂移）
         self._auth_records: dict[str, list[str]] = {}  # task_id -> [granted_scope]
+
+    @staticmethod
+    def _build_default_decision_agents(decision_client: Any) -> dict[str, Any]:
+        return {
+            "task_understanding": TaskUnderstandingAgent(decision_client),
+            "permission_analysis": PermissionAnalysisAgent(decision_client),
+            "capability_matching": CapabilityMatchingAgent(decision_client),
+            "protocol_semantics": ProtocolSemanticsAgent(decision_client),
+            "content_security": ContentSecurityAgent(decision_client),
+        }
 
     # ------------------------------------------------------------------
     # 双写审计日志
@@ -150,6 +177,69 @@ class Gateway:
 
         return entry_id
 
+    async def _log_decision(
+        self, trace_id: str, ctx: DecisionContext, envelope: DecisionEnvelope
+    ) -> None:
+        await self._log_audit(
+            trace_id=trace_id,
+            action=AuditAction.DECISION_AGENT,
+            agent_id=envelope.agent_name,
+            details={
+                "stage": ctx.stage,
+                "decision_agent": envelope.agent_name,
+                "decision_id": envelope.decision_id,
+                "decision": envelope.output,
+                "confidence": envelope.confidence,
+                "fallback_used": envelope.fallback_used,
+                "parse_error": envelope.parse_error,
+            },
+        )
+
+    async def _run_decision(
+        self,
+        name: str,
+        decision_input: dict[str, Any],
+        ctx: DecisionContext,
+    ):
+        agent = self._decision_agents[name]
+        try:
+            output = await asyncio.to_thread(agent.decide, decision_input, ctx)
+        except DecisionAgentError as e:
+            await self._log_audit(
+                trace_id=ctx.trace_id,
+                action=AuditAction.DECISION_AGENT,
+                agent_id=getattr(agent, "name", name),
+                details={
+                    "stage": ctx.stage,
+                    "decision_agent": getattr(agent, "name", name),
+                    "parse_error": str(e),
+                    "fail_closed": True,
+                },
+            )
+            raise ProtocolDeliveryError(
+                f"Decision agent {name} failed closed: {e}"
+            ) from e
+        envelope = agent.envelope(output, ctx)
+        await self._log_decision(ctx.trace_id, ctx, envelope)
+        return output, envelope
+
+    def _decision_context(
+        self,
+        task: Task,
+        requester_id: str,
+        stage: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> DecisionContext:
+        return DecisionContext(
+            trace_id=task.task_id,
+            task_id=task.task_id,
+            gateway_id=self.gateway_id,
+            sub_ioa_id=self.sub_ioa_id,
+            requester_id=requester_id,
+            stage=stage,
+            metadata=metadata or {},
+        )
+
     # ------------------------------------------------------------------
     # 标准执行流程
     # ------------------------------------------------------------------
@@ -167,8 +257,34 @@ class Gateway:
             details={"stage": "task_intake", "description": task.description},
         )
 
+        decision_envelopes: dict[str, DecisionEnvelope] = {}
+        try:
+            task_understanding, task_env = await self._run_decision(
+                "task_understanding",
+                {"task": task.model_dump(mode="json")},
+                self._decision_context(task, requester_id, "task_understanding"),
+            )
+            decision_envelopes["task_understanding"] = task_env
+            permission_decision, permission_env = await self._run_decision(
+                "permission_analysis",
+                {
+                    "task": task.model_dump(mode="json"),
+                    "task_understanding": task_understanding.model_dump(mode="json"),
+                },
+                self._decision_context(task, requester_id, "permission_analysis"),
+            )
+            decision_envelopes["permission_analysis"] = permission_env
+        except ProtocolDeliveryError as e:
+            return TaskResult(
+                task_id=task.task_id,
+                status=TaskStatus.FAILED,
+                error=str(e),
+            )
+
         # Step 2: Authorization Check
-        auth_result = await self._check_authorization(requester_id, task)
+        auth_result = await self._check_authorization(
+            requester_id, task, permission_decision=permission_decision
+        )
         if not auth_result.authorized:
             return TaskResult(
                 task_id=task.task_id,
@@ -233,16 +349,58 @@ class Gateway:
                 error="No verified candidates",
             )
 
+        try:
+            capability_decision, capability_env = await self._run_decision(
+                "capability_matching",
+                {
+                    "required_capabilities": task.required_capabilities,
+                    "candidates": [c.model_dump(mode="json") for c in verified],
+                },
+                self._decision_context(task, requester_id, "capability_matching"),
+            )
+            decision_envelopes["capability_matching"] = capability_env
+        except ProtocolDeliveryError as e:
+            return TaskResult(
+                task_id=task.task_id,
+                status=TaskStatus.FAILED,
+                error=str(e),
+            )
+
         ranked = self._rank_candidates(verified, task.priority_factors)
+        ranked = self._apply_capability_decision_rank(ranked, capability_decision.ranked_agent_ids)
         target = ranked[0]
 
         # Step 6: Protocol Negotiation
-        neg_result = await self._negotiate_protocol(target.supported_protocols)
+        neg_result = await self._negotiate_protocol(target.supported_protocols, trace_id=trace_id)
         if not neg_result.success:
             return TaskResult(
                 task_id=task.task_id,
                 status=TaskStatus.FAILED,
                 error=f"Protocol negotiation failed: {neg_result.reason}",
+            )
+        try:
+            protocol_decision, protocol_env = await self._run_decision(
+                "protocol_semantics",
+                {
+                    "selected_protocol": neg_result.agreed_protocol.value if neg_result.agreed_protocol else "",
+                    "target_protocols": [p.value for p in target.supported_protocols],
+                    "payload": task.payload,
+                    "negotiation": neg_result.model_dump(mode="json"),
+                },
+                self._decision_context(task, requester_id, "protocol_semantics"),
+            )
+            decision_envelopes["protocol_semantics"] = protocol_env
+        except ProtocolDeliveryError as e:
+            return TaskResult(
+                task_id=task.task_id,
+                status=TaskStatus.FAILED,
+                error=str(e),
+            )
+        if protocol_decision.semantic_fit == "unsafe":
+            return TaskResult(
+                task_id=task.task_id,
+                status=TaskStatus.FAILED,
+                error="Protocol semantics rejected as unsafe by ProtocolSemanticsAgent",
             )
 
         # Step 7: Task Relay
@@ -257,7 +415,19 @@ class Gateway:
             )
 
         # Step 8: Security Check & Audit
-        checked = await self._security_check(artifact)
+        artifact.metadata.setdefault("decision_agents", {}).update({
+            name: envelope.model_dump(mode="json")
+            for name, envelope in decision_envelopes.items()
+        })
+        checked = await self._security_check(
+            artifact,
+            self._decision_context(
+                task,
+                requester_id,
+                "content_security",
+                {"artifact_id": artifact.artifact_id, "target_agent_id": target.agent_id},
+            ),
+        )
         await self._log_audit(
             trace_id=trace_id,
             action=AuditAction.SECURITY_CHECK,
@@ -322,14 +492,29 @@ class Gateway:
     # 内部方法
     # ------------------------------------------------------------------
 
-    async def _check_authorization(self, requester_id: str, task: Task) -> AuthResult:
+    async def _check_authorization(
+        self,
+        requester_id: str,
+        task: Task,
+        permission_decision: Any | None = None,
+    ) -> AuthResult:
         """校验请求方身份与权限。"""
-        required_scope = self._required_scopes(requester_id, task)
+        deterministic_scope = self._required_scopes(requester_id, task)
+        semantic_scope = list(getattr(permission_decision, "required_scopes", []) or [])
+        required_scope = sorted(set(deterministic_scope + semantic_scope))
+        semantic_requires_approval = bool(
+            getattr(permission_decision, "requires_human_approval", False)
+        )
         if (
-            task.payload.get("human_approval_required")
+            (task.payload.get("human_approval_required") or semantic_requires_approval)
             and not task.payload.get("human_approval_granted")
         ):
-            reason = "Human approval required but not granted"
+            reason = (
+                "Human approval required but not granted "
+                "(identified by PermissionAnalysisAgent)"
+                if semantic_requires_approval
+                else "Human approval required but not granted"
+            )
             await self._log_audit(
                 trace_id=task.task_id,
                 action=AuditAction.AUTH_CHECK,
@@ -340,6 +525,8 @@ class Gateway:
                     "authorized": False,
                     "reason": reason,
                     "required_scope": required_scope,
+                    "semantic_required_scope": semantic_scope,
+                    "deterministic_required_scope": deterministic_scope,
                 },
             )
             return AuthResult(authorized=False, reason=reason)
@@ -348,7 +535,12 @@ class Gateway:
             trace_id=task.task_id,
             action=AuditAction.AUTH_CHECK,
             agent_id=requester_id,
-            details={"stage": "authorization_check", "required_scope": required_scope},
+            details={
+                "stage": "authorization_check",
+                "required_scope": required_scope,
+                "semantic_required_scope": semantic_scope,
+                "deterministic_required_scope": deterministic_scope,
+            },
         )
 
         agent = await self.local_registry.get_agent(requester_id)
@@ -418,8 +610,17 @@ class Gateway:
 
         return sorted(candidates, key=score, reverse=True)
 
+    @staticmethod
+    def _apply_capability_decision_rank(candidates: list, ranked_agent_ids: list[str]) -> list:
+        if not ranked_agent_ids:
+            return candidates
+        by_id = {agent.agent_id: agent for agent in candidates}
+        ordered = [by_id[agent_id] for agent_id in ranked_agent_ids if agent_id in by_id]
+        remaining = [agent for agent in candidates if agent.agent_id not in set(ranked_agent_ids)]
+        return ordered + remaining
+
     async def _negotiate_protocol(
-        self, target_protocols: list[ProtocolType]
+        self, target_protocols: list[ProtocolType], trace_id: str = ""
     ) -> NegotiationResult:
         """与目标 Agent 协商通信协议。"""
         # Gateway 支持所有协议
@@ -427,7 +628,7 @@ class Gateway:
         result = await self.negotiator.negotiate(gateway_protocols, target_protocols)
 
         await self._log_audit(
-            trace_id="",
+            trace_id=trace_id,
             action=AuditAction.PROTOCOL_NEGOTIATE,
             agent_id=self.gateway_id,
             protocol_type=result.agreed_protocol,
@@ -511,13 +712,41 @@ class Gateway:
 
         return artifact
 
-    async def _security_check(self, artifact: Artifact) -> Artifact:
+    async def _security_check(
+        self, artifact: Artifact, ctx: DecisionContext | None = None
+    ) -> Artifact:
         """对返回产物进行安全检查。"""
         # 基础规则检查：快速识别明显攻击载荷。
         suspicious_keywords = ["inject", "malicious", "exploit", "hack"]
         content_str = str(artifact.content).lower()
         keyword_hits = [kw for kw in suspicious_keywords if kw in content_str]
-        is_safe = not keyword_hits
+        content_decision = None
+        content_env = None
+        content_ctx = ctx or DecisionContext(
+            trace_id=artifact.source_task_id or artifact.artifact_id,
+            task_id=artifact.source_task_id or artifact.artifact_id,
+            gateway_id=self.gateway_id,
+            sub_ioa_id=self.sub_ioa_id,
+            stage="content_security",
+            metadata={"artifact_id": artifact.artifact_id},
+        )
+        try:
+            content_decision, content_env = await self._run_decision(
+                "content_security",
+                {
+                    "content": artifact.content,
+                    "metadata": artifact.metadata,
+                    "keyword_hits": keyword_hits,
+                },
+                content_ctx,
+            )
+            artifact.metadata.setdefault("decision_agents", {})["content_security"] = (
+                content_env.model_dump(mode="json")
+            )
+        except ProtocolDeliveryError:
+            raise
+
+        is_safe = bool(getattr(content_decision, "safe", True)) and not keyword_hits
 
         judge_verdict = None
         if is_safe and self._safety_judge is not None:
@@ -537,6 +766,9 @@ class Gateway:
         artifact.safe = is_safe
         artifact.metadata["security_check"] = {
             "keyword_hits": keyword_hits,
+            "decision_agent_used": True,
+            "content_safety_action": getattr(content_decision, "action", None),
+            "content_safety_labels": getattr(content_decision, "safety_labels", []),
             "llm_judge_used": self._safety_judge is not None,
             "llm_judge_has_risk": (
                 bool(getattr(judge_verdict, "has_risk", False))

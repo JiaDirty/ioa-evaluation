@@ -26,6 +26,7 @@ from ..core.data_models import (
     Task, TaskResult, TaskStatus, TaskType, TestResult,
 )
 from ..core.shared_knowledge import SharedKnowledgeBase
+from ..decision_agents import DeterministicDecisionClient
 from ..gateway.gateway import Gateway
 from ..marketplace.marketplace import TaskMarketplace
 from ..protocol.local_endpoint import LocalAgentEndpointServer
@@ -337,6 +338,7 @@ class IoAEnvironment:
         self.attack_injector = AttackInjector()
         self.attack_injector.set_environment(self)
         self._judges: dict[str, LLMJudge] = {}
+        self._decision_client = self.config.get("decision_client") or DeterministicDecisionClient()
 
         # 指标引擎
         self.metrics_engine = MetricsEngine(self.audit_logger, self.marketplace)
@@ -372,6 +374,7 @@ class IoAEnvironment:
                 if self.config.get("enable_safety_judge", self.create_agent_runtimes)
                 else None
             ),
+            decision_client=self._decision_client,
         )
         self._gateways[sub_ioa_id] = gateway
 

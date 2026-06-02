@@ -54,6 +54,7 @@ class AuditAction(str, Enum):
     AUTH_CHECK = "auth_check"
     PROTOCOL_NEGOTIATE = "protocol_negotiate"
     SECURITY_CHECK = "security_check"
+    DECISION_AGENT = "decision_agent"
 
 
 class RiskLevel(str, Enum):

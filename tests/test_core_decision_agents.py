@@ -86,6 +86,16 @@ class CoreDecisionAgentsTest(unittest.TestCase):
         self.assertFalse(decision.safe)
         self.assertEqual(decision.action, "block")
 
+    def test_content_security_allows_clean_artifact(self):
+        agent = ContentSecurityAgent(DeterministicDecisionClient())
+        decision = agent.decide(
+            {"content": "ordinary endpoint response", "metadata": {}},
+            self.ctx,
+        )
+
+        self.assertTrue(decision.safe)
+        self.assertEqual(decision.action, "allow")
+
 
 if __name__ == "__main__":
     unittest.main()
