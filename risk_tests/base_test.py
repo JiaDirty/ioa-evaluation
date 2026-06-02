@@ -8,7 +8,7 @@ import time
 from abc import ABC, abstractmethod
 from typing import Any
 
-from src.core.data_models import RiskLevel, TaskResult, TaskStatus, TestResult
+from src.core.data_models import RiskLevel, Task, TaskResult, TaskStatus, TaskType, TestResult
 from src.experiment.exceptions import EvaluationInvalidError
 from .realism import get_realism_profile
 
@@ -64,6 +64,39 @@ class BaseIoARiskTest(ABC):
                 f"Agent backend failed for Sub-IoA '{sub_ioa_id}': {e}"
             ) from e
 
+    async def run_gateway_prompt(
+        self,
+        env: Any,
+        sub_ioa_id: str,
+        prompt: str,
+        *,
+        required_capabilities: list[str] | None = None,
+        payload: dict[str, Any] | None = None,
+        task_type: TaskType = TaskType.SINGLE_DOMAIN,
+        evidence_name: str | None = None,
+    ) -> TaskResult:
+        """Run an attack prompt through Marketplace/Gateway/HTTP endpoint."""
+        default_capabilities = {
+            "finance": ["financial_analysis"],
+            "healthcare": ["clinical_analysis"],
+            "travel": ["travel_planning"],
+            "news": ["news_aggregation"],
+        }
+        task_payload = dict(payload or {})
+        if task_type == TaskType.CROSS_DOMAIN:
+            task_payload.setdefault("target_sub_ioas", [sub_ioa_id])
+        else:
+            task_payload.setdefault("target_sub_ioa", sub_ioa_id)
+        task = Task(
+            task_type=task_type,
+            description=prompt,
+            required_capabilities=required_capabilities or default_capabilities.get(sub_ioa_id, []),
+            payload=task_payload,
+        )
+        result = await env.submit_task(task)
+        self.require_task_completed(result, evidence_name or f"{self.test_id} gateway prompt")
+        return result
+
     async def judge_attack(self, env: Any, risk_type: str, goal: str, response: str) -> tuple[bool, str]:
         """用 LLM Judge 评估攻击是否成功。"""
         try:
@@ -78,6 +111,88 @@ class BaseIoARiskTest(ABC):
                 raise
             raise EvaluationInvalidError(f"LLM judge failed for {risk_type}: {e}") from e
 
+    def record_test_decision(self, details: dict[str, Any], envelope: Any) -> None:
+        """Record test-level Decision Agent evidence for report coverage."""
+        agent_name = getattr(envelope, "agent_name", None)
+        if not agent_name:
+            raise EvaluationInvalidError("Decision envelope is missing agent_name")
+        details.setdefault("decision_agents", {})[str(agent_name)] = envelope.model_dump(mode="json")
+
+    def record_required_test_decisions(
+        self,
+        env: Any,
+        details: dict[str, Any],
+        evidence: dict[str, Any],
+    ) -> None:
+        """Run test-specific semantic Decision Agents over concrete test evidence."""
+        from src.decision_agents import (
+            AgencyErosionAgent,
+            AuditAttributionAgent,
+            ConsensusRiskAgent,
+            DecisionAgentError,
+            DecisionContext,
+            DelegationDriftAgent,
+            DeterministicDecisionClient,
+            DiscussionIntegrityAgent,
+            HumanAgencyAgent,
+            IncentiveAlignmentAgent,
+            InteropSemanticMapperAgent,
+            NormDriftAgent,
+            ProtocolSemanticsAgent,
+            RegistryRiskAgent,
+            ReputationFairnessAgent,
+            RoutingManipulationAgent,
+            RumorAssessmentAgent,
+        )
+
+        agent_classes = {
+            "AgencyErosionAgent": AgencyErosionAgent,
+            "AuditAttributionAgent": AuditAttributionAgent,
+            "ConsensusRiskAgent": ConsensusRiskAgent,
+            "DelegationDriftAgent": DelegationDriftAgent,
+            "DiscussionIntegrityAgent": DiscussionIntegrityAgent,
+            "HumanAgencyAgent": HumanAgencyAgent,
+            "IncentiveAlignmentAgent": IncentiveAlignmentAgent,
+            "InteropSemanticMapperAgent": InteropSemanticMapperAgent,
+            "NormDriftAgent": NormDriftAgent,
+            "ProtocolSemanticsAgent": ProtocolSemanticsAgent,
+            "RegistryRiskAgent": RegistryRiskAgent,
+            "ReputationFairnessAgent": ReputationFairnessAgent,
+            "RoutingManipulationAgent": RoutingManipulationAgent,
+            "RumorAssessmentAgent": RumorAssessmentAgent,
+        }
+        profile = get_realism_profile(self.test_id)
+        client = getattr(env, "_decision_client", None) or DeterministicDecisionClient()
+        for agent_name in profile.get("test_required_decision_agents", []):
+            agent_cls = agent_classes.get(agent_name)
+            if agent_cls is None:
+                raise EvaluationInvalidError(
+                    f"{self.test_id} has unsupported required Decision Agent: {agent_name}"
+                )
+            agent = agent_cls(client)
+            stage = agent_name.removesuffix("Agent")
+            stage = "".join(
+                f"_{ch.lower()}" if ch.isupper() else ch
+                for ch in stage
+            ).lstrip("_")
+            ctx = DecisionContext(
+                trace_id=f"{self.test_id}:{stage}",
+                task_id=self.test_id,
+                stage=stage,
+                requester_id="risk_test",
+                metadata={"test_id": self.test_id, "test_name": self.test_name},
+            )
+            try:
+                decision = agent.decide(
+                    {"test_id": self.test_id, "evidence": evidence},
+                    ctx,
+                )
+            except DecisionAgentError as e:
+                raise EvaluationInvalidError(
+                    f"{self.test_id} Decision Agent {agent_name} failed: {e}"
+                ) from e
+            self.record_test_decision(details, agent.envelope(decision, ctx))
+
     def require_task_completed(self, result: TaskResult, evidence_name: str) -> None:
         """Require successful task execution before using it as measurement evidence."""
         if result.status != TaskStatus.COMPLETED:
@@ -85,7 +200,11 @@ class BaseIoARiskTest(ABC):
                 f"{evidence_name} is invalid because task {result.task_id} "
                 f"did not complete: {result.error or result.status.value}"
             )
-        required_agents = get_realism_profile(self.test_id).get("required_decision_agents", [])
+        profile = get_realism_profile(self.test_id)
+        required_agents = profile.get(
+            "gateway_required_decision_agents",
+            profile.get("required_decision_agents", []),
+        )
         if required_agents:
             self.require_decision_evidence(result, required_agents, evidence_name)
 

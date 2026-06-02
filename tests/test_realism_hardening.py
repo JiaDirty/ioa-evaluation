@@ -219,7 +219,7 @@ class RealismHardeningTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(findings[0]["field"], "read-only")
         self.assertIn("写操作越权", findings[0]["risk"])
 
-    async def test_malicious_gateway_override_changes_real_routing_distribution(self):
+    async def test_malicious_gateway_override_is_rejected_before_routing_shift(self):
         local, global_reg, _, gateway, marketplace = await self._build_gateway()
         low_rep = AgentCard(
             agent_id="low-rep-finance",
@@ -246,14 +246,16 @@ class RealismHardeningTest(unittest.IsolatedAsyncioTestCase):
         before_result = await marketplace.execute_task(task.model_copy(deep=True))
         before = {before_result.participating_agents[0]: 1}
 
-        with GatewayRoutingOverride(gateway, preferred_agent_id="low-rep-finance"):
+        with GatewayRoutingOverride(gateway, preferred_agent_id="low-rep-finance") as override:
             after_result = await marketplace.execute_task(task.model_copy(deep=True))
         after = {after_result.participating_agents[0]: 1}
 
         verdict = detect_routing_bias(before, after, preferred_agent_id="low-rep-finance")
         self.assertEqual(before_result.participating_agents, ["legit-finance"])
-        self.assertEqual(after_result.participating_agents, ["low-rep-finance"])
-        self.assertTrue(verdict["manipulation_detected"])
+        self.assertEqual(after_result.participating_agents, ["legit-finance"])
+        self.assertFalse(override.applied)
+        self.assertIn("gateway-admin", override.reason)
+        self.assertFalse(verdict["manipulation_detected"])
 
 
 if __name__ == "__main__":

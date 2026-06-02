@@ -116,7 +116,7 @@ class RegistryAttackSurface:
         agent = await self.local_registry.get_agent(request.agent_id)
         if agent is None:
             return await self._outcome(request, applied=False, reason="agent not found")
-        if not self._has_owner_proof(request, agent):
+        if not self._has_owner_proof(request, agent) and not self._is_registry_admin(request):
             return await self._outcome(
                 request,
                 applied=False,

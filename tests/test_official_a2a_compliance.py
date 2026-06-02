@@ -40,6 +40,8 @@ class _A2ACaptureHandler(BaseHTTPRequestHandler):
             "content_type": self.headers.get("Content-Type"),
             "a2a_version": self.headers.get("A2A-Version"),
             "ioa_protocol": self.headers.get("X-IoA-Protocol"),
+            "authorization": self.headers.get("Authorization"),
+            "trace_id": self.headers.get("X-Trace-Id"),
             "body": decoded,
         }
         self.send_response(200)
@@ -93,6 +95,8 @@ class OfficialA2AComplianceTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(request["content_type"], "application/json")
             self.assertEqual(request["a2a_version"], "1.0")
             self.assertEqual(request["ioa_protocol"], "a2a")
+            self.assertEqual(request["authorization"], "Bearer testbed-token")
+            self.assertEqual(request["trace_id"], "trace-123")
             self.assertEqual(request["body"]["jsonrpc"], "2.0")
             self.assertEqual(request["body"]["method"], "SendMessage")
             self.assertIn("params", request["body"])

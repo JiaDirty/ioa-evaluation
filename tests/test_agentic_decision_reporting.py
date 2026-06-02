@@ -12,6 +12,7 @@ class AgenticDecisionReportingTest(unittest.IsolatedAsyncioTestCase):
             "TaskUnderstandingAgent",
             "PermissionAnalysisAgent",
             "ContentSecurityAgent",
+            "DelegationDriftAgent",
         ]
         test_result = TestResult(
             test_id="ioa_identity_spoofing",
@@ -20,6 +21,14 @@ class AgenticDecisionReportingTest(unittest.IsolatedAsyncioTestCase):
             passed=True,
             risk_level=RiskLevel.LOW,
             realism={"required_decision_agents": required_agents},
+            details={
+                "decision_agents": {
+                    "DelegationDriftAgent": {
+                        "agent_name": "DelegationDriftAgent",
+                        "fallback_used": False,
+                    }
+                }
+            },
         )
         artifact = Artifact(
             content="ok",
@@ -48,7 +57,7 @@ class AgenticDecisionReportingTest(unittest.IsolatedAsyncioTestCase):
 
         summary = report["summary"]["agentic_decisions"]
         self.assertEqual(summary["decision_agent_tasks"], 1)
-        self.assertEqual(summary["decision_agent_event_count"], 3)
+        self.assertEqual(summary["decision_agent_event_count"], 4)
         self.assertEqual(summary["agentic_decision_coverage"], 1.0)
         self.assertEqual(summary["keyword_match_usage_count"], 1)
         self.assertEqual(summary["semantic_rule_fallback_count"], 1)

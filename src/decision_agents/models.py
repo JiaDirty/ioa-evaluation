@@ -118,3 +118,106 @@ class RegistryRiskDecision(BaseModel):
     recommended_action: Literal["accept", "review", "quarantine", "reject"]
     rationale: str
     confidence: float = Field(ge=0.0, le=1.0)
+
+
+class SensitivityClassificationDecision(BaseModel):
+    sensitivity: Literal["low", "medium", "high", "critical"]
+    sensitive_domains: list[str] = Field(default_factory=list)
+    high_impact_detected: bool = False
+    requires_human_review: bool = False
+    rationale: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class DelegationDriftDecision(BaseModel):
+    delegation_drift_detected: bool
+    unauthorized_scope_expansion: bool = False
+    missing_parent_scopes: list[str] = Field(default_factory=list)
+    recommended_action: Literal["allow", "constrain", "needs_review", "block"]
+    rationale: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class InteropSemanticMappingDecision(BaseModel):
+    source_protocol: str
+    target_protocol: str
+    semantic_loss_detected: bool
+    lost_semantics: list[str] = Field(default_factory=list)
+    required_compensating_controls: list[str] = Field(default_factory=list)
+    risk_level: Literal["low", "medium", "high", "critical"]
+    rationale: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class RumorAssessmentDecision(BaseModel):
+    unverified_claim_detected: bool
+    rumor_risk_level: Literal["low", "medium", "high", "critical"]
+    source_support: Literal["none", "weak", "mixed", "strong"]
+    recommended_action: Literal["allow", "label", "needs_review", "block"]
+    rationale: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class NormDriftDecision(BaseModel):
+    norm_drift_detected: bool
+    drift_patterns: list[str] = Field(default_factory=list)
+    severity: Literal["low", "medium", "high", "critical"]
+    recommended_action: Literal["allow", "monitor", "needs_review", "block"]
+    rationale: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class ReputationFairnessDecision(BaseModel):
+    fairness_risk_level: Literal["low", "medium", "high", "critical"]
+    monopoly_risk_detected: bool = False
+    concentration_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    affected_parties: list[str] = Field(default_factory=list)
+    recommended_action: Literal["allow", "monitor", "rebalance", "needs_review"]
+    rationale: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class IncentiveAlignmentDecision(BaseModel):
+    misalignment_detected: bool
+    reward_hacking_risk: bool = False
+    incentive_risks: list[str] = Field(default_factory=list)
+    recommended_action: Literal["allow", "monitor", "needs_review", "block"]
+    rationale: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class RoutingManipulationDecision(BaseModel):
+    manipulation_detected: bool
+    traffic_shift: float = Field(default=0.0, ge=-1.0, le=1.0)
+    manipulation_vectors: list[str] = Field(default_factory=list)
+    recommended_action: Literal["allow", "monitor", "rebalance", "block"]
+    rationale: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class DiscussionIntegrityDecision(BaseModel):
+    integrity_compromised: bool
+    coordination_detected: bool = False
+    distortion_patterns: list[str] = Field(default_factory=list)
+    recommended_action: Literal["allow", "label", "needs_review", "block"]
+    rationale: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class AuditAttributionDecision(BaseModel):
+    attribution_complete: bool
+    missing_evidence: list[str] = Field(default_factory=list)
+    audit_gaps: list[str] = Field(default_factory=list)
+    recommended_action: Literal["accept", "request_evidence", "needs_review", "block"]
+    rationale: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class AgencyErosionDecision(BaseModel):
+    agency_erosion_detected: bool
+    human_agency_preserved: bool
+    approval_pressure_detected: bool = False
+    dependency_patterns: list[str] = Field(default_factory=list)
+    recommended_action: Literal["allow", "needs_human_review", "block"]
+    rationale: str
+    confidence: float = Field(ge=0.0, le=1.0)

@@ -40,6 +40,7 @@ def _post_json_endpoint(
     headers = {
         "Content-Type": "application/json",
         "X-IoA-Protocol": protocol,
+        "Authorization": "Bearer testbed-token",
     }
     if extra_headers:
         headers.update(extra_headers)
@@ -135,7 +136,10 @@ class A2AAdapter(ProtocolAdapter):
             target_endpoint,
             encoded,
             "a2a",
-            extra_headers={"A2A-Version": A2A_PROTOCOL_VERSION},
+            extra_headers={
+                "A2A-Version": A2A_PROTOCOL_VERSION,
+                "X-Trace-Id": message.trace_id,
+            },
         )
         result["message_id"] = message.message_id
         return result
@@ -225,7 +229,12 @@ class MCPAdapter(ProtocolAdapter):
         """发送 MCP 格式消息。"""
         encoded = self.encode(message)
         logger.debug("MCP send to %s: %s", target_endpoint, encoded[:200])
-        result = _post_json_endpoint(target_endpoint, encoded, "mcp")
+        result = _post_json_endpoint(
+            target_endpoint,
+            encoded,
+            "mcp",
+            extra_headers={"X-Trace-Id": message.trace_id},
+        )
         result["message_id"] = message.message_id
         return result
 
@@ -287,7 +296,12 @@ class PrivateAPIAdapter(ProtocolAdapter):
     async def send_message(self, target_endpoint: str, message: ProtocolMessage) -> dict[str, Any]:
         encoded = self.encode(message)
         logger.debug("PrivateAPI send to %s: %s", target_endpoint, encoded[:200])
-        result = _post_json_endpoint(target_endpoint, encoded, "private_api")
+        result = _post_json_endpoint(
+            target_endpoint,
+            encoded,
+            "private_api",
+            extra_headers={"X-Trace-Id": message.trace_id},
+        )
         result["message_id"] = message.message_id
         return result
 

@@ -2,7 +2,11 @@ import unittest
 
 from risk_tests.base_test import BaseIoARiskTest
 from risk_tests.registry import ALL_TESTS
-from risk_tests.realism import get_realism_profile
+from risk_tests.realism import (
+    CORE_REQUIRED_DECISION_AGENTS,
+    TEST_REQUIRED_DECISION_AGENTS,
+    get_realism_profile,
+)
 from src.core.data_models import Artifact, RiskLevel, TaskResult, TaskStatus, TestResult
 from src.experiment.exceptions import EvaluationInvalidError
 
@@ -25,6 +29,18 @@ class AgenticRiskTestRequirementsTest(unittest.TestCase):
             combined = chain + components
 
             self.assertTrue(profile.get("required_decision_agents"), test.test_id)
+            self.assertEqual(
+                profile.get("gateway_required_decision_agents"),
+                CORE_REQUIRED_DECISION_AGENTS,
+                test.test_id,
+            )
+            self.assertEqual(
+                profile.get("test_required_decision_agents"),
+                TEST_REQUIRED_DECISION_AGENTS[test.test_id],
+                test.test_id,
+            )
+            for agent_name in TEST_REQUIRED_DECISION_AGENTS[test.test_id]:
+                self.assertIn(agent_name, profile["required_decision_agents"], test.test_id)
             self.assertTrue(profile.get("agent_in_loop"), test.test_id)
             self.assertTrue(any("gateway" in item for item in combined), test.test_id)
 
@@ -45,7 +61,7 @@ class AgenticRiskTestRequirementsTest(unittest.TestCase):
 
     def test_require_task_completed_accepts_full_decision_evidence(self):
         test = _ConcreteRiskTest()
-        required = get_realism_profile(test.test_id)["required_decision_agents"]
+        required = get_realism_profile(test.test_id)["gateway_required_decision_agents"]
         decisions = {
             agent_name: {"agent_name": agent_name}
             for agent_name in required

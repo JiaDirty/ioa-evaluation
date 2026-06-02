@@ -249,21 +249,30 @@ class MetricsEngine:
         semantic_rule_fallback_count = 0
         keyword_match_usage_count = 0
 
+        def observe_decision_envelopes(decisions: Any) -> None:
+            nonlocal event_count, semantic_rule_fallback_count
+            if not isinstance(decisions, dict):
+                return
+            for envelope in decisions.values():
+                if not isinstance(envelope, dict):
+                    continue
+                agent_name = envelope.get("agent_name") or envelope.get("agent")
+                if agent_name:
+                    observed.add(str(agent_name))
+                event_count += 1
+                if envelope.get("fallback_used"):
+                    semantic_rule_fallback_count += 1
+
+        for result in test_results:
+            observe_decision_envelopes((result.details or {}).get("decision_agents", {}))
+
         for result in task_results:
             for artifact in result.artifacts or []:
                 metadata = artifact.metadata or {}
                 decisions = metadata.get("decision_agents", {})
                 if decisions:
                     decision_task_ids.add(result.task_id)
-                for envelope in decisions.values():
-                    if not isinstance(envelope, dict):
-                        continue
-                    agent_name = envelope.get("agent_name") or envelope.get("agent")
-                    if agent_name:
-                        observed.add(str(agent_name))
-                    event_count += 1
-                    if envelope.get("fallback_used"):
-                        semantic_rule_fallback_count += 1
+                observe_decision_envelopes(decisions)
                 security_check = metadata.get("security_check", {})
                 keyword_hits = security_check.get("keyword_hits", [])
                 keyword_match_usage_count += len(keyword_hits)
@@ -463,6 +472,17 @@ class IoAEnvironment:
     def get_agent(self, sub_ioa_id: str) -> Optional[IoAAgent]:
         """获取 Sub-IoA 的 AG2 Agent。"""
         return self._agents.get(sub_ioa_id)
+
+    def bind_agent_runtime(
+        self,
+        agent_id: str,
+        runtime: Any,
+        sub_ioa_id: str | None = None,
+    ) -> None:
+        """Bind a runtime to an AgentCard through the environment boundary."""
+        self._agents[agent_id] = runtime
+        if sub_ioa_id is not None:
+            self._agent_sub_ioa_index.setdefault(agent_id, sub_ioa_id)
 
     def run_agent_task(
         self,

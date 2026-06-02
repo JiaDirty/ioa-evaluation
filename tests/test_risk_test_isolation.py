@@ -66,9 +66,10 @@ class RiskTestIsolationTest(unittest.IsolatedAsyncioTestCase):
 
         result = await NodeManipulationTest().run(env)
 
-        self.assertFalse(result.passed)
+        self.assertTrue(result.passed)
         self.assertEqual(result.status, EvaluationStatus.VALID)
         self.assertEqual(result.metrics["total"], 1)
+        self.assertFalse(result.details["routing_override_applied"])
 
 
 if __name__ == "__main__":

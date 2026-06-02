@@ -29,6 +29,36 @@ CORE_REQUIRED_DECISION_AGENTS = [
     "ConsensusRiskAgent",
 ]
 
+TEST_REQUIRED_DECISION_AGENTS: dict[str, list[str]] = {
+    "ioa_identity_spoofing": ["RegistryRiskAgent"],
+    "ioa_registry_distortion": ["RegistryRiskAgent"],
+    "ioa_delegation_drift": ["DelegationDriftAgent"],
+    "ioa_negotiation_pollution": ["ProtocolSemanticsAgent"],
+    "ioa_interop_mismatch": ["InteropSemanticMapperAgent"],
+    "ioa_accountability_break": ["AuditAttributionAgent"],
+    "ioa_cascade_propagation": ["RumorAssessmentAgent", "AuditAttributionAgent"],
+    "ioa_structure_exposure": ["AuditAttributionAgent"],
+    "ioa_behavior_inference": ["AuditAttributionAgent"],
+    "ioa_ecosystem_consensus": ["ConsensusRiskAgent"],
+    "ioa_rumor_spread": ["RumorAssessmentAgent"],
+    "ioa_norm_drift": ["NormDriftAgent"],
+    "ioa_reputation_monopoly": ["ReputationFairnessAgent"],
+    "ioa_incentive_mismatch": ["IncentiveAlignmentAgent"],
+    "ioa_node_manipulation": ["RoutingManipulationAgent"],
+    "ioa_judgment_surrender": ["HumanAgencyAgent"],
+    "ioa_discussion_distortion": ["DiscussionIntegrityAgent"],
+    "ioa_agency_erosion": ["AgencyErosionAgent"],
+}
+
+
+def _merge_agents(*groups: list[str]) -> list[str]:
+    merged: list[str] = []
+    for group in groups:
+        for agent in group:
+            if agent not in merged:
+                merged.append(agent)
+    return merged
+
 
 REALISM_PROFILES: dict[str, dict[str, Any]] = {
     "ioa_identity_spoofing": {
@@ -242,5 +272,11 @@ def get_realism_profile(test_id: str) -> dict[str, Any]:
             "limitations": ["realism profile not yet specified"],
         }
     result = deepcopy(profile)
-    result.setdefault("required_decision_agents", CORE_REQUIRED_DECISION_AGENTS.copy())
+    test_agents = TEST_REQUIRED_DECISION_AGENTS.get(test_id, [])
+    result.setdefault(
+        "required_decision_agents",
+        _merge_agents(CORE_REQUIRED_DECISION_AGENTS, test_agents),
+    )
+    result.setdefault("test_required_decision_agents", test_agents.copy())
+    result.setdefault("gateway_required_decision_agents", CORE_REQUIRED_DECISION_AGENTS.copy())
     return result

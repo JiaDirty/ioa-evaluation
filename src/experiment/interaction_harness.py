@@ -27,6 +27,8 @@ class LongitudinalInteractionResult:
             parts.append(
                 f"Round {item.round_index} / {item.sub_ioa_id}\n"
                 f"User: {item.prompt}\n"
+                f"Status: {item.result.status.value}\n"
+                f"Error: {item.result.error or ''}\n"
                 f"Agent: {item.result.output}"
             )
         return "\n\n".join(parts)
@@ -41,19 +43,22 @@ class LongitudinalInteractionHarness:
         sub_ioa_id: str,
         prompts: list[str],
         required_capabilities: list[str],
+        payloads_by_round: dict[int, dict[str, Any]] | None = None,
     ) -> LongitudinalInteractionResult:
         history: list[dict[str, Any]] = []
         result = LongitudinalInteractionResult()
         for index, prompt in enumerate(prompts, start=1):
+            payload = {
+                "target_sub_ioa": sub_ioa_id,
+                "interaction_round": index,
+                "conversation_history": history,
+            }
+            payload.update((payloads_by_round or {}).get(index, {}))
             task = Task(
                 task_type=TaskType.SINGLE_DOMAIN,
                 description=prompt,
                 required_capabilities=required_capabilities,
-                payload={
-                    "target_sub_ioa": sub_ioa_id,
-                    "interaction_round": index,
-                    "conversation_history": history,
-                },
+                payload=payload,
             )
             task_result = await env.submit_task(task)
             result.rounds.append(InteractionRound(index, sub_ioa_id, prompt, task_result))

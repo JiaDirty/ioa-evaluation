@@ -4,7 +4,15 @@ import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from src.audit.audit_logger import AuditLogger
-from src.core.data_models import AgentCard, AuditAction, ProtocolType, Task, TaskStatus, TaskType
+from src.core.data_models import (
+    AgentCard,
+    AuditAction,
+    GatewayPipelineStage,
+    ProtocolType,
+    Task,
+    TaskStatus,
+    TaskType,
+)
 from src.decision_agents import DeterministicDecisionClient
 from src.gateway.gateway import Gateway
 from src.registry.registry import Registry
@@ -107,6 +115,21 @@ class GatewayDecisionAuditTest(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("decision_agent", entry.details)
                 self.assertIn("decision", entry.details)
                 self.assertIn("confidence", entry.details)
+
+            observed_stages = {entry.details.get("stage") for entry in entries}
+            expected_stages = {
+                GatewayPipelineStage.TASK_INTAKE.value,
+                GatewayPipelineStage.POLICY_ENFORCEMENT.value,
+                GatewayPipelineStage.CANDIDATE_RANKING.value,
+                GatewayPipelineStage.PROTOCOL_NEGOTIATION.value,
+                GatewayPipelineStage.PRE_DELIVERY_SECURITY.value,
+                GatewayPipelineStage.HTTP_DELIVERY.value,
+                GatewayPipelineStage.POST_DELIVERY_SECURITY.value,
+                GatewayPipelineStage.ARTIFACT_AGGREGATION.value,
+                GatewayPipelineStage.AUDIT_FINALIZATION.value,
+            }
+            self.assertTrue(expected_stages.issubset(observed_stages))
+            self.assertTrue(all(entry.input_hash for entry in entries))
         finally:
             server.shutdown()
             thread.join(timeout=3)

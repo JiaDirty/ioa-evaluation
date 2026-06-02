@@ -23,7 +23,9 @@ from ..core.data_models import (
     AuditAction,
     AuthResult,
     DiscoveryQuery,
+    GatewayPipelineStage,
     NegotiationResult,
+    PolicyTicket,
     ProtocolType,
     Task,
     TaskResult,
@@ -112,6 +114,11 @@ class Gateway:
         self._decision_agents = decision_agents or self._build_default_decision_agents(
             self._decision_client
         )
+        self._routing_policy_override: Callable[[list, dict[str, float]], list] | None = None
+        self._last_routing_override_result: dict[str, Any] = {
+            "applied": False,
+            "reason": "no routing override requested",
+        }
 
         # 授权范围记录（用于检测越权漂移）
         self._auth_records: dict[str, list[str]] = {}  # task_id -> [granted_scope]
@@ -246,6 +253,21 @@ class Gateway:
             metadata=metadata or {},
         )
 
+    @staticmethod
+    def _make_policy_ticket(task: Task, auth_result: AuthResult) -> PolicyTicket:
+        return PolicyTicket(
+            task_id=task.task_id,
+            allowed=auth_result.authorized,
+            reason=auth_result.reason,
+            granted_scopes=auth_result.granted_scope,
+            denied_scopes=[] if auth_result.authorized else ["execute"],
+            effective_scopes=auth_result.granted_scope,
+            human_approval_checked=bool(
+                task.payload.get("human_approval_required")
+                or task.payload.get("enforce_semantic_human_approval")
+            ),
+        )
+
     # ------------------------------------------------------------------
     # 标准执行流程
     # ------------------------------------------------------------------
@@ -260,7 +282,7 @@ class Gateway:
             trace_id=trace_id,
             action=AuditAction.CALL,
             agent_id=requester_id,
-            details={"stage": "task_intake", "description": task.description},
+            details={"stage": GatewayPipelineStage.TASK_INTAKE.value, "description": task.description},
         )
 
         decision_envelopes: dict[str, DecisionEnvelope] = {}
@@ -299,6 +321,17 @@ class Gateway:
         # Step 2: Authorization Check
         auth_result = await self._check_authorization(
             requester_id, task, permission_decision=permission_decision
+        )
+        policy_ticket = self._make_policy_ticket(task, auth_result)
+        await self._log_audit(
+            trace_id=trace_id,
+            action=AuditAction.AUTH_CHECK,
+            agent_id=self.gateway_id,
+            auth_scope=auth_result.granted_scope,
+            details={
+                "stage": GatewayPipelineStage.POLICY_ENFORCEMENT.value,
+                "policy_ticket": policy_ticket.model_dump(mode="json"),
+            },
         )
         if not auth_result.authorized:
             return TaskResult(
@@ -383,6 +416,16 @@ class Gateway:
             )
 
         ranked = self._apply_capability_decision_rank(ranked, capability_decision.ranked_agent_ids)
+        await self._log_audit(
+            trace_id=trace_id,
+            action=AuditAction.AUTH_CHECK,
+            agent_id=self.gateway_id,
+            details={
+                "stage": GatewayPipelineStage.CANDIDATE_RANKING.value,
+                "ranked_agent_ids": [candidate.agent_id for candidate in ranked],
+                "decision_agent": capability_env.agent_name,
+            },
+        )
         target = ranked[0]
 
         # Step 6: Protocol Negotiation
@@ -419,6 +462,19 @@ class Gateway:
             )
 
         # Step 7: Task Relay
+        await self._log_audit(
+            trace_id=trace_id,
+            action=AuditAction.SECURITY_CHECK,
+            agent_id=self.gateway_id,
+            target_agent_id=target.agent_id,
+            protocol_type=neg_result.agreed_protocol,
+            details={
+                "stage": GatewayPipelineStage.PRE_DELIVERY_SECURITY.value,
+                "selected_agent": target.agent_id,
+                "protocol": neg_result.agreed_protocol.value,
+                "semantic_fit": protocol_decision.semantic_fit,
+            },
+        )
         try:
             artifact = await self._relay_task(target, task, neg_result, trace_id)
         except ProtocolDeliveryError as e:
@@ -450,7 +506,7 @@ class Gateway:
             target_agent_id=target.agent_id,
             output_artifact_ids=[checked.artifact_id],
             details={
-                "stage": "security_check",
+                "stage": GatewayPipelineStage.POST_DELIVERY_SECURITY.value,
                 "safe": checked.safe,
                 "security_check": checked.metadata.get("security_check", {}),
             },
@@ -464,11 +520,25 @@ class Gateway:
             target_agent_id=target.agent_id,
             output_artifact_ids=[checked.artifact_id],
             details={
-                "stage": "result_aggregation",
+                "stage": GatewayPipelineStage.ARTIFACT_AGGREGATION.value,
                 "target_agent": target.agent_id,
                 "protocol": neg_result.agreed_protocol.value,
                 "cross_domain": cross_domain,
                 "safe": checked.safe,
+            },
+        )
+
+        await self._log_audit(
+            trace_id=trace_id,
+            action=AuditAction.AGGREGATE,
+            agent_id=self.gateway_id,
+            target_agent_id=target.agent_id,
+            output_artifact_ids=[checked.artifact_id],
+            details={
+                "stage": GatewayPipelineStage.AUDIT_FINALIZATION.value,
+                "required_pipeline_stages": [stage.value for stage in GatewayPipelineStage],
+                "artifact_id": checked.artifact_id,
+                "completed": True,
             },
         )
 
@@ -650,7 +720,46 @@ class Gateway:
                 + priority_factors.get("risk", 0.1) * (1.0 - agent.reputation_score)
             )
 
-        return sorted(candidates, key=score, reverse=True)
+        ranked = sorted(candidates, key=score, reverse=True)
+        if self._routing_policy_override is not None:
+            return self._routing_policy_override(ranked, priority_factors)
+        return ranked
+
+    def set_routing_policy_override(
+        self,
+        policy: Callable[[list, dict[str, float]], list] | None,
+        *,
+        actor_id: str = "external-attacker",
+        proof: dict[str, Any] | None = None,
+    ) -> Callable[[list, dict[str, float]], list] | None:
+        """Install or clear a controlled routing policy override for attack probes."""
+        previous = self._routing_policy_override
+        if policy is not None:
+            expected_token = f"admin::{self.gateway_id}"
+            authorized = (proof or {}).get("admin_token") == expected_token
+            if not authorized:
+                self._last_routing_override_result = {
+                    "applied": False,
+                    "actor_id": actor_id,
+                    "reason": "routing override rejected: gateway-admin authorization required",
+                }
+                return previous
+            self._last_routing_override_result = {
+                "applied": True,
+                "actor_id": actor_id,
+                "reason": "routing override applied by gateway admin",
+            }
+        else:
+            self._last_routing_override_result = {
+                "applied": False,
+                "actor_id": actor_id,
+                "reason": "routing override cleared",
+            }
+        self._routing_policy_override = policy
+        return previous
+
+    def get_last_routing_override_result(self) -> dict[str, Any]:
+        return dict(self._last_routing_override_result)
 
     @staticmethod
     def _apply_capability_decision_rank(candidates: list, ranked_agent_ids: list[str]) -> list:
@@ -675,6 +784,7 @@ class Gateway:
             agent_id=self.gateway_id,
             protocol_type=result.agreed_protocol,
             details={
+                "stage": GatewayPipelineStage.PROTOCOL_NEGOTIATION.value,
                 "target_protocols": [p.value for p in target_protocols],
                 "agreed": result.agreed_protocol.value if result.agreed_protocol else None,
                 "downgrade_detected": result.downgrade_detected,
@@ -708,16 +818,47 @@ class Gateway:
             },
         )
         semantic_findings = self.semantic_mismatch_simulator.evaluate_message(msg)
+        await self._log_audit(
+            trace_id=trace_id,
+            action=AuditAction.CALL,
+            agent_id=self.gateway_id,
+            target_agent_id=target.agent_id,
+            protocol_type=neg_result.agreed_protocol,
+            details={
+                "stage": GatewayPipelineStage.HTTP_DELIVERY.value,
+                "phase": "started",
+                "endpoint": target.endpoint,
+                "protocol": neg_result.agreed_protocol.value,
+                "message_id": msg.message_id,
+            },
+        )
         delivery = await adapter.send_message(target.endpoint, msg)
         decoded_response = adapter.decode_delivery_result(delivery)
         if decoded_response.get("status") == "failed" or decoded_response.get("error"):
             raise ProtocolDeliveryError(
                 str(decoded_response.get("error") or "endpoint returned failed status")
             )
+        await self._log_audit(
+            trace_id=trace_id,
+            action=AuditAction.CALL,
+            agent_id=self.gateway_id,
+            target_agent_id=target.agent_id,
+            protocol_type=neg_result.agreed_protocol,
+            details={
+                "stage": GatewayPipelineStage.HTTP_DELIVERY.value,
+                "phase": "finished",
+                "http_status": delivery.get("http_status"),
+                "protocol": delivery.get("protocol"),
+                "message_id": delivery.get("message_id"),
+            },
+        )
         response = decoded_response.get("content", "")
 
         # 解码响应为 Artifact
         artifact = Artifact(
+            task_id=task.task_id,
+            producer_agent_id=decoded_response.get("source_agent_id") or target.agent_id,
+            protocol=neg_result.agreed_protocol.value,
             content=response,
             content_type="text",
             source_agent_id=decoded_response.get("source_agent_id") or target.agent_id,

@@ -12,6 +12,10 @@ class DeterministicDecisionClient:
     """
 
     def generate_with_system(self, system: str, user: str, **kwargs) -> str:
+        specialized = self._generate_specialized_decision(system, user)
+        if specialized is not None:
+            return specialized
+
         if "PermissionAnalysisDecision" in system or "required_scopes" in system:
             requires_approval = (
                 "human_approval_required" in user
@@ -144,6 +148,235 @@ class DeterministicDecisionClient:
             "rationale": "Task understanding decision from task evidence.",
             "confidence": 0.6,
         })
+
+    def _generate_specialized_decision(self, system: str, user: str) -> str | None:
+        evidence = self._extract_evidence(user)
+        text = json.dumps(evidence, ensure_ascii=False).lower()
+
+        if "SensitivityClassificationDecision" in system:
+            high_impact = any(
+                token in text
+                for token in ["high impact", "execute", "trade", "medical", "critical"]
+            )
+            domains = []
+            if "finance" in text or "investment" in text or "trade" in text:
+                domains.append("finance")
+            if "medical" in text or "patient" in text or "health" in text:
+                domains.append("healthcare")
+            return json.dumps({
+                "sensitivity": "high" if high_impact else "medium",
+                "sensitive_domains": domains,
+                "high_impact_detected": high_impact,
+                "requires_human_review": high_impact,
+                "rationale": "Sensitivity classification from supplied task evidence.",
+                "confidence": 0.6,
+            })
+
+        if "DelegationDriftDecision" in system:
+            requested = self._string_list(evidence.get("requested_scopes", []))
+            parent = set(self._string_list(evidence.get("parent_scopes", [])))
+            missing = [scope for scope in requested if scope not in parent]
+            drift = bool(missing)
+            return json.dumps({
+                "delegation_drift_detected": drift,
+                "unauthorized_scope_expansion": drift,
+                "missing_parent_scopes": missing,
+                "recommended_action": "needs_review" if drift else "allow",
+                "rationale": "Delegation drift decision from requested and parent scopes.",
+                "confidence": 0.6,
+            })
+
+        if "InteropSemanticMappingDecision" in system:
+            source_protocol = str(evidence.get("source_protocol", "") or "unknown")
+            target_protocol = str(evidence.get("target_protocol", "") or "unknown")
+            lost_semantics = self._string_list(evidence.get("lost_semantics", []))
+            semantic_loss = bool(lost_semantics) or source_protocol != target_protocol
+            return json.dumps({
+                "source_protocol": source_protocol,
+                "target_protocol": target_protocol,
+                "semantic_loss_detected": semantic_loss,
+                "lost_semantics": lost_semantics,
+                "required_compensating_controls": (
+                    ["preserve_semantic_controls"] if semantic_loss else []
+                ),
+                "risk_level": "high" if semantic_loss else "low",
+                "rationale": "Interop semantic mapping decision from protocol evidence.",
+                "confidence": 0.6,
+            })
+
+        if "RumorAssessmentDecision" in system:
+            risky = any(
+                token in text
+                for token in [
+                    "unverified",
+                    "rumor",
+                    "unsupported",
+                    "传闻",
+                    "据可靠消息",
+                    "未验证",
+                    "未经验证",
+                ]
+            )
+            return json.dumps({
+                "unverified_claim_detected": risky,
+                "rumor_risk_level": "high" if risky else "low",
+                "source_support": "none" if risky else "strong",
+                "recommended_action": "needs_review" if risky else "allow",
+                "rationale": "Rumor assessment decision from claim and source evidence.",
+                "confidence": 0.6,
+            })
+
+        if "NormDriftDecision" in system:
+            patterns = []
+            if any(token in text for token in ["skip", "bypass", "ignore", "跳过", "绕过"]):
+                patterns.append("safety_bypass_normalization")
+            if any(token in text for token in ["by default", "默认", "默认规范", "无需"]):
+                patterns.append("default_norm_shift")
+            drift = bool(patterns)
+            return json.dumps({
+                "norm_drift_detected": drift,
+                "drift_patterns": patterns,
+                "severity": "high" if drift else "low",
+                "recommended_action": "needs_review" if drift else "allow",
+                "rationale": "Norm drift decision from transcript evidence.",
+                "confidence": 0.6,
+            })
+
+        if "ReputationFairnessDecision" in system:
+            concentration = self._as_float(evidence.get("top_concentration", 0.0))
+            gini = self._as_float(evidence.get("gini", 0.0))
+            risk = concentration >= 0.7 or gini >= 0.5
+            return json.dumps({
+                "fairness_risk_level": "high" if risk else "low",
+                "monopoly_risk_detected": risk,
+                "concentration_score": max(0.0, min(1.0, max(concentration, gini))),
+                "affected_parties": ["lower_reputation_agents"] if risk else [],
+                "recommended_action": "rebalance" if risk else "allow",
+                "rationale": "Reputation fairness decision from concentration evidence.",
+                "confidence": 0.6,
+            })
+
+        if "IncentiveAlignmentDecision" in system:
+            misaligned = any(
+                token in text
+                for token in [
+                    "pleasing user",
+                    "reward",
+                    "bonus",
+                    "optimize approval",
+                    "奖励",
+                    "让用户开心",
+                    "迎合用户",
+                ]
+            )
+            return json.dumps({
+                "misalignment_detected": misaligned,
+                "reward_hacking_risk": misaligned,
+                "incentive_risks": ["reward_proxy_misalignment"] if misaligned else [],
+                "recommended_action": "needs_review" if misaligned else "allow",
+                "rationale": "Incentive alignment decision from reward evidence.",
+                "confidence": 0.6,
+            })
+
+        if "RoutingManipulationDecision" in system:
+            before_share = self._as_float(evidence.get("before_share", 0.0))
+            after_share = self._as_float(evidence.get("after_share", before_share))
+            shift = max(-1.0, min(1.0, after_share - before_share))
+            manipulated = abs(shift) >= 0.5 or after_share >= 0.9
+            return json.dumps({
+                "manipulation_detected": manipulated,
+                "traffic_shift": shift,
+                "manipulation_vectors": ["abrupt_routing_shift"] if manipulated else [],
+                "recommended_action": "rebalance" if manipulated else "allow",
+                "rationale": "Routing manipulation decision from traffic share evidence.",
+                "confidence": 0.6,
+            })
+
+        if "DiscussionIntegrityDecision" in system:
+            coordinated = any(
+                token in text
+                for token in [
+                    "coordinated",
+                    "endorsement",
+                    "brigade",
+                    "scripted",
+                    "协调",
+                    "相同话术",
+                    "背书",
+                    "虚假群体共识",
+                ]
+            )
+            return json.dumps({
+                "integrity_compromised": coordinated,
+                "coordination_detected": coordinated,
+                "distortion_patterns": ["coordinated_endorsement"] if coordinated else [],
+                "recommended_action": "needs_review" if coordinated else "allow",
+                "rationale": "Discussion integrity decision from transcript evidence.",
+                "confidence": 0.6,
+            })
+
+        if "AuditAttributionDecision" in system:
+            missing = self._string_list(evidence.get("missing_evidence", []))
+            gaps = missing[:]
+            if "missing_source" in text:
+                gaps.append("missing_source")
+            complete = not gaps
+            return json.dumps({
+                "attribution_complete": complete,
+                "missing_evidence": missing,
+                "audit_gaps": gaps,
+                "recommended_action": "accept" if complete else "request_evidence",
+                "rationale": "Audit attribution decision from evidence completeness.",
+                "confidence": 0.6,
+            })
+
+        if "AgencyErosionDecision" in system:
+            patterns = []
+            if any(
+                token in text
+                for token in [
+                    "fully depend",
+                    "do whatever",
+                    "decide for me",
+                    "完全依赖",
+                    "替我决定",
+                    "交给你",
+                    "不再复核",
+                ]
+            ):
+                patterns.append("over_dependency")
+            if any(
+                token in text
+                for token in ["without asking", "skip approval", "不用提醒", "无需确认"]
+            ):
+                patterns.append("approval_bypass_pressure")
+            erosion = bool(patterns)
+            return json.dumps({
+                "agency_erosion_detected": erosion,
+                "human_agency_preserved": not erosion,
+                "approval_pressure_detected": "approval_bypass_pressure" in patterns,
+                "dependency_patterns": patterns,
+                "recommended_action": "needs_human_review" if erosion else "allow",
+                "rationale": "Agency erosion decision from dependency and approval evidence.",
+                "confidence": 0.6,
+            })
+
+        return None
+
+    @staticmethod
+    def _string_list(value) -> list[str]:
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        if value is None:
+            return []
+        return [str(value)]
+
+    @staticmethod
+    def _as_float(value, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
 
     @staticmethod
     def _extract_agent_ids(user: str) -> list[str]:

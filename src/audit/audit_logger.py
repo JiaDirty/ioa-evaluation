@@ -7,10 +7,13 @@
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
 from datetime import datetime
 from typing import Any
 
 from ..core.data_models import (
+    ActorType,
     AuditAction,
     AuditEntry,
     AuditMetrics,
@@ -68,6 +71,15 @@ class AuditLogger:
         details: dict[str, Any] | None = None,
     ) -> str:
         """便捷方法：记录一条审计日志。"""
+        payload = details or {}
+        actor_type = ActorType.GATEWAY
+        if action == AuditAction.DECISION_AGENT:
+            actor_type = ActorType.DECISION_AGENT
+        elif action == AuditAction.REGISTER:
+            actor_type = ActorType.REGISTRY
+        elif action == AuditAction.PROTOCOL_NEGOTIATE:
+            actor_type = ActorType.PROTOCOL_ADAPTER
+        digest_input = json.dumps(payload, ensure_ascii=False, default=str, sort_keys=True)
         entry = AuditEntry(
             trace_id=trace_id,
             step_index=0,  # 会被自动覆盖
@@ -81,7 +93,12 @@ class AuditLogger:
             output_artifact_ids=output_artifact_ids or [],
             parent_trace_id=parent_trace_id,
             target_agent_id=target_agent_id,
-            details=details or {},
+            actor_type=actor_type,
+            actor_id=agent_id,
+            input_hash=hashlib.sha256(digest_input.encode("utf-8")).hexdigest()[:16],
+            decision_summary=str(payload.get("stage", action.value)),
+            structured_payload=payload,
+            details=payload,
         )
         return await self.log(entry)
 

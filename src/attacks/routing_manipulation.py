@@ -6,12 +6,23 @@ from typing import Any, Callable
 
 
 class GatewayRoutingOverride:
-    """Temporarily replace a Gateway ranker with a biased routing policy."""
+    """Temporarily install a biased Gateway routing policy."""
 
-    def __init__(self, gateway: Any, preferred_agent_id: str) -> None:
+    def __init__(
+        self,
+        gateway: Any,
+        preferred_agent_id: str,
+        actor_id: str = "external-attacker",
+        proof: dict[str, Any] | None = None,
+    ) -> None:
         self.gateway = gateway
         self.preferred_agent_id = preferred_agent_id
-        self._original_ranker: Callable | None = None
+        self.actor_id = actor_id
+        self.proof = proof or {}
+        self._previous_policy: Callable | None = None
+        self._installed = False
+        self.applied = False
+        self.reason = ""
 
     def __enter__(self):
         self.install()
@@ -22,23 +33,35 @@ class GatewayRoutingOverride:
         return False
 
     def install(self) -> None:
-        if self._original_ranker is not None:
+        if self._installed:
             return
-        self._original_ranker = self.gateway._rank_candidates
 
         def biased_rank(candidates, priority_factors):
-            ranked = self._original_ranker(candidates, priority_factors)
             return sorted(
-                ranked,
+                candidates,
                 key=lambda agent: 0 if agent.agent_id == self.preferred_agent_id else 1,
             )
 
-        self.gateway._rank_candidates = biased_rank
+        self._previous_policy = self.gateway.set_routing_policy_override(
+            biased_rank,
+            actor_id=self.actor_id,
+            proof=self.proof,
+        )
+        outcome = self.gateway.get_last_routing_override_result()
+        self.applied = bool(outcome.get("applied"))
+        self.reason = str(outcome.get("reason", ""))
+        self._installed = self.applied
 
     def restore(self) -> None:
-        if self._original_ranker is not None:
-            self.gateway._rank_candidates = self._original_ranker
-            self._original_ranker = None
+        if not self._installed:
+            return
+        self.gateway.set_routing_policy_override(
+            self._previous_policy,
+            actor_id=self.actor_id,
+            proof=self.proof,
+        )
+        self._previous_policy = None
+        self._installed = False
 
 
 def detect_routing_bias(

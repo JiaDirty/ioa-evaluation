@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -69,9 +69,103 @@ class EvaluationStatus(str, Enum):
     INVALID = "invalid"
 
 
+class GatewayPipelineStage(str, Enum):
+    TASK_INTAKE = "task_intake"
+    TASK_UNDERSTANDING = "task_understanding"
+    PERMISSION_ANALYSIS = "permission_analysis"
+    POLICY_ENFORCEMENT = "policy_enforcement"
+    LOCAL_DISCOVERY = "local_discovery"
+    CROSS_DOMAIN_DISCOVERY = "cross_domain_discovery"
+    CANDIDATE_RANKING = "candidate_ranking"
+    CANDIDATE_VERIFICATION = "candidate_verification"
+    PROTOCOL_SEMANTICS = "protocol_semantics"
+    PROTOCOL_NEGOTIATION = "protocol_negotiation"
+    PRE_DELIVERY_SECURITY = "pre_delivery_security"
+    HTTP_DELIVERY = "http_delivery"
+    POST_DELIVERY_SECURITY = "post_delivery_security"
+    ARTIFACT_AGGREGATION = "artifact_aggregation"
+    AUDIT_FINALIZATION = "audit_finalization"
+
+
+class ActorType(str, Enum):
+    TESTCASE = "testcase"
+    MARKETPLACE = "marketplace"
+    GATEWAY = "gateway"
+    REGISTRY = "registry"
+    DECISION_AGENT = "decision_agent"
+    DOMAIN_AGENT = "domain_agent"
+    POLICY_ENGINE = "policy_engine"
+    PROTOCOL_ADAPTER = "protocol_adapter"
+    JUDGE = "judge"
+
+
 # ============================================================
 # Agent 注册相关
 # ============================================================
+
+class EvidenceRef(BaseModel):
+    evidence_id: str = Field(default_factory=lambda: str(uuid.uuid4())[:12])
+    evidence_type: str = ""
+    uri: str = ""
+    hash_value: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class CapabilityClaim(BaseModel):
+    capability_id: str
+    name: str = ""
+    description: str = ""
+    input_schema: dict[str, Any] = Field(default_factory=dict)
+    output_schema: dict[str, Any] = Field(default_factory=dict)
+    safety_profile: dict[str, Any] = Field(default_factory=dict)
+    evidence_refs: list[str] = Field(default_factory=list)
+    declared_by: str = ""
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+class ProtocolSupport(BaseModel):
+    protocol: ProtocolType
+    version: str = "1.0"
+    binding: str = "HTTP"
+    security_level: Literal["low", "medium", "high"] = "medium"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class EndpointDescriptor(BaseModel):
+    url: str
+    protocol: ProtocolType = ProtocolType.A2A
+    method: str = "POST"
+    allowlisted: bool = True
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AuthDescriptor(BaseModel):
+    scheme: str = "bearer"
+    required_scopes: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class CertificateDescriptor(BaseModel):
+    certificate_id: str = ""
+    issuer: str = ""
+    fingerprint: str = ""
+    valid: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SignatureDescriptor(BaseModel):
+    signer: str
+    algorithm: str = "testbed-hmac-sha256"
+    value: str
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
+class AgentCardProvenance(BaseModel):
+    registered_by: str = ""
+    registration_surface: str = "registry"
+    evidence_refs: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
 
 class AgentCard(BaseModel):
     """Agent 注册卡片，存放于 Registry 中。"""
@@ -85,16 +179,26 @@ class AgentCard(BaseModel):
     supported_protocols: list[ProtocolType] = Field(default_factory=lambda: [ProtocolType.A2A])
     endpoint: str = ""
     protocol_versions: dict[str, str] = Field(default_factory=dict)
+    capability_claims: list[CapabilityClaim] = Field(default_factory=list)
+    protocol_support: list[ProtocolSupport] = Field(default_factory=list)
+    endpoint_descriptor: EndpointDescriptor | None = None
+    auth: AuthDescriptor = Field(default_factory=AuthDescriptor)
 
     # 真实能力（用于测试对比，正常情况下不暴露）
     actual_capabilities: list[str] | None = None
+    verified_capabilities: list[str] = Field(default_factory=list)
+    trust_level: Literal["untrusted", "sandboxed", "verified", "privileged"] = "untrusted"
 
     # 信任体系
     certificate: str | None = None
+    certificate_descriptor: CertificateDescriptor | None = None
+    signatures: list[SignatureDescriptor] = Field(default_factory=list)
+    provenance: AgentCardProvenance = Field(default_factory=AgentCardProvenance)
     reputation_score: float = Field(default=0.5, ge=0.0, le=1.0)
     permission_scope: list[str] = Field(default_factory=list)
     registration_time: datetime = Field(default_factory=datetime.now)
     last_active: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
     status: AgentStatus = AgentStatus.ACTIVE
 
 
@@ -121,12 +225,48 @@ class VerificationResult(BaseModel):
 # 任务相关
 # ============================================================
 
+class HumanApproval(BaseModel):
+    required: bool = False
+    granted: bool = False
+    approval_token: str | None = None
+    approver_id: str | None = None
+    reason: str = ""
+    checked_at: datetime | None = None
+
+
+class TaskConstraints(BaseModel):
+    min_protocol_security_level: Literal["high", "medium", "low"] = "medium"
+    allowed_protocols: list[ProtocolType] = Field(
+        default_factory=lambda: [ProtocolType.A2A, ProtocolType.MCP, ProtocolType.PRIVATE_API]
+    )
+    forbidden_protocols: list[str] = Field(default_factory=list)
+    max_delegation_depth: int = 2
+    human_approval_required: bool = False
+    audit_required: bool = True
+    allow_knowledge_write: bool = False
+    allow_cross_domain_relay: bool = False
+    forbidden_data_classes: list[str] = Field(default_factory=list)
+    require_provenance: bool = True
+    require_citations: bool = False
+
+
 class Task(BaseModel):
     """任务定义。"""
     task_id: str = Field(default_factory=lambda: str(uuid.uuid4())[:12])
+    test_case_id: str | None = None
+    user_id: str = "user"
+    origin_sub_ioa: str | None = None
+    target_sub_ioas: list[str] = Field(default_factory=list)
     task_type: TaskType
     description: str
+    user_goal: str = ""
     required_capabilities: list[str] = Field(default_factory=list)
+    constraints: TaskConstraints = Field(default_factory=TaskConstraints)
+    user_grants: list[str] = Field(default_factory=list)
+    human_approval: HumanApproval | None = None
+    prior_artifacts: list[str] = Field(default_factory=list)
+    knowledge_refs: list[str] = Field(default_factory=list)
+    trace_id: str = ""
     priority_factors: dict[str, float] = Field(
         default_factory=lambda: {"capability": 0.4, "reputation": 0.3, "cost": 0.2, "risk": 0.1}
     )
@@ -136,6 +276,10 @@ class Task(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
     # 任务负载（具体数据）
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class TaskEnvelope(Task):
+    """Design-doc compatible task envelope; extends the runtime Task model."""
 
 
 class TaskResult(BaseModel):
@@ -156,16 +300,26 @@ class TaskResult(BaseModel):
 class Artifact(BaseModel):
     """任务产出的产物，支持来源追踪。"""
     artifact_id: str = Field(default_factory=lambda: str(uuid.uuid4())[:12])
+    task_id: str = ""
+    producer_agent_id: str = ""
+    protocol: str = ""
     content: Any
     content_type: str = "text"
     source_agent_id: str = ""
     source_task_id: str = ""
     hash_value: str = ""
     safe: bool = False  # 是否经过安全净化
+    provenance: list[EvidenceRef] = Field(default_factory=list)
+    safety_labels: list[str] = Field(default_factory=list)
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.now)
 
     def model_post_init(self, __context: Any) -> None:
+        if not self.task_id and self.source_task_id:
+            self.task_id = self.source_task_id
+        if not self.producer_agent_id and self.source_agent_id:
+            self.producer_agent_id = self.source_agent_id
         if not self.hash_value:
             import hashlib
             content_str = str(self.content)
@@ -180,6 +334,7 @@ class AuditEntry(BaseModel):
     """审计日志条目。"""
     entry_id: str = Field(default_factory=lambda: str(uuid.uuid4())[:12])
     trace_id: str  # 任务调用链 ID
+    task_id: str | None = None
     step_index: int
     timestamp: datetime = Field(default_factory=datetime.now)
     action: AuditAction
@@ -188,6 +343,8 @@ class AuditEntry(BaseModel):
     agent_id: str
     sub_ioa_id: str
     gateway_id: str | None = None
+    actor_type: ActorType | None = None
+    actor_id: str = ""
 
     # 授权与协议
     auth_scope: list[str] = Field(default_factory=list)
@@ -202,7 +359,31 @@ class AuditEntry(BaseModel):
     target_agent_id: str | None = None
 
     # 额外信息
+    input_hash: str | None = None
+    output_hash: str | None = None
+    decision_summary: str | None = None
+    structured_payload: dict[str, Any] = Field(default_factory=dict)
     details: dict[str, Any] = Field(default_factory=dict)
+
+    def model_post_init(self, __context: Any) -> None:
+        if self.task_id is None:
+            self.task_id = self.trace_id
+        if not self.actor_id:
+            self.actor_id = self.agent_id
+        if not self.structured_payload and self.details:
+            self.structured_payload = self.details
+
+
+class AuditEvent(AuditEntry):
+    """Design-doc compatible audit event alias for append-only evidence."""
+
+    event_id: str = Field(default_factory=lambda: str(uuid.uuid4())[:12])
+    event_type: str = ""
+
+    def model_post_init(self, __context: Any) -> None:
+        super().model_post_init(__context)
+        if not self.event_type:
+            self.event_type = self.action.value
 
 
 class AuditMetrics(BaseModel):
@@ -259,6 +440,19 @@ class AuthResult(BaseModel):
     reason: str = ""
     delegation_depth: int = 0
     scope_expansion_detected: bool = False  # 是否检测到越权
+
+
+class PolicyTicket(BaseModel):
+    ticket_id: str = Field(default_factory=lambda: str(uuid.uuid4())[:12])
+    task_id: str
+    allowed: bool
+    reason: str = ""
+    granted_scopes: list[str] = Field(default_factory=list)
+    denied_scopes: list[str] = Field(default_factory=list)
+    effective_scopes: list[str] = Field(default_factory=list)
+    human_approval_checked: bool = False
+    expires_at: datetime = Field(default_factory=datetime.now)
+    verifier_version: str = "ioa-policy-v1"
 
 
 # ============================================================
