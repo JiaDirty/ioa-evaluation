@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>IOA 系统完整拓扑图</title>
+<style>
+  :root {
+    --bg: #f6f8fb;
+    --card: #ffffff;
+    --line: #8a94a6;
+    --text: #1f2937;
+    --muted: #667085;
+    --blue: #2563eb;
+    --green: #059669;
+    --orange: #d97706;
+    --red: #dc2626;
+    --purple: #7c3aed;
+    --border: #d7deea;
+  }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+  }
+
+  .page {
+    max-width: 1500px;
+    margin: 0 auto;
+    padding: 28px;
+  }
+
+  h1 {
+    margin: 0 0 6px;
+    font-size: 28px;
+  }
+
+  .note {
+    margin-bottom: 22px;
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  .topology {
+    position: relative;
+    display: grid;
+    gap: 18px;
+  }
+
+  .layer {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
+  }
+
+  .layer-title {
+    margin: 0 0 12px;
+    font-size: 17px;
+    font-weight: 700;
+  }
+
+  .grid {
+    display: grid;
+    gap: 12px;
+  }
+
+  .grid-5 { grid-template-columns: repeat(5, 1fr); }
+  .grid-4 { grid-template-columns: repeat(4, 1fr); }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid-2 { grid-template-columns: repeat(2, 1fr); }
+
+  .node {
+    border: 1px solid var(--border);
+    border-left: 5px solid var(--blue);
+    border-radius: 8px;
+    background: #fff;
+    padding: 11px 12px;
+    min-height: 58px;
+  }
+
+  .node strong {
+    display: block;
+    font-size: 14px;
+    margin-bottom: 4px;
+  }
+
+  .node span {
+    display: block;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .green { border-left-color: var(--green); }
+  .orange { border-left-color: var(--orange); }
+  .red { border-left-color: var(--red); }
+  .purple { border-left-color: var(--purple); }
+
+  .pipeline {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .pipe {
+    flex: 1 1 150px;
+    position: relative;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    padding: 10px 12px;
+  }
+
+  .pipe:not(:last-child)::after {
+    content: "→";
+    position: absolute;
+    right: -13px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--line);
+    font-weight: 700;
+  }
+
+  .pipe strong {
+    display: block;
+    font-size: 13px;
+  }
+
+  .pipe span {
+    display: block;
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .domains {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+  }
+
+  .domain {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: #fbfdff;
+    padding: 12px;
+  }
+
+  .domain h3 {
+    margin: 0 0 10px;
+    font-size: 15px;
+  }
+
+  .domain .node {
+    margin-bottom: 8px;
+    min-height: auto;
+  }
+
+  .flow {
+    margin: 16px 0;
+    padding: 12px 14px;
+    border: 1px dashed var(--line);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.7;
+  }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 16px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  .legend-item::before {
+    content: "";
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    margin-right: 6px;
+    border-radius: 3px;
+    vertical-align: -1px;
+    background: var(--blue);
+  }
+
+  .legend-item.green::before { background: var(--green); }
+  .legend-item.orange::before { background: var(--orange); }
+  .legend-item.red::before { background: var(--red); }
+  .legend-item.purple::before { background: var(--purple); }
+
+  @media (max-width: 1100px) {
+    .grid-5, .grid-4, .grid-3, .grid-2, .domains {
+      grid-template-columns: 1fr;
+    }
+    .pipe:not(:last-child)::after {
+      content: "↓";
+      right: 50%;
+      top: auto;
+      bottom: -16px;
+      transform: translateX(50%);
+    }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>IOA 系统完整拓扑图</h1>
+  <div class="note">
+    当前系统是单机受控 IOA testbed：通过 TaskMarketplace、Gateway、Registry、ProtocolAdapter、HTTP endpoint、Audit、Decision Agents 串起真实测评链路。
+  </div>
+
+  <section class="layer">
+    <h2 class="layer-title">一、实验控制层</h2>
+    <div class="grid grid-5">
+      <div class="node"><strong>ExperimentRunner</strong><span>运行实验，汇总 18 项测评结果</span></div>
+      <div class="node"><strong>IoAEnvironment</strong><span>创建 Sub-IoA、注册 Agent、维护环境状态</span></div>
+      <div class="node"><strong>TopologyController</strong><span>控制 full_mesh / star / chain 跨域拓扑</span></div>
+      <div class="node"><strong>MetricsEngine</strong><span>计算通过率、安全率、审计完整性等指标</span></div>
+      <div class="node"><strong>risk_tests</strong><span>18 个 IOA 风险测评入口</span></div>
+    </div>
+  </section>
+
+  <section class="layer">
+    <h2 class="layer-title">二、攻击与判定层</h2>
+    <div class="grid grid-5">
+      <div class="node red"><strong>AttackInjector</strong><span>生成攻击 prompt：泄露、越权、谣言、绕过审批等</span></div>
+      <div class="node red"><strong>RegistryAttackSurface</strong><span>外部注册/篡改入口：身份伪装、能力膨胀、声誉操纵</span></div>
+      <div class="node red"><strong>SemanticMismatchSimulator</strong><span>A2A/MCP/Private API 语义错配探针</span></div>
+      <div class="node red"><strong>GatewayRoutingOverride</strong><span>中心节点路由操纵探针</span></div>
+      <div class="node purple"><strong>LLMJudge / DeterministicJudge</strong><span>判断攻击是否在输出行为上成功</span></div>
+    </div>
+  </section>
+
+  <section class="layer">
+    <h2 class="layer-title">三、全局 IOA 基础设施层</h2>
+    <div class="grid grid-5">
+      <div class="node green"><strong>TaskMarketplace</strong><span>任务分发入口：单域、跨域、多跳、产物复用</span></div>
+      <div class="node green"><strong>Global Registry</strong><span>全局 AgentCard 注册表</span></div>
+      <div class="node green"><strong>Global AuditLogger</strong><span>全局审计链，支持 query_chain / compute_metrics</span></div>
+      <div class="node green"><strong>SharedKnowledgeBase</strong><span>共享知识库：错误共识、谣言、知识冲突测评</span></div>
+      <div class="node green"><strong>LocalAgentEndpointServer</strong><span>本地 HTTP endpoint，承接 A2A/MCP/Private API 投递</span></div>
+    </div>
+  </section>
+
+  <section class="layer">
+    <h2 class="layer-title">四、Gateway 内部安全链路</h2>
+    <div class="pipeline">
+      <div class="pipe"><strong>Task Intake</strong><span>接收任务并写入审计</span></div>
+      <div class="pipe"><strong>TaskUnderstandingAgent</strong><span>任务意图、领域、敏感级别</span></div>
+      <div class="pipe"><strong>PermissionAnalysisAgent</strong><span>权限 scope 与审批敏感度</span></div>
+      <div class="pipe"><strong>HumanAgencyAgent</strong><span>人工审批与判断让渡检测</span></div>
+      <div class="pipe"><strong>PolicyEngine</strong><span>硬规则授权，必要时 fail-closed</span></div>
+      <div class="pipe"><strong>Registry Discovery</strong><span>按能力、领域、声誉发现候选 Agent</span></div>
+      <div class="pipe"><strong>Identity Verification</strong><span>证书与 ACTIVE 状态校验</span></div>
+      <div class="pipe"><strong>CapabilityMatchingAgent</strong><span>已验证候选排序</span></div>
+      <div class="pipe"><strong>ProtocolNegotiator</strong><span>A2A/MCP/Private API 协商</span></div>
+      <div class="pipe"><strong>ProtocolAdapter</strong><span>HTTP endpoint 投递</span></div>
+      <div class="pipe"><strong>Artifact</strong><span>生成任务产物</span></div>
+      <div class="pipe"><strong>Post Security Agents</strong><span>内容安全、来源可信、共识风险</span></div>
+    </div>
+  </section>
+
+  <section class="layer">
+    <h2 class="layer-title">五、协议互操作层</h2>
+    <div class="grid grid-4">
+      <div class="node orange"><strong>ProtocolNegotiator</strong><span>选择协议，检测降级风险</span></div>
+      <div class="node orange"><strong>A2AAdapter</strong><span>official core JSON-RPC/HTTP 子集</span></div>
+      <div class="node orange"><strong>MCPAdapter</strong><span>MCP 协议投递与语义错配测试</span></div>
+      <div class="node orange"><strong>PrivateAPIAdapter</strong><span>私有 API 投递与弱协议测试</span></div>
+    </div>
+  </section>
+
+  <section class="layer">
+    <h2 class="layer-title">六、领域子生态层</h2>
+    <div class="domains">
+      <div class="domain">
+        <h3>Finance-IoA</h3>
+        <div class="node"><strong>Finance Gateway</strong><span>金融任务入口</span></div>
+        <div class="node green"><strong>Finance Local Registry</strong><span>金融 AgentCard</span></div>
+        <div class="node green"><strong>Finance Local Audit</strong><span>本地审计</span></div>
+        <div class="node"><strong>Finance Agents</strong><span>金融分析师、投资顾问、风控专家</span></div>
+      </div>
+
+      <div class="domain">
+        <h3>Healthcare-IoA</h3>
+        <div class="node"><strong>Healthcare Gateway</strong><span>医疗任务入口</span></div>
+        <div class="node green"><strong>Healthcare Local Registry</strong><span>医疗 AgentCard</span></div>
+        <div class="node green"><strong>Healthcare Local Audit</strong><span>本地审计</span></div>
+        <div class="node"><strong>Healthcare Agents</strong><span>临床专家、药物研发、医疗数据分析</span></div>
+      </div>
+
+      <div class="domain">
+        <h3>Travel-IoA</h3>
+        <div class="node"><strong>Travel Gateway</strong><span>旅行任务入口</span></div>
+        <div class="node green"><strong>Travel Local Registry</strong><span>旅行 AgentCard</span></div>
+        <div class="node green"><strong>Travel Local Audit</strong><span>本地审计</span></div>
+        <div class="node"><strong>Travel Agents</strong><span>航班、酒店、签证、行程规划</span></div>
+      </div>
+
+      <div class="domain">
+        <h3>News-IoA</h3>
+        <div class="node"><strong>News Gateway</strong><span>新闻任务入口</span></div>
+        <div class="node green"><strong>News Local Registry</strong><span>新闻 AgentCard</span></div>
+        <div class="node green"><strong>News Local Audit</strong><span>本地审计</span></div>
+        <div class="node"><strong>News Agents</strong><span>新闻聚合、事实核查、舆情监控</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="layer">
+    <h2 class="layer-title">七、主要数据流</h2>
+    <div class="flow">
+      <strong>正常任务流：</strong>
+      risk_tests → ExperimentRunner → IoAEnvironment → TaskMarketplace → Gateway → Registry discovery / verify_identity → CapabilityMatchingAgent → ProtocolNegotiator → ProtocolAdapter → LocalAgentEndpointServer → Agent runtime → Artifact → Post-security Decision Agents → AuditLogger → MetricsEngine
+    </div>
+    <div class="flow">
+      <strong>攻击测评流：</strong>
+      AttackInjector / RegistryAttackSurface / SemanticMismatchSimulator / RoutingOverride → Registry / Gateway / Protocol / Knowledge / Agent endpoint → Artifact 或 Audit evidence → LLMJudge / DeterministicJudge → TestResult.details → Metrics
+    </div>
+    <div class="flow">
+      <strong>跨域通信流：</strong>
+      Source Gateway → TopologyController 检查拓扑 → relay_to_sub_ioa → Target Gateway → Target Local Registry → Target Agent endpoint → Global Audit + Local Audit 双写
+    </div>
+  </section>
+
+  <div class="legend">
+    <div class="legend-item">控制与 Gateway 组件</div>
+    <div class="legend-item green">全局基础设施 / Registry / Audit / Knowledge</div>
+    <div class="legend-item orange">协议互操作组件</div>
+    <div class="legend-item red">攻击入口</div>
+    <div class="legend-item purple">Judge / 语义判定</div>
+  </div>
+</div>
+</body>
+</html>
