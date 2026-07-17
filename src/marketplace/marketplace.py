@@ -33,6 +33,7 @@ class TaskMarketplace:
         self._results: dict[str, TaskResult] = {}
         self._gateways: dict[str, Gateway] = {}  # sub_ioa_id -> Gateway
         self._topology = None
+        self._agentic_orchestrator = None
 
     # ------------------------------------------------------------------
     # Gateway 注册
@@ -46,6 +47,10 @@ class TaskMarketplace:
     def set_topology(self, topology) -> None:
         """Attach topology controller used to validate cross-domain reachability."""
         self._topology = topology
+
+    def set_agentic_orchestrator(self, orchestrator) -> None:
+        """Attach the default prompt-driven agentic control plane."""
+        self._agentic_orchestrator = orchestrator
 
     # ------------------------------------------------------------------
     # 任务管理
@@ -83,7 +88,11 @@ class TaskMarketplace:
         task.status = TaskStatus.IN_PROGRESS
 
         try:
-            if task.task_type == TaskType.SINGLE_DOMAIN:
+            if task.execution_mode in {"agentic", "agentic_live", "offline_deterministic"}:
+                if self._agentic_orchestrator is None:
+                    raise ValueError("AgenticOrchestrator is not configured")
+                result = await self._agentic_orchestrator.execute(task)
+            elif task.task_type == TaskType.SINGLE_DOMAIN:
                 result = await self._execute_single_domain(task)
             elif task.task_type == TaskType.CROSS_DOMAIN:
                 result = await self._execute_cross_domain(task)

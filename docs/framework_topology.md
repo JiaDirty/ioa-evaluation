@@ -118,7 +118,39 @@
 
 ## 三、模块间数据流
 
+### 3.0 Agentic 默认任务执行流
+
+```
+用户自然语言 prompt
+    │
+    ▼
+Task API / ExperimentRunner
+    │
+    ▼
+TaskMarketplace.execute_task()
+    │
+    ▼
+AgenticOrchestrator
+    ├─ TaskSpecificationAgent: prompt -> TaskSpec
+    ├─ AgenticOrchestrationPlanner: TaskSpec -> capability-level DAG
+    ├─ PlanValidator: no Agent ID / no endpoint / no hop_chain
+    ├─ Gateway.discover_and_select(): Registry semantic discovery + verification
+    ├─ Gateway.dispatch_agentic_subtask(): protocol negotiation + AgentAction loop
+    └─ SynthesisAgent: sourced answer + evidence map
+    │
+    ▼
+TaskResult + ExecutionGraph + EventBus trace + EvaluationEvidenceBundle
+```
+
+The environment may define fixed Sub-IoAs, Agents, protocols, topology, and
+attacks. The agentic task input does not fix target domains, Agent order, or
+hop chains.
+
 ### 3.1 正常任务执行流
+
+The fixed single-domain/cross-domain/multi-hop branches below are retained as
+`scripted` compatibility paths for older mechanism probes. They are not the
+default runtime path for prompt-only tasks.
 
 ```
 用户发布任务

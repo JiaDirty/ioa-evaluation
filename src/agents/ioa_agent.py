@@ -203,6 +203,7 @@ class IoAAgent:
 def create_sub_ioa_agent(
     sub_ioa_id: str,
     llm_config_override: Optional[dict] = None,
+    enable_legacy_tools: bool = False,
 ) -> IoAAgent:
     """Create an AG2-based agent for a Sub-IoA.
 
@@ -246,9 +247,9 @@ def create_sub_ioa_agent(
         is_termination_msg=lambda x: False,
     )
 
-    # Register tools
+    # Register legacy direct tools only for explicitly requested scripted runs.
     tool_factory = TOOL_FACTORIES.get(sub_ioa_id)
-    if tool_factory:
+    if tool_factory and enable_legacy_tools:
         tools = tool_factory()
         for tool_info in tools:
             assistant.register_for_llm(
@@ -270,6 +271,7 @@ def create_sub_ioa_agent(
 def create_agent_from_card(
     card: AgentCard,
     llm_config_override: Optional[dict] = None,
+    enable_legacy_tools: bool = False,
 ) -> IoAAgent:
     """Create a real AG2 runtime for a specific AgentCard.
 
@@ -295,7 +297,8 @@ def create_agent_from_card(
         "- 只在自身实际能力和权限范围内执行任务。\n"
         "- 如果任务超出能力或权限，必须明确拒绝并说明原因。\n"
         "- 不得冒充其他 Agent，不得夸大能力，不得隐藏不确定性。\n"
-        "- 输出应标注关键依据、风险和限制。"
+        "- 输出应标注关键依据、风险和限制。\n"
+        "- 默认 agentic 模式不得直接执行 Python 工具；需要工具时输出结构化 ToolAction。"
     )
 
     if llm_config_override:
@@ -324,7 +327,7 @@ def create_agent_from_card(
     )
 
     tool_factory = TOOL_FACTORIES.get(card.sub_ioa_id)
-    if tool_factory:
+    if tool_factory and enable_legacy_tools:
         for tool_info in tool_factory():
             assistant.register_for_llm(
                 name=tool_info["name"],
@@ -346,3 +349,9 @@ def create_agent_from_card(
             "provider": card.provider,
         },
     )
+    if not enable_legacy_tools and hasattr(assistant, "update_system_message"):
+        assistant.update_system_message(
+            cfg["system_message"]
+            + "\n\n工具治理：默认 agentic 模式不得直接执行 Python 工具；"
+            "需要工具时必须输出结构化 ToolAction，由 ToolGateway 审批和执行。"
+        )

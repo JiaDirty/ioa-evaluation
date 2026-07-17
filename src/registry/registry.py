@@ -20,6 +20,7 @@ from ..core.data_models import (
     ProtocolType,
     VerificationResult,
 )
+from .capability_resolver import capability_fit, trust_satisfies
 
 logger = logging.getLogger(__name__)
 
@@ -77,16 +78,30 @@ class Registry:
         card.last_active = datetime.now()
         return True
 
+    async def update_agent_status(self, agent_id: str, status: AgentStatus) -> AgentCard:
+        """Update an AgentCard status and return the stored card."""
+        if agent_id not in self._agents:
+            raise ValueError(f"Agent {agent_id} not found")
+        self._agents[agent_id].status = status
+        self._agents[agent_id].updated_at = datetime.now()
+        return self._agents[agent_id]
+
     async def get_agent(self, agent_id: str) -> AgentCard | None:
         """获取 Agent 卡片。"""
         return self._agents.get(agent_id)
 
-    async def list_agents(self, sub_ioa_id: str | None = None) -> list[AgentCard]:
+    async def list_agents(
+        self,
+        sub_ioa_id: str | None = None,
+        include_inactive: bool = False,
+    ) -> list[AgentCard]:
         """列出所有 Agent，可按子生态过滤。"""
         agents = list(self._agents.values())
         if sub_ioa_id:
             agents = [a for a in agents if a.sub_ioa_id == sub_ioa_id]
-        return [a for a in agents if a.status == AgentStatus.ACTIVE]
+        if not include_inactive:
+            agents = [a for a in agents if a.status == AgentStatus.ACTIVE]
+        return sorted(agents, key=lambda item: (item.sub_ioa_id, item.display_name, item.agent_id))
 
     # ------------------------------------------------------------------
     # 发现
@@ -105,11 +120,39 @@ class Registry:
         if query.sub_ioa_id:
             candidates = [a for a in candidates if a.sub_ioa_id == query.sub_ioa_id]
 
-        # 能力匹配
-        if query.required_capabilities:
+        requirements = list(query.requirements or [])
+        legacy_capabilities = list(query.required_capabilities or [])
+        if requirements:
             candidates = [
                 a for a in candidates
-                if self._capability_overlap(a.declared_capabilities, query.required_capabilities) > 0
+                if capability_fit(a, requirements) > 0
+            ]
+            if not any(
+                req.capability in {"gateway", "routing", "authorization", "relay"}
+                for req in requirements
+            ):
+                candidates = [
+                    a for a in candidates
+                    if "gateway" not in {cap.lower() for cap in a.declared_capabilities}
+                    and not a.agent_id.endswith("-gw")
+                ]
+        elif legacy_capabilities:
+            candidates = [
+                a for a in candidates
+                if capability_fit(a, legacy_capabilities) > 0
+            ]
+
+        if query.allowed_sub_ioas:
+            allowed = set(query.allowed_sub_ioas)
+            candidates = [a for a in candidates if a.sub_ioa_id in allowed]
+
+        if query.exclude_agent_ids:
+            excluded = set(query.exclude_agent_ids)
+            candidates = [a for a in candidates if a.agent_id not in excluded]
+
+        if query.min_trust_level:
+            candidates = [
+                a for a in candidates if trust_satisfies(a.trust_level, query.min_trust_level)
             ]
 
         # 协议偏好
@@ -122,10 +165,33 @@ class Registry:
         # 声誉过滤
         candidates = [a for a in candidates if a.reputation_score >= query.min_reputation]
 
-        # 排序：能力匹配度 * 0.6 + 声誉 * 0.4
+        # 排序：能力适配 + trust + 声誉 + 协议适配 - 成本 - 风险 - 集中惩罚
         def score(agent: AgentCard) -> float:
-            cap_score = self._capability_overlap(agent.declared_capabilities, query.required_capabilities)
-            return cap_score * 0.6 + agent.reputation_score * 0.4
+            cap_score = capability_fit(agent, requirements or legacy_capabilities)
+            trust_score = {
+                "untrusted": 0.0,
+                "sandboxed": 0.35,
+                "verified": 0.75,
+                "privileged": 1.0,
+            }.get(agent.trust_level, 0.0)
+            protocol_fit = (
+                1.0
+                if not query.preferred_protocols
+                or any(p in agent.supported_protocols for p in query.preferred_protocols)
+                else 0.0
+            )
+            normalized_cost = float(agent.cost_profile.get("normalized_cost", 0.5))
+            risk_score = float(agent.risk_profile.get("risk_score", 1.0 - agent.reputation_score))
+            concentration_penalty = float(agent.risk_profile.get("concentration_penalty", 0.0))
+            return (
+                cap_score * 0.40
+                + trust_score * 0.20
+                + agent.reputation_score * 0.20
+                + protocol_fit * 0.10
+                - normalized_cost * 0.05
+                - risk_score * 0.04
+                - concentration_penalty * 0.01
+            )
 
         candidates.sort(key=score, reverse=True)
         return candidates[: query.max_results]

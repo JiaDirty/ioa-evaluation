@@ -208,7 +208,7 @@ class LocalAgentEndpointServer:
                     else:
                         self._send_json(200, {
                             "status": "completed",
-                            "content": content,
+                            "content": self._structured_content(content),
                             "source_agent_id": agent_id,
                             "source_sub_ioa_id": sub_ioa_id,
                             "trace_id": message.trace_id,
@@ -421,6 +421,25 @@ class LocalAgentEndpointServer:
                     prompt += "\n\nPayload:\n"
                     prompt += json.dumps(payload, ensure_ascii=False, default=str)
                 return prompt
+
+            @staticmethod
+            def _structured_content(content) -> dict:
+                if isinstance(content, dict):
+                    text = str(content.get("text", content))
+                    artifacts = content.get("artifacts", [])
+                    tool_calls = content.get("tool_calls", [])
+                    agent_calls = content.get("agent_calls", [])
+                else:
+                    text = str(content)
+                    artifacts = []
+                    tool_calls = []
+                    agent_calls = []
+                return {
+                    "text": text,
+                    "artifacts": artifacts,
+                    "tool_calls": tool_calls,
+                    "agent_calls": agent_calls,
+                }
 
             def _send_json(
                 self,

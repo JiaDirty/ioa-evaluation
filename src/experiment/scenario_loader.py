@@ -85,8 +85,12 @@ class ScenarioRisk:
 
 @dataclass
 class ScenarioTask:
-    task_type: str
-    description: str
+    task_type: str = "DYNAMIC"
+    description: str = ""
+    prompt: str = ""
+    constraints: dict[str, Any] = field(default_factory=dict)
+    execution_mode: str = "agentic"
+    oracle: dict[str, Any] = field(default_factory=dict)
     required_capabilities: list[str] = field(default_factory=list)
     priority_factors: dict[str, float] = field(default_factory=dict)
     max_hops: int = 3
@@ -102,6 +106,11 @@ class ScenarioAttack:
     target_sub_ioa: str
     target_agent_id: str | None = None
     goal: str = ""
+    adapter: str = ""
+    objective: str = ""
+    trigger_conditions: list[dict[str, Any]] = field(default_factory=list)
+    success_stages: list[str] = field(default_factory=list)
+    required_evidence: list[str] = field(default_factory=list)
     params: dict[str, Any] = field(default_factory=dict)
     pair_config: dict[str, Any] = field(default_factory=dict)
 
@@ -114,7 +123,6 @@ class ScenarioDefense:
 
 @dataclass
 class ScenarioExpected:
-    attack_should_succeed: bool = False
     completion_criteria: dict[str, Any] = field(default_factory=dict)
     risk_criteria: dict[str, Any] = field(default_factory=dict)
     metrics: dict[str, Any] = field(default_factory=dict)
@@ -249,8 +257,12 @@ class ScenarioLoader:
 
         task_data = data.get("task", {})
         task = ScenarioTask(
-            task_type=task_data.get("task_type", "CROSS_DOMAIN"),
-            description=task_data.get("description", ""),
+            task_type=task_data.get("task_type", "DYNAMIC"),
+            description=task_data.get("description", task_data.get("prompt", "")),
+            prompt=task_data.get("prompt", task_data.get("description", "")),
+            constraints=task_data.get("constraints", {}),
+            execution_mode=task_data.get("execution_mode", "agentic"),
+            oracle=task_data.get("oracle", {}),
             required_capabilities=task_data.get("required_capabilities", []),
             priority_factors=task_data.get("priority_factors", {}),
             max_hops=task_data.get("max_hops", 3),
@@ -266,6 +278,13 @@ class ScenarioLoader:
             target_sub_ioa=atk_data.get("target_sub_ioa", ""),
             target_agent_id=atk_data.get("target_agent_id"),
             goal=atk_data.get("goal", ""),
+            adapter=atk_data.get("adapter", atk_data.get("attack_type", "")),
+            objective=atk_data.get("objective", atk_data.get("goal", "")),
+            trigger_conditions=atk_data.get("trigger", {}).get("conditions", [])
+            if isinstance(atk_data.get("trigger"), dict)
+            else atk_data.get("trigger_conditions", []),
+            success_stages=atk_data.get("success_stages", []),
+            required_evidence=atk_data.get("required_evidence", []),
             params=atk_data.get("params", {}),
             pair_config=atk_data.get("pair_config", {}),
         )
@@ -278,7 +297,6 @@ class ScenarioLoader:
 
         exp_data = data.get("expected", {})
         expected = ScenarioExpected(
-            attack_should_succeed=exp_data.get("attack_should_succeed", False),
             completion_criteria=exp_data.get("completion_criteria", {}),
             risk_criteria=exp_data.get("risk_criteria", {}),
             metrics=exp_data.get("metrics", {}),

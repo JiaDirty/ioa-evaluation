@@ -18,10 +18,13 @@ from datetime import datetime
 from typing import Any, Callable
 
 from ..audit.audit_logger import AuditLogger
+from ..audit.event_bus import EventBus
 from ..core.data_models import (
+    AgentCard,
     Artifact,
     AuditAction,
     AuthResult,
+    CapabilityRequirement,
     DiscoveryQuery,
     GatewayPipelineStage,
     NegotiationResult,
@@ -53,7 +56,12 @@ from ..protocol.adapters import (
     SemanticMismatchSimulator,
     create_adapter,
 )
+from ..orchestration import ArtifactAggregator, OrchestrationExecutor, SimpleOrchestrationPlanner
+from ..protocol.router import ProtocolRouter
 from ..registry.registry import Registry
+from ..registry.capability_resolver import capability_fit
+from ..runtime.base import AgentInvocation, AgentInvocationResult
+from ..tools.models import ToolCall
 from .policy import (
     AuthorizationPolicyEngine,
     auth_result_from_decision,
@@ -98,6 +106,7 @@ class Gateway:
         safety_judge: Callable[[str, dict[str, Any]], Any] | None = None,
         decision_agents: dict[str, Any] | None = None,
         decision_client: Any | None = None,
+        event_bus: EventBus | None = None,
     ) -> None:
         self.gateway_id = gateway_id
         self.sub_ioa_id = sub_ioa_id
@@ -106,8 +115,13 @@ class Gateway:
         self.audit_logger = audit_logger  # 全局
         self.local_audit_logger = local_audit_logger  # 本地
         self.negotiator = ProtocolNegotiator()
+        self.protocol_router = ProtocolRouter()
         self.semantic_mismatch_simulator = SemanticMismatchSimulator()
         self.policy_engine = AuthorizationPolicyEngine()
+        self.event_bus = event_bus
+        self.orchestration_planner = SimpleOrchestrationPlanner()
+        self.orchestration_executor = OrchestrationExecutor()
+        self.artifact_aggregator = ArtifactAggregator()
         self._agent_runner = agent_runner
         self._safety_judge = safety_judge
         self._decision_client = decision_client or DeterministicDecisionClient()
@@ -208,6 +222,32 @@ class Gateway:
             },
         )
 
+    def _emit_event(
+        self,
+        task: Task,
+        stage: str,
+        event_type: str,
+        message: str,
+        *,
+        actor_type: str = "gateway",
+        actor_id: str | None = None,
+        status: str = "ok",
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        if self.event_bus is None:
+            return
+        self.event_bus.emit(
+            task_id=task.task_id,
+            trace_id=task.trace_id or task.task_id,
+            stage=stage,
+            event_type=event_type,
+            actor_type=actor_type,
+            actor_id=actor_id or self.gateway_id,
+            message=message,
+            status=status,
+            payload=payload or {},
+        )
+
     async def _run_decision(
         self,
         name: str,
@@ -275,7 +315,16 @@ class Gateway:
     async def handle_task(self, task: Task, requester_id: str = "user") -> TaskResult:
         """处理任务请求 — 标准 8 步流程。"""
         trace_id = task.task_id
+        if not task.trace_id:
+            task.trace_id = trace_id
         logger.info("Gateway[%s] handling task %s: %s", self.gateway_id, task.task_id, task.description[:50])
+        self._emit_event(
+            task,
+            GatewayPipelineStage.TASK_INTAKE.value,
+            "task_received",
+            "Gateway received task",
+            payload={"description": task.description, "requester_id": requester_id},
+        )
 
         # Step 1: Task Intake
         await self._log_audit(
@@ -311,7 +360,22 @@ class Gateway:
                 self._decision_context(task, requester_id, "human_agency"),
             )
             decision_envelopes["human_agency"] = human_env
+            self._emit_event(
+                task,
+                GatewayPipelineStage.TASK_UNDERSTANDING.value,
+                "decision_agents_completed",
+                "Task, permission, and human-agency decisions completed",
+                actor_type="decision_agent",
+                payload={"decision_agents": list(decision_envelopes.keys())},
+            )
         except ProtocolDeliveryError as e:
+            self._emit_event(
+                task,
+                GatewayPipelineStage.TASK_UNDERSTANDING.value,
+                "decision_agent_failed",
+                str(e),
+                status="failed",
+            )
             return TaskResult(
                 task_id=task.task_id,
                 status=TaskStatus.FAILED,
@@ -334,11 +398,28 @@ class Gateway:
             },
         )
         if not auth_result.authorized:
+            self._emit_event(
+                task,
+                GatewayPipelineStage.POLICY_ENFORCEMENT.value,
+                "authorization_denied",
+                auth_result.reason,
+                actor_type="policy_engine",
+                status="failed",
+                payload={"granted_scope": auth_result.granted_scope},
+            )
             return TaskResult(
                 task_id=task.task_id,
                 status=TaskStatus.FAILED,
                 error=f"Authorization denied: {auth_result.reason}",
             )
+        self._emit_event(
+            task,
+            GatewayPipelineStage.POLICY_ENFORCEMENT.value,
+            "authorization_allowed",
+            "Deterministic policy allowed task",
+            actor_type="policy_engine",
+            payload={"granted_scope": auth_result.granted_scope},
+        )
 
         # Step 3: Local Discovery
         query = DiscoveryQuery(
@@ -357,6 +438,13 @@ class Gateway:
                 "candidate_ids": [c.agent_id for c in candidates],
             },
         )
+        self._emit_event(
+            task,
+            GatewayPipelineStage.LOCAL_DISCOVERY.value,
+            "candidates_discovered",
+            f"Found {len(candidates)} local candidates",
+            payload={"candidate_ids": [c.agent_id for c in candidates]},
+        )
 
         # Step 4: Cross-Domain Discovery (if no local match)
         cross_domain = False
@@ -370,8 +458,22 @@ class Gateway:
                 agent_id=self.gateway_id,
                 details={"stage": "cross_domain_discovery", "candidates_found": len(candidates)},
             )
+            self._emit_event(
+                task,
+                GatewayPipelineStage.CROSS_DOMAIN_DISCOVERY.value,
+                "candidates_discovered",
+                f"Found {len(candidates)} cross-domain candidates",
+                payload={"candidate_ids": [c.agent_id for c in candidates]},
+            )
 
         if not candidates:
+            self._emit_event(
+                task,
+                GatewayPipelineStage.CANDIDATE_RANKING.value,
+                "no_candidate",
+                "No suitable agent found",
+                status="failed",
+            )
             return TaskResult(
                 task_id=task.task_id,
                 status=TaskStatus.FAILED,
@@ -391,6 +493,13 @@ class Gateway:
             },
         )
         if not verified:
+            self._emit_event(
+                task,
+                GatewayPipelineStage.CANDIDATE_VERIFICATION.value,
+                "no_verified_candidate",
+                "No verified candidates",
+                status="failed",
+            )
             return TaskResult(
                 task_id=task.task_id,
                 status=TaskStatus.FAILED,
@@ -416,6 +525,7 @@ class Gateway:
             )
 
         ranked = self._apply_capability_decision_rank(ranked, capability_decision.ranked_agent_ids)
+        plan = self.orchestration_planner.build_plan(task, ranked)
         await self._log_audit(
             trace_id=trace_id,
             action=AuditAction.AUTH_CHECK,
@@ -424,13 +534,38 @@ class Gateway:
                 "stage": GatewayPipelineStage.CANDIDATE_RANKING.value,
                 "ranked_agent_ids": [candidate.agent_id for candidate in ranked],
                 "decision_agent": capability_env.agent_name,
+                "orchestration_plan": plan.model_dump(mode="json"),
             },
         )
+        self._emit_event(
+            task,
+            GatewayPipelineStage.CANDIDATE_RANKING.value,
+            "orchestration_planned",
+            f"Built {plan.mode} plan with {len(plan.steps)} step(s)",
+            payload=plan.model_dump(mode="json"),
+        )
         target = ranked[0]
+
+        if plan.mode == "parallel" and len(plan.steps) > 1:
+            return await self._handle_orchestrated_task(
+                task=task,
+                requester_id=requester_id,
+                ranked=ranked,
+                plan=plan,
+                decision_envelopes=decision_envelopes,
+                cross_domain=cross_domain,
+            )
 
         # Step 6: Protocol Negotiation
         neg_result = await self._negotiate_protocol(target.supported_protocols, trace_id=trace_id)
         if not neg_result.success:
+            self._emit_event(
+                task,
+                GatewayPipelineStage.PROTOCOL_NEGOTIATION.value,
+                "protocol_negotiation_failed",
+                neg_result.reason,
+                status="failed",
+            )
             return TaskResult(
                 task_id=task.task_id,
                 status=TaskStatus.FAILED,
@@ -455,6 +590,14 @@ class Gateway:
                 error=str(e),
             )
         if protocol_decision.semantic_fit == "unsafe":
+            self._emit_event(
+                task,
+                GatewayPipelineStage.PROTOCOL_SEMANTICS.value,
+                "protocol_semantics_rejected",
+                "Protocol semantics rejected as unsafe",
+                actor_type="decision_agent",
+                status="failed",
+            )
             return TaskResult(
                 task_id=task.task_id,
                 status=TaskStatus.FAILED,
@@ -479,6 +622,14 @@ class Gateway:
             artifact = await self._relay_task(target, task, neg_result, trace_id)
         except ProtocolDeliveryError as e:
             logger.warning("Gateway[%s] protocol delivery failed: %s", self.gateway_id, e)
+            self._emit_event(
+                task,
+                GatewayPipelineStage.HTTP_DELIVERY.value,
+                "delivery_failed",
+                str(e),
+                status="failed",
+                payload={"target_agent_id": target.agent_id},
+            )
             return TaskResult(
                 task_id=task.task_id,
                 status=TaskStatus.FAILED,
@@ -541,6 +692,14 @@ class Gateway:
                 "completed": True,
             },
         )
+        self._emit_event(
+            task,
+            GatewayPipelineStage.AUDIT_FINALIZATION.value,
+            "task_completed",
+            "Task completed through single-agent path",
+            status="completed",
+            payload={"artifact_id": checked.artifact_id, "participating_agents": [target.agent_id]},
+        )
 
         return TaskResult(
             task_id=task.task_id,
@@ -548,6 +707,118 @@ class Gateway:
             output=checked.content,
             artifacts=[checked],
             participating_agents=[target.agent_id],
+        )
+
+    async def _handle_orchestrated_task(
+        self,
+        *,
+        task: Task,
+        requester_id: str,
+        ranked: list[Any],
+        plan: Any,
+        decision_envelopes: dict[str, DecisionEnvelope],
+        cross_domain: bool,
+    ) -> TaskResult:
+        trace_id = task.task_id
+        by_id = {agent.agent_id: agent for agent in ranked}
+        artifacts: list[Artifact] = []
+        participating_agents: list[str] = []
+
+        async def run_step(agent_id: str) -> Artifact:
+            target = by_id[agent_id]
+            neg_result = await self._negotiate_protocol(target.supported_protocols, trace_id=trace_id)
+            if not neg_result.success:
+                raise ProtocolDeliveryError(neg_result.reason)
+            artifact = await self._relay_task(target, task, neg_result, trace_id)
+            artifact.metadata.setdefault("decision_agents", {}).update({
+                name: envelope.model_dump(mode="json")
+                for name, envelope in decision_envelopes.items()
+            })
+            artifact.metadata["orchestration"] = {
+                "enabled": True,
+                "plan_id": plan.plan_id,
+                "mode": plan.mode,
+            }
+            checked = await self._security_check(
+                artifact,
+                self._decision_context(
+                    task,
+                    requester_id,
+                    "content_security",
+                    {"artifact_id": artifact.artifact_id, "target_agent_id": target.agent_id},
+                ),
+            )
+            participating_agents.append(target.agent_id)
+            self._emit_event(
+                task,
+                GatewayPipelineStage.HTTP_DELIVERY.value,
+                "agent_step_completed",
+                f"Agent {target.agent_id} completed orchestration step",
+                actor_type="domain_agent",
+                actor_id=target.agent_id,
+                payload={"artifact_id": checked.artifact_id},
+            )
+            return checked
+
+        try:
+            artifacts = await self.orchestration_executor.execute(
+                plan, lambda agent_id: run_step(agent_id)
+            )
+        except ProtocolDeliveryError as e:
+            self._emit_event(
+                task,
+                GatewayPipelineStage.HTTP_DELIVERY.value,
+                "orchestration_failed",
+                str(e),
+                status="failed",
+            )
+            return TaskResult(task_id=task.task_id, status=TaskStatus.FAILED, error=str(e))
+
+        aggregate = self.artifact_aggregator.aggregate(
+            task_id=task.task_id,
+            trace_id=trace_id,
+            gateway_id=self.gateway_id,
+            artifacts=artifacts,
+            plan=plan,
+        )
+        aggregate.metadata["cross_domain"] = cross_domain
+        aggregate.metadata.setdefault("decision_agents", {}).update({
+            name: envelope.model_dump(mode="json")
+            for name, envelope in decision_envelopes.items()
+        })
+        await self.audit_logger.register_artifact(aggregate)
+        if self.local_audit_logger:
+            await self.local_audit_logger.register_artifact(aggregate)
+        await self._log_audit(
+            trace_id=trace_id,
+            action=AuditAction.AGGREGATE,
+            agent_id=self.gateway_id,
+            output_artifact_ids=[aggregate.artifact_id],
+            details={
+                "stage": GatewayPipelineStage.ARTIFACT_AGGREGATION.value,
+                "orchestration_plan": plan.model_dump(mode="json"),
+                "source_artifact_ids": [artifact.artifact_id for artifact in artifacts],
+                "participating_agents": participating_agents,
+            },
+        )
+        self._emit_event(
+            task,
+            GatewayPipelineStage.AUDIT_FINALIZATION.value,
+            "task_completed",
+            "Task completed through multi-agent orchestration",
+            status="completed",
+            payload={
+                "artifact_id": aggregate.artifact_id,
+                "participating_agents": participating_agents,
+                "plan": plan.model_dump(mode="json"),
+            },
+        )
+        return TaskResult(
+            task_id=task.task_id,
+            status=TaskStatus.COMPLETED,
+            output=aggregate.content,
+            artifacts=[*artifacts, aggregate],
+            participating_agents=participating_agents,
         )
 
     # ------------------------------------------------------------------
@@ -713,11 +984,17 @@ class Gateway:
         """按能力、声誉、成本、风险排序。"""
 
         def score(agent) -> float:
+            normalized_cost = float(getattr(agent, "cost_profile", {}).get("normalized_cost", 0.5))
+            risk_score = float(getattr(agent, "risk_profile", {}).get("risk_score", 1.0 - agent.reputation_score))
+            concentration_penalty = float(
+                getattr(agent, "risk_profile", {}).get("concentration_penalty", 0.0)
+            )
             return (
                 priority_factors.get("capability", 0.4) * len(agent.declared_capabilities) / 10
                 + priority_factors.get("reputation", 0.3) * agent.reputation_score
-                + priority_factors.get("cost", 0.2) * 0.5  # 简化成本
-                + priority_factors.get("risk", 0.1) * (1.0 - agent.reputation_score)
+                - priority_factors.get("cost", 0.2) * normalized_cost
+                - priority_factors.get("risk", 0.1) * risk_score
+                - concentration_penalty * 0.01
             )
 
         ranked = sorted(candidates, key=score, reverse=True)
@@ -769,6 +1046,208 @@ class Gateway:
         ordered = [by_id[agent_id] for agent_id in ranked_agent_ids if agent_id in by_id]
         remaining = [agent for agent in candidates if agent.agent_id not in set(ranked_agent_ids)]
         return ordered + remaining
+
+    async def discover_and_select(
+        self,
+        requirement: CapabilityRequirement,
+        *,
+        task: Task,
+        requester_id: str = "user",
+        exclude_agent_ids: list[str] | None = None,
+    ) -> AgentCard:
+        """Discover, verify, and select an Agent for a capability requirement."""
+        preferred_protocols = list(
+            requirement.allowed_protocols
+            or [ProtocolType.A2A, ProtocolType.MCP, ProtocolType.PRIVATE_API]
+        )
+        query = DiscoveryQuery(
+            requirements=[requirement],
+            preferred_protocols=preferred_protocols,
+            min_reputation=0.0,
+            min_trust_level=requirement.min_trust_level,
+            sub_ioa_id=self.sub_ioa_id,
+            exclude_agent_ids=exclude_agent_ids or [],
+            max_results=10,
+        )
+        candidates = await self.local_registry.discover(query)
+        discovery_scope = "local"
+        local_fit = capability_fit(candidates[0], [requirement]) if candidates else 0.0
+        if not candidates or local_fit < 0.7:
+            discovery_scope = "global"
+            query.sub_ioa_id = None
+            candidates = await self.global_registry.discover(query)
+        self._emit_event(
+            task,
+            GatewayPipelineStage.LOCAL_DISCOVERY.value
+            if discovery_scope == "local"
+            else GatewayPipelineStage.CROSS_DOMAIN_DISCOVERY.value,
+            "agentic_candidates_discovered",
+            f"Discovered {len(candidates)} candidates for {requirement.capability}",
+            payload={
+                "requirement_id": requirement.requirement_id,
+                "capability": requirement.capability,
+                "candidate_ids": [agent.agent_id for agent in candidates],
+                "discovery_scope": discovery_scope,
+            },
+        )
+        verified = await self._verify_candidates(candidates)
+        if not verified:
+            raise ProtocolDeliveryError(
+                f"No verified Agent satisfies capability requirement: {requirement.capability}"
+            )
+        try:
+            capability_decision, capability_env = await self._run_decision(
+                "capability_matching",
+                {
+                    "required_capabilities": [requirement.capability],
+                    "requirements": [requirement.model_dump(mode="json")],
+                    "candidates": [candidate.model_dump(mode="json") for candidate in verified],
+                },
+                self._decision_context(task, requester_id, "agentic_capability_matching"),
+            )
+            ranked = self._apply_capability_decision_rank(verified, capability_decision.ranked_agent_ids)
+            decision_payload = capability_env.model_dump(mode="json")
+        except ProtocolDeliveryError:
+            ranked = verified
+            decision_payload = {"fallback": "registry_rank"}
+        selected = ranked[0]
+        self._emit_event(
+            task,
+            GatewayPipelineStage.CANDIDATE_RANKING.value,
+            "agentic_candidate_selected",
+            f"Selected {selected.agent_id} for {requirement.capability}",
+            actor_type="gateway",
+            payload={
+                "requirement_id": requirement.requirement_id,
+                "selected_agent_id": selected.agent_id,
+                "selected_sub_ioa_id": selected.sub_ioa_id,
+                "decision": decision_payload,
+            },
+        )
+        return selected
+
+    async def dispatch_agentic_subtask(
+        self,
+        *,
+        task: Task,
+        node,
+        selected_agent: AgentCard,
+        runtime_manager,
+        tool_gateway,
+        delegation_grant: dict | None = None,
+    ) -> AgentInvocationResult:
+        """Run a bounded AgentAction loop through Gateway-controlled boundaries."""
+        protocols = list(selected_agent.supported_protocols)
+        if not protocols:
+            raise ProtocolDeliveryError("Selected Agent declares no supported protocols")
+        neg_result = await self._negotiate_protocol(protocols, trace_id=task.trace_id or task.task_id)
+        if not neg_result.success or neg_result.agreed_protocol is None:
+            raise ProtocolDeliveryError("No safe agent-to-agent protocol available")
+
+        effective_scopes = sorted(
+            set(selected_agent.permission_scope or ["read", "execute"])
+            & set(task.user_grants or selected_agent.permission_scope or ["read", "execute"])
+        )
+        if not effective_scopes:
+            effective_scopes = ["execute"]
+
+        turn_history: list[dict[str, Any]] = []
+        max_turns = min(max(1, task.constraints.max_agent_turns), 12)
+        for turn in range(max_turns):
+            invocation = AgentInvocation(
+                task_id=task.task_id,
+                trace_id=task.trace_id or task.task_id,
+                requester_id=self.gateway_id,
+                agent_id=selected_agent.agent_id,
+                input={
+                    "task": node.subtask_description or task.description,
+                    "prompt": task.prompt,
+                    "expected_output": node.expected_output,
+                },
+                subtask=node.model_dump(mode="json"),
+                task_spec_summary=(
+                    task.task_spec.model_dump(mode="json") if task.task_spec is not None else {}
+                ),
+                plan_summary={"active_plan_id": task.active_plan_id, "node_id": node.node_id},
+                available_tool_descriptors=tool_gateway.list_tools() if tool_gateway is not None else [],
+                delegation_grant=delegation_grant or {},
+                turn_history=turn_history,
+                permissions=effective_scopes,
+                metadata={
+                    "agentic_loop": True,
+                    "max_turns": 1,
+                    "protocol": neg_result.agreed_protocol.value,
+                    "sub_ioa_id": selected_agent.sub_ioa_id,
+                    "parent_span_id": node.metadata.get("observability_span_id"),
+                },
+            )
+            result = await runtime_manager.invoke(invocation)
+            action = result.action
+            self._emit_event(
+                task,
+                "agent_runtime_loop",
+                "agent_action",
+                f"Agent turn {turn + 1} completed",
+                actor_type="domain_agent",
+                actor_id=selected_agent.agent_id,
+                payload={
+                    "node_id": node.node_id,
+                    "action_type": getattr(action, "type", None),
+                    "status": result.status,
+                    "reason": getattr(action, "reason", ""),
+                },
+            )
+            if action is None:
+                return result
+            if action.type == "tool_call":
+                call = ToolCall(
+                    tool_id=action.tool_id,
+                    task_id=task.task_id,
+                    trace_id=task.trace_id or task.task_id,
+                    parent_span_id=node.metadata.get("observability_span_id"),
+                    caller_agent_id=selected_agent.agent_id,
+                    arguments=action.arguments,
+                    granted_scopes=effective_scopes,
+                )
+                tool_result = await tool_gateway.call_tool(call)
+                turn_history.append(
+                    {
+                        "turn": turn + 1,
+                        "action": action.model_dump(mode="json"),
+                        "tool_result": tool_result.model_dump(mode="json"),
+                    }
+                )
+                if tool_result.status != "completed":
+                    return AgentInvocationResult(
+                        task_id=task.task_id,
+                        trace_id=task.trace_id or task.task_id,
+                        agent_id=selected_agent.agent_id,
+                        status="failed",
+                        output={"tool_result": tool_result.output},
+                        tool_calls=[tool_result.model_dump(mode="json")],
+                        action=action,
+                        error=tool_result.error,
+                        metadata={"agentic_loop": True, "turns": turn + 1},
+                    )
+                continue
+            if action.type == "final":
+                return result.model_copy(
+                    update={
+                        "status": "completed",
+                        "output": {"text": action.answer, "limitations": action.limitations},
+                        "metadata": {**result.metadata, "agentic_loop": True, "turns": turn + 1},
+                    }
+                )
+            return result
+
+        return AgentInvocationResult(
+            task_id=task.task_id,
+            trace_id=task.trace_id or task.task_id,
+            agent_id=selected_agent.agent_id,
+            status="failed",
+            error="agentic loop turn budget exhausted",
+            metadata={"agentic_loop": True, "turns": max_turns},
+        )
 
     async def _negotiate_protocol(
         self, target_protocols: list[ProtocolType], trace_id: str = ""
@@ -832,7 +1311,13 @@ class Gateway:
                 "message_id": msg.message_id,
             },
         )
-        delivery = await adapter.send_message(target.endpoint, msg)
+        if neg_result.agreed_protocol == ProtocolType.MCP:
+            # Keep MCP delivery only for controlled interop benchmark probes.
+            delivery = await adapter.send_message(target.endpoint, msg)
+        else:
+            delivery = await self.protocol_router.route_agent_call(
+                target.endpoint, neg_result.agreed_protocol, msg
+            )
         decoded_response = adapter.decode_delivery_result(delivery)
         if decoded_response.get("status") == "failed" or decoded_response.get("error"):
             raise ProtocolDeliveryError(
@@ -853,23 +1338,38 @@ class Gateway:
             },
         )
         response = decoded_response.get("content", "")
+        response_text = response.get("text", "") if isinstance(response, dict) else str(response)
+        response_tool_calls = response.get("tool_calls", []) if isinstance(response, dict) else []
+        response_agent_calls = response.get("agent_calls", []) if isinstance(response, dict) else []
 
         # 解码响应为 Artifact
         artifact = Artifact(
             task_id=task.task_id,
             producer_agent_id=decoded_response.get("source_agent_id") or target.agent_id,
             protocol=neg_result.agreed_protocol.value,
+            artifact_type="text_answer",
             content=response,
-            content_type="text",
+            content_type="application/json" if isinstance(response, dict) else "text",
             source_agent_id=decoded_response.get("source_agent_id") or target.agent_id,
             source_task_id=task.task_id,
             safe=True,  # 安全检查在 _security_check 中进行
+            agent_contributions=[{
+                "agent_id": decoded_response.get("source_agent_id") or target.agent_id,
+                "role": "selected_agent",
+                "summary": response_text[:160],
+            }],
             metadata={
+                "trace_id": trace_id,
+                "agent_id": target.agent_id,
+                "sub_ioa_id": target.sub_ioa_id,
+                "protocol": neg_result.agreed_protocol.value,
                 "selected_agent_id": target.agent_id,
                 "execution_sub_ioa_id": decoded_response.get("source_sub_ioa_id") or target.sub_ioa_id,
                 "execution_model_scope": "per_agent_llm_runtime",
                 "execution_transport": "protocol_http_endpoint",
                 "endpoint": target.endpoint,
+                "tool_calls": response_tool_calls,
+                "agent_calls": response_agent_calls,
                 "delivery": {
                     "protocol": delivery.get("protocol"),
                     "http_status": delivery.get("http_status"),

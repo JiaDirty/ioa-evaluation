@@ -13,7 +13,7 @@ class DecisionClientSelectionTest(unittest.TestCase):
 
     def test_live_environment_uses_configured_llm_decision_client(self):
         live_client = object()
-        with patch("src.experiment.runner.get_judge_llm_client", return_value=live_client):
+        with patch("src.experiment.runner.get_agent_llm_client", return_value=live_client):
             env = IoAEnvironment({"create_agent_runtimes": True})
 
         self.assertIs(env._decision_client, live_client)

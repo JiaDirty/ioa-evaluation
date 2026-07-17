@@ -60,16 +60,25 @@ class OpenAIClient(BaseLLMClient):
         self.model = config.model
         self.temperature = config.temperature
         self.max_tokens = config.max_tokens
+        self.last_usage: dict[str, int] | None = None
+        self.last_retry_count = 0
+        self.last_latency_ms: float | None = None
 
     def _with_retry(self, fn, **kwargs) -> str:
         last_err = None
+        started = time.perf_counter()
         for attempt in range(self.retry_count):
             try:
-                return fn(**kwargs)
+                result = fn(**kwargs)
+                self.last_retry_count = attempt
+                self.last_latency_ms = (time.perf_counter() - started) * 1000
+                return result
             except Exception as e:
                 last_err = e
                 if attempt < self.retry_count - 1:
                     time.sleep(self.retry_delay)
+        self.last_retry_count = self.retry_count
+        self.last_latency_ms = (time.perf_counter() - started) * 1000
         raise LLMError(f"API error after {self.retry_count} attempts: {last_err}")
 
     def generate(self, prompt: str, **kwargs) -> str:
@@ -80,6 +89,7 @@ class OpenAIClient(BaseLLMClient):
                 temperature=kwargs.get("temperature", self.temperature),
                 max_tokens=kwargs.get("max_tokens", self.max_tokens),
             )
+            self.last_usage = self._usage(resp)
             return resp.choices[0].message.content or ""
         return self._with_retry(_do)
 
@@ -94,6 +104,7 @@ class OpenAIClient(BaseLLMClient):
                 temperature=kwargs.get("temperature", self.temperature),
                 max_tokens=kwargs.get("max_tokens", self.max_tokens),
             )
+            self.last_usage = self._usage(resp)
             return resp.choices[0].message.content or ""
         return self._with_retry(_do)
 
@@ -116,6 +127,17 @@ class OpenAIClient(BaseLLMClient):
                     json_lines.append(line)
             raw = "\n".join(json_lines)
         return json.loads(raw)
+
+    @staticmethod
+    def _usage(response) -> dict[str, int] | None:
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return None
+        return {
+            "prompt_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
+            "completion_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
+            "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
+        }
 
 
 def get_agent_llm_client() -> OpenAIClient:

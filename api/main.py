@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routes import experiments, feedback, agents, docs
+from .routes import experiments, feedback, agents, docs, mcp, observability, tasks, traces, tools
 
 app = FastAPI(title="IOA 测评控制台 API", version="1.0.0")
 
@@ -27,6 +27,11 @@ app.include_router(experiments.router)
 app.include_router(feedback.router)
 app.include_router(agents.router)
 app.include_router(docs.router)
+app.include_router(tasks.router)
+app.include_router(traces.router)
+app.include_router(tools.router)
+app.include_router(mcp.router)
+app.include_router(observability.router)
 
 
 @app.get("/api/health")

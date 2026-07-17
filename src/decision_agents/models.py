@@ -55,6 +55,8 @@ class CapabilityMatchDecision(BaseModel):
     ranked_agent_ids: list[str] = Field(default_factory=list)
     rejected_agent_ids: list[str] = Field(default_factory=list)
     rationale_by_agent: dict[str, str] = Field(default_factory=dict)
+    capability_gaps: list[str] = Field(default_factory=list)
+    sufficient_coverage: bool = True
     uncertainty: float = Field(default=0.0, ge=0.0, le=1.0)
     confidence: float = Field(ge=0.0, le=1.0)
 

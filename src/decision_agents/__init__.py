@@ -1,6 +1,7 @@
 """Structured semantic Decision Agents for the IoA security testbed."""
 
 from .base import DecisionAgent, DecisionAgentError
+from .agentic_planner import AgenticPlannerAgent
 from .capability_matching import CapabilityMatchingAgent
 from .clients import DeterministicDecisionClient
 from .consensus_risk import ConsensusRiskAgent
@@ -34,6 +35,7 @@ from .permission_analysis import PermissionAnalysisAgent
 from .provenance_verifier import ProvenanceVerifierAgent
 from .protocol_semantics import ProtocolSemanticsAgent
 from .registry_risk import RegistryRiskAgent
+from .replanning import ReplanningAgent
 from .specialized import (
     AgencyErosionAgent,
     AuditAttributionAgent,
@@ -47,11 +49,14 @@ from .specialized import (
     RumorAssessmentAgent,
     SensitivityClassifierAgent,
 )
+from .synthesis import SynthesisAgent, SynthesisDecision
+from .task_specification import TaskSpecificationAgent
 from .task_understanding import TaskUnderstandingAgent
 
 __all__ = [
     "AgencyErosionAgent",
     "AgencyErosionDecision",
+    "AgenticPlannerAgent",
     "AuditAttributionAgent",
     "AuditAttributionDecision",
     "CapabilityMatchDecision",
@@ -87,12 +92,16 @@ __all__ = [
     "ReputationFairnessDecision",
     "RegistryRiskAgent",
     "RegistryRiskDecision",
+    "ReplanningAgent",
     "RoutingManipulationAgent",
     "RoutingManipulationDecision",
     "RumorAssessmentAgent",
     "RumorAssessmentDecision",
     "SensitivityClassificationDecision",
     "SensitivityClassifierAgent",
+    "SynthesisAgent",
+    "SynthesisDecision",
+    "TaskSpecificationAgent",
     "TaskUnderstandingAgent",
     "TaskUnderstandingDecision",
 ]

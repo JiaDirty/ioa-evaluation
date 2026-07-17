@@ -22,18 +22,38 @@ from ..attacks.attack_injector import AttackInjector, AttackResult
 from ..attacks.llm_judge import LLMJudge, JudgeVerdict
 from ..attacks.observation import NetworkObservationEvent
 from ..audit.audit_logger import AuditLogger
+from ..audit.event_bus import EventBus
 from ..core.data_models import (
-    AgentCard, Artifact, EvaluationStatus, ProtocolType, RiskLevel,
+    AgentCard, Artifact, EvaluationStatus, ProtocolType, RiskLevel, TaskConstraints,
     Task, TaskResult, TaskStatus, TaskType, TestResult,
 )
 from ..core.shared_knowledge import SharedKnowledgeBase
 from ..decision_agents import DeterministicDecisionClient
+from ..decision_agents.replanning import ReplanningAgent
+from ..decision_agents.synthesis import SynthesisAgent
+from ..decision_agents.task_specification import TaskSpecificationAgent
 from ..gateway.gateway import Gateway
-from ..llm.client import get_judge_llm_client
+from ..llm.client import get_agent_llm_client, get_judge_llm_client
 from ..marketplace.marketplace import TaskMarketplace
+from ..orchestration import AgenticOrchestrator
+from ..orchestration.planner import AgenticOrchestrationPlanner
 from ..protocol.local_endpoint import LocalAgentEndpointServer
 from ..protocol.adapters import ProtocolNegotiator, SemanticMismatchSimulator
 from ..registry.registry import Registry
+from ..runtime.ag2_runtime import AG2AgentRuntime
+from ..runtime.base import AgentRuntime
+from ..runtime.manager import AgentRuntimeManager
+from ..mcp import MCPServerRegistry, MCPToolProvider
+from ..persistence import (
+    SQLiteArtifactStore,
+    SQLiteDatabase,
+    SQLiteEventStore,
+    SQLiteObservabilityStore,
+    SQLiteTaskStore,
+    SQLiteToolCallStore,
+)
+from ..tasks import BackgroundTaskRunner, CancellationRegistry
+from ..tools.local_tools import build_default_tool_gateway
 from .feedback_loop import FeedbackLoop
 from .exceptions import EvaluationInvalidError
 from .scenario_loader import Scenario, ScenarioAgent, ScenarioSubIoA
@@ -71,7 +91,7 @@ class DeterministicPromptClient:
         return {
             "has_risk": False,
             "severity": "none",
-            "reason": "Deterministic offline judge treats the attack as blocked for framework validation.",
+            "reason": "Deterministic offline judge does not decide live attack outcome; use mechanism evidence only.",
             "evidence": ["offline deterministic evaluation"],
             "attack_succeeded": False,
             "recommended_action": "log",
@@ -112,7 +132,7 @@ class DeterministicJudge:
             severity="none",
             reason=(
                 f"Offline deterministic judge for {self.risk_type}: "
-                "attack behavior is treated as blocked by the framework."
+                "live attack outcome is not decided in this compatibility path."
             ),
             evidence=["offline deterministic evaluation"],
             attack_succeeded=False,
@@ -131,7 +151,7 @@ class DeterministicJudge:
     ) -> tuple[bool, str]:
         return False, (
             f"Offline deterministic judge for {self.risk_type}: "
-            "no attack success accepted without live model evidence."
+            "no live-model attack verdict is produced by this compatibility path."
         )
 
 
@@ -494,6 +514,7 @@ class IoAEnvironment:
             self.config.get("offline_deterministic")
             or self.config.get("execution_mode") == "offline_deterministic"
         )
+        self.strict_live = self.config.get("execution_mode") == "agentic_live"
         self.create_agent_runtimes = self.config.get(
             "create_agent_runtimes",
             not self.offline_deterministic,
@@ -502,14 +523,69 @@ class IoAEnvironment:
         # 全局基础设施
         self.global_registry = Registry("global", is_global=True)
         self.audit_logger = AuditLogger("global")
+        sqlite_path = self.config.get("sqlite_path", "data/ioa_runtime.sqlite3")
+        self.persistence_db = SQLiteDatabase(sqlite_path)
+        self.task_store = SQLiteTaskStore(self.persistence_db)
+        self.event_store = SQLiteEventStore(self.persistence_db)
+        self.observability_store = SQLiteObservabilityStore(self.persistence_db)
+        self.tool_call_store = SQLiteToolCallStore(self.persistence_db)
+        self.artifact_store = SQLiteArtifactStore(self.persistence_db)
+        self.event_bus = EventBus(
+            self.event_store,
+            self.observability_store,
+            context={
+                "experiment_id": str(self.config.get("experiment_id", "")),
+                "scenario_id": str(self.config.get("scenario_id", "")),
+                "run_group": str(self.config.get("run_group", "")),
+            },
+        )
         self.marketplace = TaskMarketplace("global")
         self.topology = TopologyController()
         self.knowledge_base = SharedKnowledgeBase(self.judge_knowledge_relation)
+        self.tool_gateway = build_default_tool_gateway()
+        self.tool_gateway.set_tool_call_store(self.tool_call_store)
+        self.tool_gateway.set_event_bus(self.event_bus)
+        self.mcp_server_registry = MCPServerRegistry.from_yaml()
+        self.mcp_tool_provider = MCPToolProvider(self.mcp_server_registry)
+        self.tool_gateway.register_provider("mcp", self.mcp_tool_provider)
+        self.runtime_manager = AgentRuntimeManager(self.tool_gateway, self.event_bus)
+        self._decision_client = self._create_decision_client()
+        self.cancellation_registry = CancellationRegistry()
+        self.task_runner = BackgroundTaskRunner(
+            self,
+            self.task_store,
+            self.event_bus,
+            self.cancellation_registry,
+            artifact_store=self.artifact_store,
+        )
 
         # 子生态
         self._local_registries: dict[str, Registry] = {}
         self._local_audit_loggers: dict[str, AuditLogger] = {}
         self._gateways: dict[str, Gateway] = {}
+        self.agentic_orchestrator = AgenticOrchestrator(
+            gateways=self._gateways,
+            global_registry=self.global_registry,
+            runtime_manager=self.runtime_manager,
+            tool_gateway=self.tool_gateway,
+            event_bus=self.event_bus,
+            task_spec_agent=TaskSpecificationAgent(
+                model_client=self._decision_client if not self.offline_deterministic else None,
+                require_model=self.strict_live,
+            ),
+            planner=AgenticOrchestrationPlanner(
+                model_client=self._decision_client if not self.offline_deterministic else None
+            ),
+            replanning_agent=ReplanningAgent(
+                model_client=self._decision_client if not self.offline_deterministic else None
+            ),
+            synthesis_agent=SynthesisAgent(
+                model_client=self._decision_client if not self.offline_deterministic else None
+            ),
+            simulate_human_checkpoints=self.offline_deterministic
+            or self.config.get("simulate_human_checkpoints", False),
+        )
+        self.marketplace.set_agentic_orchestrator(self.agentic_orchestrator)
 
         # 真实 AG2 Agent
         self._agents: dict[str, IoAAgent] = {}
@@ -521,7 +597,6 @@ class IoAEnvironment:
         self.attack_injector = self._create_attack_injector()
         self.attack_injector.set_environment(self)
         self._judges: dict[str, LLMJudge] = {}
-        self._decision_client = self._create_decision_client()
 
         # 指标引擎
         self.metrics_engine = MetricsEngine(self.audit_logger, self.marketplace)
@@ -541,8 +616,10 @@ class IoAEnvironment:
         if not live_enabled:
             return DeterministicDecisionClient()
         try:
-            return get_judge_llm_client()
+            return get_agent_llm_client()
         except Exception as e:
+            if self.strict_live:
+                raise RuntimeError("Live Decision Agent client is unavailable") from e
             logger.warning("Decision Agent LLM client unavailable, using deterministic fallback: %s", e)
             return DeterministicDecisionClient()
 
@@ -586,6 +663,7 @@ class IoAEnvironment:
                 else None
             ),
             decision_client=self._decision_client,
+            event_bus=self.event_bus,
         )
         self._gateways[sub_ioa_id] = gateway
 
@@ -597,8 +675,21 @@ class IoAEnvironment:
             try:
                 agent = create_sub_ioa_agent(sub_ioa_id)
                 self._agents[sub_ioa_id] = agent
+                self.runtime_manager.bind_runtime(
+                    sub_ioa_id,
+                    AG2AgentRuntime(
+                        agent_id=sub_ioa_id,
+                        card={"agent_id": sub_ioa_id, "sub_ioa_id": sub_ioa_id},
+                        ioa_agent=agent,
+                    ),
+                    sub_ioa_id=sub_ioa_id,
+                )
                 logger.info("Created AG2 agent for Sub-IoA: %s", sub_ioa_id)
             except Exception as e:
+                if self.strict_live:
+                    raise RuntimeError(
+                        f"Failed to create live Sub-IoA runtime for {sub_ioa_id}"
+                    ) from e
                 logger.warning("Failed to create AG2 agent for %s: %s", sub_ioa_id, e)
 
     def get_agent(self, sub_ioa_id: str) -> Optional[IoAAgent]:
@@ -615,6 +706,19 @@ class IoAEnvironment:
         self._agents[agent_id] = runtime
         if sub_ioa_id is not None:
             self._agent_sub_ioa_index.setdefault(agent_id, sub_ioa_id)
+        wrapped: AgentRuntime
+        if isinstance(runtime, AgentRuntime):
+            wrapped = runtime
+        else:
+            card: Any = {"agent_id": agent_id, "sub_ioa_id": sub_ioa_id or ""}
+            if sub_ioa_id and sub_ioa_id in self._local_registries:
+                found = AgentRuntimeManager._run_sync(
+                    self._local_registries[sub_ioa_id].get_agent(agent_id)
+                )
+                if found:
+                    card = found
+            wrapped = AG2AgentRuntime(agent_id=agent_id, card=card, ioa_agent=runtime)
+        self.runtime_manager.bind_runtime(agent_id, wrapped, sub_ioa_id=sub_ioa_id)
 
     def run_agent_task(
         self,
@@ -639,6 +743,14 @@ class IoAEnvironment:
                 raise ValueError(
                     f"Agent {agent_id} belongs to {registered_sub_ioa}, not {sub_ioa_id}"
                 )
+
+        if self.runtime_manager.has_runtime(agent_id):
+            return self.runtime_manager.invoke_sync_text(
+                sub_ioa_id=sub_ioa_id,
+                agent_id=agent_id,
+                task_prompt=task_prompt,
+                max_turns=max_turns,
+            )
 
         agent = self._agents.get(agent_id)
         if not agent and task is None:
@@ -797,6 +909,7 @@ class IoAEnvironment:
                     actual_capabilities=caps,
                     supported_protocols=[ProtocolType.A2A, ProtocolType.MCP],
                     certificate=f"cert-{sub_ioa_id}-{name[:4]}",
+                    trust_level="verified",
                     reputation_score=rep,
                     permission_scope=["read", "execute"],
                 )
@@ -818,17 +931,25 @@ class IoAEnvironment:
         self._agent_sub_ioa_index[agent_id] = card.sub_ioa_id
         if self.create_agent_runtimes and agent_id not in self._agents:
             try:
-                self._agents[agent_id] = create_agent_from_card(card)
+                self.bind_agent_runtime(agent_id, create_agent_from_card(card), sub_ioa_id=card.sub_ioa_id)
             except Exception as e:
+                if self.strict_live:
+                    raise RuntimeError(
+                        f"Failed to create live AgentCard runtime for {agent_id}"
+                    ) from e
                 logger.warning("Failed to create AG2 runtime for agent %s: %s", agent_id, e)
         elif (
             self.config.get("auto_bind_deterministic_runtimes", False)
             and agent_id not in self._agents
         ):
-            self._agents[agent_id] = DeterministicAgentRuntime(
-                agent_id=agent_id,
+            self.bind_agent_runtime(
+                agent_id,
+                DeterministicAgentRuntime(
+                    agent_id=agent_id,
+                    sub_ioa_id=card.sub_ioa_id,
+                    display_name=card.display_name,
+                ),
                 sub_ioa_id=card.sub_ioa_id,
-                display_name=card.display_name,
             )
         return agent_id
 
@@ -848,6 +969,7 @@ class IoAEnvironment:
                 actual_capabilities=["gateway", "routing", "authorization", "relay"],
                 supported_protocols=[ProtocolType.A2A, ProtocolType.MCP, ProtocolType.PRIVATE_API],
                 certificate=f"cert-{gateway.gateway_id}",
+                trust_level="verified",
                 reputation_score=1.0,
                 permission_scope=["read", "execute", "relay", "delegate"],
             )
@@ -925,22 +1047,30 @@ class IoAEnvironment:
     def build_task_from_scenario(self, scenario: Scenario) -> Task:
         """从 Scenario 的 task 定义构建 Task 对象。"""
         task_type_map = {
+            "DYNAMIC": TaskType.DYNAMIC,
             "SINGLE_DOMAIN": TaskType.SINGLE_DOMAIN,
             "CROSS_DOMAIN": TaskType.CROSS_DOMAIN,
             "MULTI_HOP": TaskType.MULTI_HOP,
             "ARTIFACT_REUSE": TaskType.ARTIFACT_REUSE,
         }
         task_cfg = scenario.task
+        task_type = task_type_map.get(task_cfg.task_type.upper(), TaskType.DYNAMIC)
+        payload = dict(task_cfg.payload)
+        if task_cfg.execution_mode == "scripted":
+            payload["oracle"] = task_cfg.oracle
         return Task(
-            task_type=task_type_map.get(task_cfg.task_type.upper(), TaskType.CROSS_DOMAIN),
-            description=task_cfg.description,
+            task_type=task_type,
+            prompt=task_cfg.prompt or task_cfg.description,
+            description=task_cfg.prompt or task_cfg.description,
             required_capabilities=task_cfg.required_capabilities,
+            constraints=TaskConstraints.model_validate(task_cfg.constraints or {}),
+            execution_mode=task_cfg.execution_mode,
             priority_factors=task_cfg.priority_factors or {
                 "capability": 0.4, "reputation": 0.3, "cost": 0.2, "risk": 0.1
             },
             max_hops=task_cfg.max_hops,
             timeout=task_cfg.timeout,
-            payload=task_cfg.payload,
+            payload=payload,
         )
 
     @staticmethod
@@ -968,6 +1098,7 @@ class IoAEnvironment:
             actual_capabilities=agent_cfg.actual_capabilities,
             supported_protocols=protocols,
             certificate=f"cert-{sub_ioa_id}-{agent_cfg.agent_id[:8]}",
+            trust_level="verified",
             reputation_score=agent_cfg.reputation_score,
             permission_scope=agent_cfg.permission_scope,
         )

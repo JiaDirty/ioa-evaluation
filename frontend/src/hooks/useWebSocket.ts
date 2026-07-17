@@ -10,7 +10,7 @@ export function useWebSocket(expId: string | null) {
     if (!expId) return
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/experiments/${expId}/progress`)
+    const ws = new WebSocket(`${protocol}//${window.location.host}/api/experiments/ws/${expId}/progress`)
     wsRef.current = ws
 
     ws.onopen = () => setConnected(true)

@@ -3,7 +3,7 @@ import { Card } from '../components/Card'
 import { ProgressBar } from '../components/ProgressBar'
 import { runExperiment } from '../api/client'
 import { useWebSocket } from '../hooks/useWebSocket'
-import type { WSResultMessage } from '../types'
+import type { JudgeStatus, WSResultMessage } from '../types'
 
 const CATEGORIES = [
   { id: 'trust_authorization', label: 'C1: 信任与授权失灵' },
@@ -16,10 +16,34 @@ const CATEGORIES = [
 
 const TOPOLOGIES = ['full_mesh', 'star', 'chain']
 
+const STATUS_LABELS: Record<JudgeStatus, string> = {
+  NOT_TRIGGERED: '未触发',
+  ATTEMPTED_BLOCKED: '已尝试并阻断',
+  PARTIAL_SUCCESS: '部分成功',
+  SUCCESS: '成功',
+  SUCCESS_WITH_IMPACT: '成功且有后果',
+  INDETERMINATE: '证据不足',
+}
+
+function formatStatus(status?: string): string {
+  if (!status) return '等待 Judge'
+  return STATUS_LABELS[status as JudgeStatus] || status
+}
+
+function statusClass(status?: string): string {
+  if (status === 'SUCCESS' || status === 'SUCCESS_WITH_IMPACT') return 'danger'
+  if (status === 'PARTIAL_SUCCESS') return 'warning'
+  if (status === 'ATTEMPTED_BLOCKED') return 'success'
+  if (status === 'NOT_TRIGGERED') return 'neutral'
+  return 'muted'
+}
+
 export function ExperimentControl() {
   const [mode, setMode] = useState<'all' | 'category' | 'single'>('all')
   const [category, setCategory] = useState('trust_authorization')
+  const [testId, setTestId] = useState('ioa_trust_authorization_001')
   const [topology, setTopology] = useState('full_mesh')
+  const [executionMode, setExecutionMode] = useState<'offline_deterministic' | 'agentic_live'>('agentic_live')
   const [running, setRunning] = useState(false)
   const [expId, setExpId] = useState<string | null>(null)
 
@@ -41,7 +65,9 @@ export function ExperimentControl() {
       const res = await runExperiment({
         mode,
         category: mode === 'category' ? category : undefined,
+        test_id: mode === 'single' ? testId : undefined,
         topology,
+        execution_mode: executionMode,
       })
       setExpId(res.experiment_id)
     } catch (e: unknown) {
@@ -52,16 +78,34 @@ export function ExperimentControl() {
   }
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 16 }}>
+    <div className="experiment-layout">
       <Card title="实验配置">
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>运行模式</div>
           <div className="pill-group">
             {(['all', 'category', 'single'] as const).map(m => (
               <span key={m} className={`pill ${mode === m ? 'active' : ''}`} onClick={() => setMode(m)}>
-                {m === 'all' ? '全部测试' : m === 'category' ? '按类别' : '单个测试'}
+                {m === 'all' ? '全部 Seed' : m === 'category' ? '按类别' : '单个 Seed'}
               </span>
             ))}
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>执行链路</div>
+          <div className="pill-group">
+            <span
+              className={`pill ${executionMode === 'offline_deterministic' ? 'active' : ''}`}
+              onClick={() => setExecutionMode('offline_deterministic')}
+            >
+              离线框架检查
+            </span>
+            <span
+              className={`pill ${executionMode === 'agentic_live' ? 'active' : ''}`}
+              onClick={() => setExecutionMode('agentic_live')}
+            >
+              真实模型测评
+            </span>
           </div>
         </div>
 
@@ -78,6 +122,17 @@ export function ExperimentControl() {
           </div>
         )}
 
+        {mode === 'single' && (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>Seed ID / Attack Type / 文件名</div>
+            <input
+              value={testId}
+              onChange={e => setTestId(e.target.value)}
+              style={{ width: '100%', padding: 8, borderRadius: 6, border: '1px solid var(--border)' }}
+            />
+          </div>
+        )}
+
         <div style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>拓扑模式</div>
           <div className="pill-group">
@@ -90,7 +145,7 @@ export function ExperimentControl() {
         </div>
 
         <button className="btn-primary" onClick={handleRun} disabled={running} style={{ width: '100%' }}>
-          {running ? '⏳ 运行中...' : '▶ 运行实验'}
+          {running ? '运行中...' : '运行 Judge 实验'}
         </button>
       </Card>
 
@@ -103,15 +158,17 @@ export function ExperimentControl() {
         </Card>
 
         {results.length > 0 && (
-          <Card title="测试结果" style={{ marginBottom: 16 }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <Card title="Judge 结果流" style={{ marginBottom: 16 }}>
+            <div className="judge-result-stream">
               {results.map((r, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-                  <span className={r.passed ? 'log-pass' : 'log-fail'}>
-                    {r.passed ? '✓' : '✗'}
+                <div key={i} className="judge-result-row">
+                  <code>{r.test_id}</code>
+                  <span>{r.attack_type || '-'}</span>
+                  <span className={`judge-badge judge-badge-${statusClass(r.judge_status)}`}>
+                    {formatStatus(r.judge_status)}
                   </span>
-                  <code style={{ fontSize: 12 }}>{r.test_id}</code>
-                  <span className={`badge badge-${r.risk_level.toLowerCase()}`}>{r.risk_level}</span>
+                  <span>{r.maximum_stage || '-'}</span>
+                  <span>{r.evidence_ids?.length || 0} evidence</span>
                 </div>
               ))}
             </div>
@@ -121,7 +178,7 @@ export function ExperimentControl() {
         {isComplete && (
           <Card>
             <div style={{ textAlign: 'center', color: 'var(--color-green)', fontWeight: 600 }}>
-              ✅ 实验完成！请查看仪表盘和反馈循环页面。
+              实验完成。请在测试仪表盘查看 Judge 状态、最大阶段和证据时间线。
             </div>
           </Card>
         )}

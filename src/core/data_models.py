@@ -31,6 +31,7 @@ class ProtocolType(str, Enum):
 
 
 class TaskType(str, Enum):
+    DYNAMIC = "dynamic"
     SINGLE_DOMAIN = "single_domain"
     CROSS_DOMAIN = "cross_domain"
     MULTI_HOP = "multi_hop"
@@ -40,8 +41,20 @@ class TaskType(str, Enum):
 class TaskStatus(str, Enum):
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
+    WAITING_HUMAN_INPUT = "waiting_human_input"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class ArtifactType(str, Enum):
+    TEXT_ANSWER = "text_answer"
+    STRUCTURED_REPORT = "structured_report"
+    DATA_TABLE = "data_table"
+    SOURCE_LIST = "source_list"
+    TOOL_RESULT = "tool_result"
+    DECISION_SUMMARY = "decision_summary"
+    RISK_ASSESSMENT = "risk_assessment"
 
 
 class AuditAction(str, Enum):
@@ -196,6 +209,10 @@ class AgentCard(BaseModel):
     provenance: AgentCardProvenance = Field(default_factory=AgentCardProvenance)
     reputation_score: float = Field(default=0.5, ge=0.0, le=1.0)
     permission_scope: list[str] = Field(default_factory=list)
+    cost_profile: dict[str, Any] = Field(default_factory=dict)
+    latency_profile: dict[str, Any] = Field(default_factory=dict)
+    risk_profile: dict[str, Any] = Field(default_factory=dict)
+    capacity: dict[str, Any] = Field(default_factory=dict)
     registration_time: datetime = Field(default_factory=datetime.now)
     last_active: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
@@ -204,10 +221,14 @@ class AgentCard(BaseModel):
 
 class DiscoveryQuery(BaseModel):
     """Agent 发现查询条件。"""
+    requirements: list[CapabilityRequirement] = Field(default_factory=list)
     required_capabilities: list[str] = Field(default_factory=list)
     preferred_protocols: list[ProtocolType] = Field(default_factory=list)
     min_reputation: float = 0.0
+    min_trust_level: str = "untrusted"
     sub_ioa_id: str | None = None
+    allowed_sub_ioas: list[str] = Field(default_factory=list)
+    exclude_agent_ids: list[str] = Field(default_factory=list)
     max_results: int = 10
 
 
@@ -248,6 +269,61 @@ class TaskConstraints(BaseModel):
     forbidden_data_classes: list[str] = Field(default_factory=list)
     require_provenance: bool = True
     require_citations: bool = False
+    max_budget: float | None = None
+    max_plan_nodes: int = 12
+    max_agent_turns: int = 6
+    max_total_tool_calls: int = 12
+    max_plan_revisions: int = 2
+    human_approval_for_side_effects: bool = True
+
+
+class DeliverableSpec(BaseModel):
+    deliverable_id: str = Field(default_factory=lambda: f"deliverable-{uuid.uuid4().hex[:8]}")
+    description: str
+    output_schema: dict[str, Any] = Field(default_factory=dict)
+    required: bool = True
+
+
+class CapabilityRequirement(BaseModel):
+    requirement_id: str = Field(default_factory=lambda: f"req-{uuid.uuid4().hex[:8]}")
+    capability: str
+    semantic_description: str
+    required: bool = True
+    input_requirements: list[str] = Field(default_factory=list)
+    expected_output: str = ""
+    preferred_domains: list[str] = Field(default_factory=list)
+    min_trust_level: str = "verified"
+    allowed_protocols: list[ProtocolType] = Field(default_factory=list)
+    data_classes: list[str] = Field(default_factory=list)
+
+
+class HumanCheckpointSpec(BaseModel):
+    checkpoint_id: str = Field(default_factory=lambda: f"checkpoint-{uuid.uuid4().hex[:8]}")
+    trigger: str
+    reason: str
+    required: bool = True
+
+
+class ArtifactBinding(BaseModel):
+    artifact_id: str
+    input_name: str = ""
+    required: bool = True
+
+
+class TaskSpec(BaseModel):
+    normalized_goal: str
+    intent: str = "task_execution"
+    deliverables: list[DeliverableSpec] = Field(default_factory=list)
+    capability_requirements: list[CapabilityRequirement] = Field(default_factory=list)
+    constraints: TaskConstraints = Field(default_factory=TaskConstraints)
+    completion_criteria: list[str] = Field(default_factory=list)
+    human_checkpoints: list[HumanCheckpointSpec] = Field(default_factory=list)
+    estimated_complexity: Literal["single_agent", "multi_agent", "multi_stage"] = "single_agent"
+    uncertainty: list[str] = Field(default_factory=list)
+    clarification_required: bool = False
+    clarification_questions: list[str] = Field(default_factory=list)
+    rationale: str = ""
+    confidence: float = Field(default=0.6, ge=0.0, le=1.0)
 
 
 class Task(BaseModel):
@@ -255,9 +331,10 @@ class Task(BaseModel):
     task_id: str = Field(default_factory=lambda: str(uuid.uuid4())[:12])
     test_case_id: str | None = None
     user_id: str = "user"
+    prompt: str = ""
     origin_sub_ioa: str | None = None
     target_sub_ioas: list[str] = Field(default_factory=list)
-    task_type: TaskType
+    task_type: TaskType = TaskType.DYNAMIC
     description: str
     user_goal: str = ""
     required_capabilities: list[str] = Field(default_factory=list)
@@ -274,8 +351,25 @@ class Task(BaseModel):
     timeout: int = 300
     status: TaskStatus = TaskStatus.PENDING
     created_at: datetime = Field(default_factory=datetime.now)
+    execution_mode: Literal["agentic", "agentic_live", "scripted", "offline_deterministic"] = "agentic"
+    task_spec: TaskSpec | None = None
+    active_plan_id: str | None = None
+    root_task_id: str = ""
+    parent_task_id: str | None = None
+    delegation_id: str | None = None
+    plan_revisions: list[dict[str, Any]] = Field(default_factory=list)
     # 任务负载（具体数据）
     payload: dict[str, Any] = Field(default_factory=dict)
+
+    def model_post_init(self, __context: Any) -> None:
+        if not self.prompt:
+            self.prompt = self.description
+        if not self.description:
+            self.description = self.prompt
+        if not self.root_task_id:
+            self.root_task_id = self.task_id
+        if self.task_type != TaskType.DYNAMIC and self.execution_mode in {"agentic", "agentic_live"}:
+            self.execution_mode = "scripted"
 
 
 class TaskEnvelope(Task):
@@ -303,6 +397,7 @@ class Artifact(BaseModel):
     task_id: str = ""
     producer_agent_id: str = ""
     protocol: str = ""
+    artifact_type: str = ArtifactType.TEXT_ANSWER.value
     content: Any
     content_type: str = "text"
     source_agent_id: str = ""
@@ -311,6 +406,8 @@ class Artifact(BaseModel):
     safe: bool = False  # 是否经过安全净化
     provenance: list[EvidenceRef] = Field(default_factory=list)
     safety_labels: list[str] = Field(default_factory=list)
+    agent_contributions: list[dict[str, Any]] = Field(default_factory=list)
+    tool_call_refs: list[str] = Field(default_factory=list)
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.now)
@@ -473,3 +570,6 @@ class TestResult(BaseModel):
     details: dict[str, Any] = Field(default_factory=dict)
     realism: dict[str, Any] = Field(default_factory=dict)
     execution_time: float = 0.0
+
+
+DiscoveryQuery.model_rebuild()

@@ -8,7 +8,10 @@ deterministic so benchmark runs remain reproducible.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
+
+import yaml
 
 from ..core.data_models import AgentCard, AuthResult, Task
 
@@ -48,8 +51,57 @@ class PolicyDecision:
         return "; ".join(failures)
 
 
+@dataclass(frozen=True)
+class PolicyConfig:
+    raw: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def default(cls) -> "PolicyConfig":
+        return cls({
+            "global": {
+                "max_delegation_depth": 2,
+                "require_audit": True,
+                "default_min_protocol_security_level": "medium",
+            },
+            "protocols": {
+                "a2a": {"enabled": True},
+                "mcp": {"enabled": True},
+                "private_api": {"enabled": True},
+            },
+            "actions": {},
+            "data_classes": {},
+            "tools": {"high_risk_requires_scope": "high_risk_tool"},
+        })
+
+    @classmethod
+    def load(cls, path: str = "config/policies.yaml") -> "PolicyConfig":
+        config_path = Path(path)
+        if not config_path.exists():
+            return cls.default()
+        with config_path.open("r", encoding="utf-8") as fh:
+            loaded = yaml.safe_load(fh) or {}
+        default = cls.default().raw
+        merged = {**default, **loaded}
+        for key in ("global", "protocols", "actions", "data_classes", "tools"):
+            merged[key] = {**default.get(key, {}), **loaded.get(key, {})}
+        return cls(merged)
+
+    @property
+    def max_delegation_depth(self) -> int:
+        return int(self.raw.get("global", {}).get("max_delegation_depth", 2))
+
+    def action(self, name: str) -> dict[str, Any]:
+        return dict(self.raw.get("actions", {}).get(name, {}))
+
+    def data_class(self, name: str) -> dict[str, Any]:
+        return dict(self.raw.get("data_classes", {}).get(name, {}))
+
+
 class AuthorizationPolicyEngine:
     """Evaluate Gateway RBAC and ABAC authorization rules."""
+
+    def __init__(self, config: PolicyConfig | None = None) -> None:
+        self.config = config or PolicyConfig.load()
 
     def evaluate(
         self,
@@ -63,12 +115,59 @@ class AuthorizationPolicyEngine:
             self._evaluate_allowed_sub_ioas(subject, task),
             self._evaluate_denied_sub_ioas(subject, task),
             self._evaluate_allowed_providers(subject, task),
+            self._evaluate_delegation_depth(task),
+            self._evaluate_configured_human_approval(task),
+            self._evaluate_configured_citations(task),
         ]
         return PolicyDecision(
             authorized=all(ev.allowed for ev in evaluations),
             granted_scope=subject.granted_scope,
             evaluations=evaluations,
         )
+
+    def _evaluate_delegation_depth(self, task: Task) -> RuleEvaluation:
+        depth = int(task.payload.get("delegation_depth", 0))
+        if depth > self.config.max_delegation_depth:
+            return RuleEvaluation(
+                rule="config_max_delegation_depth",
+                allowed=False,
+                reason=(
+                    f"delegation_depth {depth} exceeds max "
+                    f"{self.config.max_delegation_depth}"
+                ),
+            )
+        return RuleEvaluation(rule="config_max_delegation_depth", allowed=True)
+
+    def _evaluate_configured_human_approval(self, task: Task) -> RuleEvaluation:
+        action_type = str(task.payload.get("action_type", ""))
+        data_classes = [str(item) for item in task.payload.get("data_classes", [])]
+        requires = False
+        if action_type:
+            requires = bool(self.config.action(action_type).get("require_human_approval", False))
+        requires = requires or any(
+            self.config.data_class(name).get("require_human_approval", False)
+            for name in data_classes
+        )
+        if requires and not task.payload.get("human_approval_granted"):
+            return RuleEvaluation(
+                rule="config_human_approval",
+                allowed=False,
+                reason="configured policy requires human approval",
+            )
+        return RuleEvaluation(rule="config_human_approval", allowed=True)
+
+    def _evaluate_configured_citations(self, task: Task) -> RuleEvaluation:
+        action_type = str(task.payload.get("action_type", ""))
+        action = self.config.action(action_type)
+        if action.get("require_citations") and not (
+            task.payload.get("require_citations") or task.constraints.require_citations
+        ):
+            return RuleEvaluation(
+                rule="config_require_citations",
+                allowed=False,
+                reason=f"action {action_type} requires citations",
+            )
+        return RuleEvaluation(rule="config_require_citations", allowed=True)
 
     def _evaluate_rbac(
         self, granted_scope: list[str], required_scope: list[str], requester_id: str
