@@ -7,6 +7,7 @@ with domain-specific system prompt and tools.
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -178,6 +179,7 @@ class IoAAgent:
     agent: AssistantAgent
     user_proxy: UserProxyAgent
     config: dict
+    structured_output_schema: str | None = None
 
     @property
     def name(self) -> str:
@@ -204,6 +206,7 @@ def create_sub_ioa_agent(
     sub_ioa_id: str,
     llm_config_override: Optional[dict] = None,
     enable_legacy_tools: bool = False,
+    structured_agent_model_output: bool = False,
 ) -> IoAAgent:
     """Create an AG2-based agent for a Sub-IoA.
 
@@ -227,9 +230,12 @@ def create_sub_ioa_agent(
         llm_config = {
             "config_list": [agent_config.to_ag2_config()],
             "temperature": agent_config.temperature,
-            "timeout": 120,
+            "timeout": agent_config.timeout,
             "cache_seed": None,  # No caching for reproducible experiments
         }
+    llm_config = _with_agent_model_response_format(
+        llm_config, structured_agent_model_output
+    )
 
     # Create AssistantAgent
     assistant = AssistantAgent(
@@ -265,6 +271,9 @@ def create_sub_ioa_agent(
         agent=assistant,
         user_proxy=user_proxy,
         config=cfg,
+        structured_output_schema=(
+            "AgentModelAction" if structured_agent_model_output else None
+        ),
     )
 
 
@@ -272,6 +281,7 @@ def create_agent_from_card(
     card: AgentCard,
     llm_config_override: Optional[dict] = None,
     enable_legacy_tools: bool = False,
+    structured_agent_model_output: bool = False,
 ) -> IoAAgent:
     """Create a real AG2 runtime for a specific AgentCard.
 
@@ -308,9 +318,12 @@ def create_agent_from_card(
         llm_config = {
             "config_list": [agent_config.to_ag2_config()],
             "temperature": agent_config.temperature,
-            "timeout": 120,
+            "timeout": agent_config.timeout,
             "cache_seed": None,
         }
+    llm_config = _with_agent_model_response_format(
+        llm_config, structured_agent_model_output
+    )
 
     safe_name = f"agent_{card.agent_id}".replace("-", "_")
     assistant = AssistantAgent(
@@ -348,6 +361,9 @@ def create_agent_from_card(
             "agent_id": card.agent_id,
             "provider": card.provider,
         },
+        structured_output_schema=(
+            "AgentModelAction" if structured_agent_model_output else None
+        ),
     )
     if not enable_legacy_tools and hasattr(assistant, "update_system_message"):
         assistant.update_system_message(
@@ -355,3 +371,22 @@ def create_agent_from_card(
             + "\n\n工具治理：默认 agentic 模式不得直接执行 Python 工具；"
             "需要工具时必须输出结构化 ToolAction，由 ToolGateway 审批和执行。"
         )
+
+
+def _with_agent_model_response_format(
+    llm_config: dict[str, Any], enabled: bool
+) -> dict[str, Any]:
+    """Enable provider-enforced v2 output only for controlled evaluations."""
+    configured = deepcopy(llm_config)
+    if not enabled:
+        return configured
+    from ..evaluation.agent_model.models import AgentModelAction
+
+    config_list = configured.get("config_list")
+    if isinstance(config_list, list):
+        for item in config_list:
+            if isinstance(item, dict):
+                item["response_format"] = AgentModelAction
+    else:
+        configured["response_format"] = AgentModelAction
+    return configured

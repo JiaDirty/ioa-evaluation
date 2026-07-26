@@ -84,11 +84,21 @@ class AgenticOrchestrator:
                     available_capabilities=available_capabilities,
                 )
             else:
+                controlled_step = (
+                    task.payload.get("controlled_agent_model_evaluation_step") is True
+                )
                 self._emit(
                     task,
                     AgenticTaskState.SPECIFYING,
-                    "task_specification_reused",
-                    "Reusing the baseline model-generated TaskSpec for controlled A/B evaluation",
+                    (
+                        "controlled_task_specification_used"
+                        if controlled_step else "task_specification_reused"
+                    ),
+                    (
+                        "Using the pre-registered fixed TaskSpec for this evaluation step"
+                        if controlled_step else
+                        "Reusing the existing TaskSpec"
+                    ),
                 )
 
             self._emit(
@@ -124,6 +134,7 @@ class AgenticOrchestrator:
                     },
                     artifacts=artifacts,
                     participating_agents=self._participating_agents(graph),
+                    metadata={"model_call_traces": _collect_model_call_traces(graph)},
                 )
             if any(node.status == StepStatus.FAILED for node in graph.nodes if node.node_type == "agent_task"):
                 error = "; ".join(
@@ -138,6 +149,40 @@ class AgenticOrchestrator:
                     error=error,
                     artifacts=artifacts,
                     participating_agents=self._participating_agents(graph),
+                    metadata={"model_call_traces": _collect_model_call_traces(graph)},
+                )
+
+            if task.payload.get("controlled_agent_model_evaluation_step") is True:
+                primary_artifact = next(
+                    (
+                        artifact for artifact in reversed(artifacts)
+                        if artifact.producer_agent_id != "SynthesisAgent"
+                    ),
+                    None,
+                )
+                if primary_artifact is None:
+                    raise RuntimeError(
+                        "Controlled evaluation step completed without a tested-Agent artifact"
+                    )
+                self._emit(
+                    task,
+                    AgenticTaskState.COMPLETED,
+                    "controlled_evaluation_step_completed",
+                    "Controlled evaluation step completed without auxiliary synthesis",
+                    payload={"primary_artifact_id": primary_artifact.artifact_id},
+                )
+                task.status = TaskStatus.COMPLETED
+                return TaskResult(
+                    task_id=task.task_id,
+                    status=TaskStatus.COMPLETED,
+                    output=primary_artifact.content,
+                    artifacts=artifacts,
+                    participating_agents=self._participating_agents(graph),
+                    metadata={
+                        "model_call_traces": _collect_model_call_traces(graph),
+                        "controlled_evaluation_step": True,
+                        "auxiliary_synthesis_skipped": True,
+                    },
                 )
 
             self._emit(task, AgenticTaskState.SYNTHESIZING, "synthesis_started", "Synthesizing artifacts")
@@ -160,7 +205,7 @@ class AgenticOrchestrator:
                         "agent_id": node.assigned_agent_id,
                         "role": "selected_agent",
                         "artifact_id": node.output.get("artifact_id"),
-                        "summary": node.output.get("text", "")[:160],
+                        "summary": str(node.output.get("text", ""))[:160],
                     }
                     for node in graph.nodes
                     if node.node_type == "agent_task" and node.assigned_agent_id
@@ -192,6 +237,7 @@ class AgenticOrchestrator:
                 output=decision.model_dump(mode="json"),
                 artifacts=artifacts,
                 participating_agents=self._participating_agents(graph),
+                metadata={"model_call_traces": _collect_model_call_traces(graph)},
             )
         except Exception as exc:
             task.status = TaskStatus.FAILED
@@ -317,6 +363,7 @@ class AgenticOrchestrator:
             tool_gateway=self.tool_gateway,
             delegation_grant=node.metadata.get("delegation_grant") or None,
         )
+        node.metadata["runtime_result_metadata"] = result.metadata
         action = result.action
         if action is not None and action.type == "delegate":
             await self._append_delegation_node(task, graph, node, action)
@@ -413,6 +460,7 @@ class AgenticOrchestrator:
                 "tool_calls": result.tool_calls,
                 "selected_agent_id": selected.agent_id,
                 "selected_sub_ioa_id": selected.sub_ioa_id,
+                "model_call_traces": result.metadata.get("model_call_traces", []),
             },
         )
         node.status = StepStatus.COMPLETED
@@ -506,6 +554,18 @@ class AgenticOrchestrator:
     def _select_entry_gateway(self, requirement=None, task: Task | None = None):
         if not self.gateways:
             raise ValueError("No Gateway registered for agentic task execution")
+        evaluation_sub_ioa = (
+            str(task.payload.get("evaluation_preferred_agent_sub_ioa", ""))
+            if task is not None else ""
+        )
+        if evaluation_sub_ioa:
+            gateway = self.gateways.get(evaluation_sub_ioa)
+            if gateway is None:
+                raise ValueError(
+                    "Paired evaluation Agent gateway is unavailable: "
+                    f"{evaluation_sub_ioa}"
+                )
+            return gateway
         capability = getattr(requirement, "capability", "")
         preferred_domains = list(getattr(requirement, "preferred_domains", []) or [])
         for domain in preferred_domains:
@@ -630,3 +690,19 @@ class AgenticOrchestrator:
             downstream_ids=[node.node_id],
             error=node.error,
         )
+
+
+def _collect_model_call_traces(graph: ExecutionGraph) -> list[dict[str, Any]]:
+    traces: list[dict[str, Any]] = []
+    for node in graph.nodes:
+        metadata = node.metadata.get("runtime_result_metadata", {})
+        if not isinstance(metadata, dict):
+            continue
+        node_traces = metadata.get("model_call_traces", [])
+        if isinstance(node_traces, list):
+            traces.extend(
+                {"node_id": node.node_id, **trace}
+                for trace in node_traces
+                if isinstance(trace, dict)
+            )
+    return traces

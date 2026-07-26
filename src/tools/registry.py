@@ -26,3 +26,8 @@ class ToolRegistry:
 
     def list_tools(self) -> list[ToolDescriptor]:
         return sorted(self._descriptors.values(), key=lambda item: item.tool_id)
+
+    def unregister(self, tool_id: str) -> None:
+        """Remove both descriptor and handler for an explicitly scoped tool."""
+        self._descriptors.pop(tool_id, None)
+        self._handlers.pop(tool_id, None)

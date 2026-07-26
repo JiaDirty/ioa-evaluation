@@ -580,7 +580,8 @@ class IoAEnvironment:
                 model_client=self._decision_client if not self.offline_deterministic else None
             ),
             synthesis_agent=SynthesisAgent(
-                model_client=self._decision_client if not self.offline_deterministic else None
+                model_client=self._decision_client if not self.offline_deterministic else None,
+                allow_deterministic_fallback=not self.strict_live,
             ),
             simulate_human_checkpoints=self.offline_deterministic
             or self.config.get("simulate_human_checkpoints", False),
@@ -673,7 +674,12 @@ class IoAEnvironment:
         # 创建真实 AG2 Agent。
         if self.create_agent_runtimes and sub_ioa_id in SUB_IOA_AGENT_CONFIGS:
             try:
-                agent = create_sub_ioa_agent(sub_ioa_id)
+                agent = create_sub_ioa_agent(
+                    sub_ioa_id,
+                    structured_agent_model_output=bool(
+                        self.config.get("agent_model_structured_output", False)
+                    ),
+                )
                 self._agents[sub_ioa_id] = agent
                 self.runtime_manager.bind_runtime(
                     sub_ioa_id,
@@ -865,7 +871,14 @@ class IoAEnvironment:
         """为每个 Sub-IoA 注册默认 Agent 卡片到 Registry。"""
         default_configs = {
             "finance": [
-                ("资深金融分析师", ["financial_analysis", "risk_assessment"], 0.8),
+                (
+                    "资深金融分析师",
+                    [
+                        "financial_analysis", "risk_assessment",
+                        "domain_analysis", "evidence_synthesis", "discussion",
+                    ],
+                    0.8,
+                ),
                 ("投资顾问", ["investment_advice", "portfolio_management"], 0.7),
                 ("风控专家", ["risk_modeling", "compliance_check"], 0.75),
                 ("财报分析师", ["financial_report_analysis", "forecasting"], 0.65),
@@ -886,7 +899,15 @@ class IoAEnvironment:
                 ("旅行保险顾问", ["travel_insurance", "risk_assessment"], 0.6),
             ],
             "news": [
-                ("新闻聚合分析师", ["news_aggregation", "cross_platform"], 0.7),
+                (
+                    "新闻聚合分析师",
+                    [
+                        "news_aggregation", "cross_platform",
+                        "information_collection", "information_analysis",
+                        "domain_analysis", "evidence_synthesis", "discussion",
+                    ],
+                    0.7,
+                ),
                 ("事实核查员", ["fact_checking", "source_verification"], 0.85),
                 ("舆情监控专家", ["sentiment_analysis", "trend_detection"], 0.75),
                 ("知识图谱工程师", ["knowledge_graph", "entity_extraction"], 0.8),
@@ -931,7 +952,16 @@ class IoAEnvironment:
         self._agent_sub_ioa_index[agent_id] = card.sub_ioa_id
         if self.create_agent_runtimes and agent_id not in self._agents:
             try:
-                self.bind_agent_runtime(agent_id, create_agent_from_card(card), sub_ioa_id=card.sub_ioa_id)
+                self.bind_agent_runtime(
+                    agent_id,
+                    create_agent_from_card(
+                        card,
+                        structured_agent_model_output=bool(
+                            self.config.get("agent_model_structured_output", False)
+                        ),
+                    ),
+                    sub_ioa_id=card.sub_ioa_id,
+                )
             except Exception as e:
                 if self.strict_live:
                     raise RuntimeError(

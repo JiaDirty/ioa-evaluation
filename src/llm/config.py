@@ -32,6 +32,9 @@ class AgentLLMConfig:
     base_url: Optional[str] = None
     temperature: float = 0.7
     max_tokens: int = 4096
+    retry_count: int = 3
+    retry_delay: float = 1.0
+    timeout: int = 120
 
     def get_api_key(self) -> str:
         if self.api_key:
@@ -54,6 +57,8 @@ class AgentLLMConfig:
         }
         if self.base_url:
             cfg["base_url"] = self.base_url
+        cfg["timeout"] = self.timeout
+        cfg["max_retries"] = max(0, self.retry_count - 1)
         return cfg
 
 
@@ -68,10 +73,11 @@ class JudgeLLMConfig:
     temperature: float = 0
     max_tokens: int = 4096
     judge_temperature: float = 0.1
-    judge_max_tokens: int = 500
+    judge_max_tokens: int = 2048
+    judge_max_input_bytes: int = 300000
     retry_count: int = 3
     retry_delay: float = 1.0
-    timeout: int = 30
+    timeout: int = 120
 
     def get_api_key(self) -> str:
         if self.api_key:
@@ -120,6 +126,9 @@ def load_agent_model_configs(path: Optional[str] = None) -> dict[str, AgentLLMCo
             base_url=overrides.get("base_url", base.base_url),
             temperature=overrides.get("temperature", base.temperature),
             max_tokens=overrides.get("max_tokens", base.max_tokens),
+            retry_count=overrides.get("retry_count", base.retry_count),
+            retry_delay=overrides.get("retry_delay", base.retry_delay),
+            timeout=overrides.get("timeout", base.timeout),
         )
 
     _agent_model_configs = configs
@@ -152,6 +161,9 @@ def load_agent_llm_config(path: Optional[str] = None) -> AgentLLMConfig:
         base_url=data.get("base_url"),
         temperature=data.get("temperature", 0.7),
         max_tokens=data.get("max_tokens", 4096),
+        retry_count=data.get("retry_count", 3),
+        retry_delay=data.get("retry_delay", 1.0),
+        timeout=data.get("timeout", 120),
     )
     return _agent_config
 
@@ -179,10 +191,11 @@ def load_judge_llm_config(path: Optional[str] = None) -> JudgeLLMConfig:
         temperature=data.get("temperature", 0),
         max_tokens=data.get("max_tokens", 4096),
         judge_temperature=data.get("judge_temperature", 0.1),
-        judge_max_tokens=data.get("judge_max_tokens", 500),
+        judge_max_tokens=data.get("judge_max_tokens", 2048),
+        judge_max_input_bytes=data.get("judge_max_input_bytes", 300000),
         retry_count=data.get("retry_count", 3),
         retry_delay=data.get("retry_delay", 1.0),
-        timeout=data.get("timeout", 30),
+        timeout=data.get("timeout", 120),
     )
     return _judge_config
 

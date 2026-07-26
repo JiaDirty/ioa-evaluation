@@ -8,8 +8,9 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
-from .actions import AgentAction, FinalAction
+from .actions import AgentAction, FinalAction, ToolAction
 from .base import AgentInvocation, AgentInvocationResult, AgentRuntime
+from ..evaluation.agent_model.models import AgentModelAction
 
 
 _ACTION_ADAPTER = TypeAdapter(AgentAction)
@@ -36,6 +37,19 @@ class LLMAgentRuntime(AgentRuntime):
 
     async def invoke(self, invocation: AgentInvocation) -> AgentInvocationResult:
         prompt = self._build_prompt(invocation)
+        request_config = invocation.metadata.get("model_request_config", {})
+        generation_kwargs = {
+            key: request_config[key]
+            for key in (
+                "temperature",
+                "top_p",
+                "max_tokens",
+                "timeout",
+                "retry_count",
+                "retry_delay",
+            )
+            if key in request_config
+        }
         span = None
         started = time.perf_counter()
         if self.event_bus is not None:
@@ -62,12 +76,16 @@ class LLMAgentRuntime(AgentRuntime):
         try:
             raw_response: Any = None
             if hasattr(self.client, "generate_with_system"):
-                text = self.client.generate_with_system(self.system_prompt, prompt)
+                text = self.client.generate_with_system(
+                    self.system_prompt, prompt, **generation_kwargs
+                )
                 raw_response = text
                 parsed = self._parse_possible_json(text)
                 output = parsed if isinstance(parsed, dict) else {"text": text}
             elif hasattr(self.client, "generate_json"):
-                output = self.client.generate_json(self.system_prompt, prompt)
+                output = self.client.generate_json(
+                    self.system_prompt, prompt, **generation_kwargs
+                )
                 raw_response = output
                 if not isinstance(output, dict):
                     output = {"text": output}
@@ -75,6 +93,13 @@ class LLMAgentRuntime(AgentRuntime):
                 raise ValueError("LLM runtime client must implement generate_with_system or generate_json")
             action = self._parse_action(output)
             self._finish_llm_span(invocation, span, started, raw_response, output, action)
+            call_trace = self._build_call_trace(
+                prompt=prompt,
+                request_config=request_config,
+                raw_response=raw_response,
+                parsed_output=output,
+                started=started,
+            )
             if action is not None:
                 if invocation.metadata.get("agentic_loop"):
                     return AgentInvocationResult(
@@ -83,10 +108,16 @@ class LLMAgentRuntime(AgentRuntime):
                         agent_id=self.agent_id,
                         output={"requested_action": output},
                         action=action,
-                        metadata={"runtime_type": self.runtime_type},
+                        metadata={
+                            "runtime_type": self.runtime_type,
+                            "applied_model_request_config": request_config,
+                            "model_call_trace": call_trace,
+                        },
                     )
                 if action.type == "tool_call":
-                    return await self._handle_tool_call(invocation, output, action=action)
+                    return await self._handle_tool_call(
+                        invocation, output, action=action, call_trace=call_trace
+                    )
                 if action.type == "final":
                     return AgentInvocationResult(
                         task_id=invocation.task_id,
@@ -94,7 +125,11 @@ class LLMAgentRuntime(AgentRuntime):
                         agent_id=self.agent_id,
                         output={"text": action.answer},
                         action=action,
-                        metadata={"runtime_type": self.runtime_type},
+                        metadata={
+                            "runtime_type": self.runtime_type,
+                            "applied_model_request_config": request_config,
+                            "model_call_trace": call_trace,
+                        },
                     )
             return AgentInvocationResult(
                 task_id=invocation.task_id,
@@ -106,7 +141,11 @@ class LLMAgentRuntime(AgentRuntime):
                     if invocation.metadata.get("agentic_loop")
                     else None
                 ),
-                metadata={"runtime_type": self.runtime_type},
+                metadata={
+                    "runtime_type": self.runtime_type,
+                    "applied_model_request_config": request_config,
+                    "model_call_trace": call_trace,
+                },
             )
         except Exception as exc:
             if self.event_bus is not None and span is not None:
@@ -132,8 +171,56 @@ class LLMAgentRuntime(AgentRuntime):
                 agent_id=self.agent_id,
                 status="failed",
                 error=str(exc),
-                metadata={"runtime_type": self.runtime_type},
+                metadata={
+                    "runtime_type": self.runtime_type,
+                    "model_call_trace": self._build_call_trace(
+                        prompt=prompt,
+                        request_config=request_config,
+                        raw_response=None,
+                        parsed_output=None,
+                        started=started,
+                        error=str(exc),
+                    ),
+                },
             )
+
+    def _build_call_trace(
+        self,
+        *,
+        prompt: str,
+        request_config: dict[str, Any],
+        raw_response: Any,
+        parsed_output: Any,
+        started: float,
+        error: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "runtime_type": self.runtime_type,
+            "agent_id": self.agent_id,
+            "model": getattr(self.client, "model", type(self.client).__name__),
+            "request": {
+                "messages": [
+                    {"role": "system", "content": self.system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                "config": dict(request_config),
+            },
+            "response": {
+                "raw": raw_response,
+                "parsed": parsed_output,
+                "error": error,
+                "provider_metadata": getattr(
+                    self.client, "last_response_metadata", {}
+                ),
+            },
+            "usage": getattr(self.client, "last_usage", None),
+            "latency_ms": (
+                getattr(self.client, "last_latency_ms", None)
+                or (time.perf_counter() - started) * 1000
+            ),
+            "retry_count": getattr(self.client, "last_retry_count", 0),
+            "attempts": getattr(self.client, "last_attempts", []),
+        }
 
     def _finish_llm_span(self, invocation: AgentInvocation, span: Any, started: float,
                          raw_response: Any, output: dict[str, Any], action: AgentAction | None) -> None:
@@ -171,30 +258,102 @@ class LLMAgentRuntime(AgentRuntime):
         return {"agent_id": self.agent_id}
 
     def _build_prompt(self, invocation: AgentInvocation) -> str:
-        tool_context = invocation.metadata.get("tool_context")
-        available_tools: list[str] = []
-        if tool_context is not None:
-            available_tools = [
-                tool["tool_id"]
-                for tool in tool_context.gateway.list_tools()
-            ]
-        return (
-            f"Task ID: {invocation.task_id}\n"
-            f"Trace ID: {invocation.trace_id}\n"
-            f"Requester: {invocation.requester_id}\n"
-            f"Input: {invocation.input}\n"
-            f"Context: {invocation.context}\n"
-            f"Permissions: {invocation.permissions}\n"
-            f"Available tools: {available_tools}\n"
-            "Return JSON for exactly one AgentAction. Examples: "
-            '{"type":"final","answer":"...","artifact_type":"text_answer",'
-            '"evidence_artifact_ids":[],"limitations":[],"confidence":0.7} '
-            'or {"type":"tool_call","tool_id":"...","arguments":{},"reason":"..."} '
-            'or {"type":"delegate","objective":"...","required_capabilities":[],'
-            '"requested_scopes":[],"input_artifact_ids":[],"expected_output":"",'
-            '"reason":"..."} or {"type":"ask_user","question":"...","reason":"..."} '
-            'or {"type":"replan","reason":"...","new_facts":[],"blocked_requirements":[]}.\n'
-        )
+        task = invocation.input.get("task") or invocation.input.get("description") or ""
+        prompt = invocation.input.get("prompt", "")
+        expected_output = invocation.input.get("expected_output", "")
+        payload = invocation.input.get("payload", {})
+        if not isinstance(payload, dict):
+            payload = {}
+        visible_payload = {}
+        if not payload.get("controlled_agent_model_evaluation_step"):
+            visible_payload = {
+                key: value
+                for key, value in payload.items()
+                if key not in {"risk_type", "variant", "evaluation_metadata"}
+            }
+        public_state = invocation.context.get("public_state", {})
+        role_state = invocation.context.get("role_state", {})
+        tool_ids = [
+            str(tool.get("tool_id") or tool.get("name"))
+            for tool in invocation.available_tool_descriptors
+        ]
+
+        sections = [
+            f"Task ID: {invocation.task_id}",
+            f"Trace ID: {invocation.trace_id}",
+            f"Requester: {invocation.requester_id}",
+            "",
+            "## Task",
+            str(task),
+        ]
+        if prompt:
+            sections.extend(["", "## Prompt", str(prompt)])
+        if expected_output:
+            sections.extend(["", "## Expected Output", str(expected_output)])
+        if visible_payload:
+            sections.extend([
+                "",
+                "## Visible Payload",
+                json.dumps(visible_payload, ensure_ascii=False, default=str),
+            ])
+        if invocation.input_artifacts:
+            sections.extend([
+                "",
+                "## Input Artifacts",
+                json.dumps(invocation.input_artifacts, ensure_ascii=False, default=str),
+            ])
+        if public_state:
+            sections.extend([
+                "",
+                "## Public State",
+                json.dumps(public_state, ensure_ascii=False, default=str),
+            ])
+        if role_state:
+            sections.extend([
+                "",
+                "## Role State",
+                json.dumps(role_state, ensure_ascii=False, default=str),
+            ])
+        if invocation.turn_history:
+            sections.extend([
+                "",
+                "## Turn History",
+                json.dumps(invocation.turn_history, ensure_ascii=False, default=str),
+            ])
+        sections.extend([
+            "",
+            f"Permissions: {invocation.permissions}",
+            f"Available tools: {tool_ids}",
+            (
+                "Return JSON matching this AgentModelAction schema. "
+                "Do not include evaluation labels or ground truth. "
+            ),
+            json.dumps(
+                invocation.metadata.get("visible_action_schema")
+                or AgentModelAction.model_json_schema(),
+                ensure_ascii=False,
+            ),
+            "For tool use, return type=tool_call with tool_call.tool_id and "
+            "tool_call.arguments. For final answers, return type=final with "
+            "business_output and behavior_record.",
+            "Do not include tool_call in a final answer. If a tool is needed, "
+            "return only type=tool_call and wait for the tool result before "
+            "the final answer.",
+        ])
+        format_correction = invocation.metadata.get("format_correction")
+        if isinstance(format_correction, dict):
+            sections.extend([
+                "",
+                "## Format-only correction",
+                str(format_correction.get("instruction", "")),
+                "Original response to reformat:",
+                json.dumps(
+                    format_correction.get("original_response"),
+                    ensure_ascii=False,
+                    default=str,
+                ),
+            ])
+        return "\n".join(sections)
 
     async def _handle_tool_call(
         self,
@@ -202,6 +361,7 @@ class LLMAgentRuntime(AgentRuntime):
         output: dict[str, Any],
         *,
         action: AgentAction | None = None,
+        call_trace: dict[str, Any] | None = None,
     ) -> AgentInvocationResult:
         tool_context = invocation.metadata.get("tool_context")
         if tool_context is None:
@@ -218,7 +378,11 @@ class LLMAgentRuntime(AgentRuntime):
             tool_calls=[result.model_dump(mode="json")],
             action=action,
             error=result.error if result.status != "completed" else None,
-            metadata={"runtime_type": self.runtime_type, "llm_output_type": "tool_call"},
+            metadata={
+                "runtime_type": self.runtime_type,
+                "llm_output_type": "tool_call",
+                "model_call_trace": call_trace or {},
+            },
         )
 
     @staticmethod
@@ -237,7 +401,50 @@ class LLMAgentRuntime(AgentRuntime):
     def _parse_action(output: dict[str, Any]) -> AgentAction | None:
         if not isinstance(output, dict) or "type" not in output:
             return None
+        converted = _convert_agent_model_action(output)
+        if converted is not None:
+            output = converted
         try:
             return _ACTION_ADAPTER.validate_python(output)
         except Exception:
             return None
+
+
+def _convert_agent_model_action(output: dict[str, Any]) -> dict[str, Any] | None:
+    """Convert v2 AgentModelAction wire format to runtime AgentAction."""
+    action_type = output.get("type")
+    if action_type == "tool_call" and isinstance(output.get("tool_call"), dict):
+        tool_call = output["tool_call"]
+        return ToolAction(
+            tool_id=str(tool_call.get("tool_id", "")),
+            arguments={
+                key: value
+                for key, value in dict(tool_call.get("arguments", {})).items()
+                if value is not None
+            },
+            reason=str(tool_call.get("reason") or output.get("reason", "")),
+        ).model_dump(mode="json")
+    if action_type == "tool_call":
+        return None
+    if action_type == "final" and output.get("tool_call") is not None:
+        return None
+    if action_type == "final" and (
+        "business_output" in output or "behavior_record" in output
+    ):
+        return FinalAction(
+            answer={
+                "business_output": output.get("business_output", {}),
+                "behavior_record": output.get("behavior_record", {}),
+            },
+            limitations=(
+                output.get("business_output", {}).get("limitations", [])
+                if isinstance(output.get("business_output"), dict)
+                else []
+            ),
+            confidence=(
+                output.get("business_output", {}).get("confidence", 0.6)
+                if isinstance(output.get("business_output"), dict)
+                else 0.6
+            ),
+        ).model_dump(mode="json")
+    return None

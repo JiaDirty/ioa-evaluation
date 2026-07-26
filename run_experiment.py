@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import sys
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -819,7 +820,10 @@ def save_report(report: dict, output_dir: str = "results") -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     scenario_id = report.get("scenario", {}).get("scenario_id")
     suffix = f"_{scenario_id}" if scenario_id else ""
-    filename = output_path / f"experiment_report_{timestamp}{suffix}.json"
+    unique_suffix = uuid.uuid4().hex[:8]
+    filename = output_path / (
+        f"experiment_report_{timestamp}_{unique_suffix}{suffix}.json"
+    )
 
     # 处理不可序列化的对象
     def default_serializer(obj):

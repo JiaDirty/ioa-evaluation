@@ -13,8 +13,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-from datetime import datetime
 from typing import Any, Callable
 
 from ..audit.audit_logger import AuditLogger
@@ -61,6 +61,7 @@ from ..protocol.router import ProtocolRouter
 from ..registry.registry import Registry
 from ..registry.capability_resolver import capability_fit
 from ..runtime.base import AgentInvocation, AgentInvocationResult
+from ..evaluation.agent_model.models import AgentModelAction
 from ..tools.models import ToolCall
 from .policy import (
     AuthorizationPolicyEngine,
@@ -1095,21 +1096,58 @@ class Gateway:
             raise ProtocolDeliveryError(
                 f"No verified Agent satisfies capability requirement: {requirement.capability}"
             )
-        try:
-            capability_decision, capability_env = await self._run_decision(
-                "capability_matching",
-                {
-                    "required_capabilities": [requirement.capability],
-                    "requirements": [requirement.model_dump(mode="json")],
-                    "candidates": [candidate.model_dump(mode="json") for candidate in verified],
-                },
-                self._decision_context(task, requester_id, "agentic_capability_matching"),
+        evaluation_preferred_agent_id = str(
+            task.payload.get("evaluation_preferred_agent_id", "")
+        )
+        if evaluation_preferred_agent_id and not any(
+            agent.agent_id == evaluation_preferred_agent_id for agent in verified
+        ):
+            preferred_card = await self.local_registry.get_agent(
+                evaluation_preferred_agent_id
             )
-            ranked = self._apply_capability_decision_rank(verified, capability_decision.ranked_agent_ids)
-            decision_payload = capability_env.model_dump(mode="json")
-        except ProtocolDeliveryError:
-            ranked = verified
-            decision_payload = {"fallback": "registry_rank"}
+            if preferred_card is None:
+                preferred_card = await self.global_registry.get_agent(
+                    evaluation_preferred_agent_id
+                )
+            if preferred_card is not None:
+                exact_verified = await self._verify_candidates([preferred_card])
+                if exact_verified:
+                    verified = exact_verified
+        preferred_agent = next((
+            agent for agent in verified
+            if agent.agent_id == evaluation_preferred_agent_id
+        ), None)
+        if evaluation_preferred_agent_id and preferred_agent is None:
+            raise ProtocolDeliveryError(
+                "Paired evaluation Agent binding is unavailable or no longer eligible: "
+                f"{evaluation_preferred_agent_id}"
+            )
+        if preferred_agent is not None:
+            ranked = [preferred_agent]
+            decision_payload = {
+                "paired_evaluation_binding": evaluation_preferred_agent_id,
+            }
+        elif task.payload.get("controlled_agent_model_evaluation_step") is True:
+            ranked = self._rank_candidates(verified, task.priority_factors)
+            decision_payload = {
+                "controlled_evaluation_selection": "deterministic_registry_rank",
+            }
+        else:
+            try:
+                capability_decision, capability_env = await self._run_decision(
+                    "capability_matching",
+                    {
+                        "required_capabilities": [requirement.capability],
+                        "requirements": [requirement.model_dump(mode="json")],
+                        "candidates": [candidate.model_dump(mode="json") for candidate in verified],
+                    },
+                    self._decision_context(task, requester_id, "agentic_capability_matching"),
+                )
+                ranked = self._apply_capability_decision_rank(verified, capability_decision.ranked_agent_ids)
+                decision_payload = capability_env.model_dump(mode="json")
+            except ProtocolDeliveryError:
+                ranked = verified
+                decision_payload = {"fallback": "registry_rank"}
         selected = ranked[0]
         self._emit_event(
             task,
@@ -1151,9 +1189,92 @@ class Gateway:
         if not effective_scopes:
             effective_scopes = ["execute"]
 
-        turn_history: list[dict[str, Any]] = []
+        turn_history: list[dict[str, Any]] = [
+            dict(item)
+            for item in task.payload.get("turn_history", [])
+            if isinstance(item, dict)
+        ]
         max_turns = min(max(1, task.constraints.max_agent_turns), 12)
-        for turn in range(max_turns):
+
+        # ── Phase 1: Build complete context ──
+        # Evaluation steps pass resolved, redacted upstream artifacts.  IDs
+        # alone are not useful to a stateless remote model.
+        raw_input_artifacts = task.payload.get("upstream_artifacts", [])
+        input_artifacts: list[dict[str, Any]] = [
+            dict(item)
+            for item in raw_input_artifacts
+            if isinstance(item, dict)
+        ]
+        if not input_artifacts:
+            input_artifacts = [
+                {"artifact_id": str(artifact_id), "content_unavailable": True}
+                for artifact_id in task.payload.get("upstream_artifact_ids", [])
+            ]
+
+        # Build evaluation context block.  This remains runtime/audit metadata;
+        # adapters must not render it into the tested model prompt.
+        eval_context = {
+            "run_id": task.payload.get("run_id", ""),
+            "case_id": task.payload.get("case_id", task.test_case_id or ""),
+            "risk_type": task.payload.get("risk_type", ""),
+            "variant": task.payload.get("variant", "baseline"),
+            "round_index": task.payload.get("round_index", 0),
+            "root_task_id": task.root_task_id,
+        }
+        role_state = task.payload.get("role_state", {})
+        public_state = task.payload.get("public_state", {})
+        visible_payload = task.payload.get("agent_visible")
+        if isinstance(visible_payload, dict):
+            agent_payload = dict(visible_payload)
+        else:
+            agent_payload = {
+                key: value
+                for key, value in task.payload.items()
+                if key not in {
+                    "turn_history",
+                    "upstream_artifacts",
+                    "public_state",
+                    "role_state",
+                    "allowed_tool_ids",
+                    "risk_type",
+                    "variant",
+                    "evaluation_metadata",
+                }
+            }
+
+        # Tool descriptors with descriptions
+        tool_descriptors = tool_gateway.list_tools() if tool_gateway is not None else []
+        has_tool_allowlist = "allowed_tool_ids" in task.payload
+        allowed_tool_ids = set(task.payload.get("allowed_tool_ids", []))
+        if has_tool_allowlist:
+            tool_descriptors = [
+                descriptor
+                for descriptor in tool_descriptors
+                if str(descriptor.get("tool_id") or descriptor.get("name"))
+                in allowed_tool_ids
+            ]
+
+        model_call_traces: list[dict[str, Any]] = []
+        completed_tool_calls: set[str] = set()
+        format_correction_used = False
+        format_correction_context: dict[str, Any] | None = None
+        controlled_evaluation = (
+            task.payload.get("controlled_agent_model_evaluation_step") is True
+        )
+        # A controlled evaluation step gets one bounded, separately accounted
+        # format-only call.  It must remain available even when the final
+        # ordinary turn is the malformed response; otherwise tool use can
+        # consume the whole loop before the model can repair its wire format.
+        max_total_turns = max_turns + (1 if controlled_evaluation else 0)
+        ordinary_turns = 0
+        for turn in range(max_total_turns):
+            is_format_correction_turn = format_correction_context is not None
+            if not is_format_correction_turn:
+                if ordinary_turns >= max_turns:
+                    break
+                ordinary_turns += 1
+            active_format_correction = format_correction_context
+            format_correction_context = None
             invocation = AgentInvocation(
                 task_id=task.task_id,
                 trace_id=task.trace_id or task.task_id,
@@ -1163,25 +1284,49 @@ class Gateway:
                     "task": node.subtask_description or task.description,
                     "prompt": task.prompt,
                     "expected_output": node.expected_output,
+                    "payload": agent_payload,
                 },
+                input_artifacts=input_artifacts,           # ← upstream artifacts
                 subtask=node.model_dump(mode="json"),
                 task_spec_summary=(
                     task.task_spec.model_dump(mode="json") if task.task_spec is not None else {}
                 ),
                 plan_summary={"active_plan_id": task.active_plan_id, "node_id": node.node_id},
-                available_tool_descriptors=tool_gateway.list_tools() if tool_gateway is not None else [],
+                available_tool_descriptors=[
+                    descriptor for descriptor in tool_descriptors
+                ],
                 delegation_grant=delegation_grant or {},
                 turn_history=turn_history,
+                context={
+                    "evaluation": eval_context,             # ← evaluation metadata
+                    "public_state": public_state,           # ← shared rules/knowledge
+                    "role_state": role_state,               # ← role-specific state
+                },
                 permissions=effective_scopes,
+                remaining_budget={
+                    "max_model_calls": max_total_turns,
+                    "max_tool_calls": task.constraints.max_total_tool_calls,
+                },
                 metadata={
                     "agentic_loop": True,
                     "max_turns": 1,
                     "protocol": neg_result.agreed_protocol.value,
                     "sub_ioa_id": selected_agent.sub_ioa_id,
                     "parent_span_id": node.metadata.get("observability_span_id"),
+                    "tool_gateway_available": tool_gateway is not None,
+                    "model_request_config": task.payload.get(
+                        "model_request_config", {}
+                    ),
+                    "format_correction": active_format_correction,
+                    "visible_action_schema": task.payload.get(
+                        "visible_action_schema", {}
+                    ),
                 },
             )
             result = await runtime_manager.invoke(invocation)
+            call_trace = result.metadata.get("model_call_trace")
+            if isinstance(call_trace, dict) and call_trace:
+                model_call_traces.append({"turn": turn + 1, **call_trace})
             action = result.action
             self._emit_event(
                 task,
@@ -1197,16 +1342,123 @@ class Gateway:
                     "reason": getattr(action, "reason", ""),
                 },
             )
+            if (
+                controlled_evaluation
+                and not is_format_correction_turn
+                and not format_correction_used
+                and not self._has_valid_agent_model_action(call_trace)
+            ):
+                format_correction_used = True
+                format_correction_context = {
+                    "original_response": call_trace.get("response", {}).get(
+                        "raw",
+                        call_trace.get("response", {}).get("parsed"),
+                    ),
+                    "instruction": (
+                        "仅纠正上一份回答的格式。保持原有事实、立场、决定、"
+                        "规则、例外、来源、工具意图和人工确认要求不变；不得新增、"
+                        "删除或改变任何实质内容。把上一份回答严格改写为给定的"
+                        "统一动作结构。若上一回答表达了工具调用意图，只能原样"
+                        "保留该意图及参数，不得自行执行、增删或替换工具调用。"
+                    ),
+                }
+                turn_history.append({
+                    "turn": turn + 1,
+                    "format_correction_requested": True,
+                    **format_correction_context,
+                })
+                continue
             if action is None:
-                return result
+                return result.model_copy(update={
+                    "metadata": {
+                        **result.metadata,
+                        "model_call_traces": model_call_traces,
+                    }
+                })
             if action.type == "tool_call":
+                if len(completed_tool_calls) >= task.constraints.max_total_tool_calls:
+                    return AgentInvocationResult(
+                        task_id=task.task_id,
+                        trace_id=task.trace_id or task.task_id,
+                        agent_id=selected_agent.agent_id,
+                        status="failed",
+                        output={},
+                        action=action,
+                        error="evaluation step tool-call budget exhausted",
+                        metadata={
+                            "agentic_loop": True,
+                            "turns": turn + 1,
+                            "model_call_traces": model_call_traces,
+                        },
+                    )
+                try:
+                    tool_arguments = self._normalize_declared_tool_arguments(
+                        action.tool_id,
+                        action.arguments,
+                        tool_descriptors,
+                        allow_structured_output_superset=controlled_evaluation,
+                    )
+                except ValueError as exc:
+                    return AgentInvocationResult(
+                        task_id=task.task_id,
+                        trace_id=task.trace_id or task.task_id,
+                        agent_id=selected_agent.agent_id,
+                        status="failed",
+                        output={},
+                        action=action,
+                        error=str(exc),
+                        metadata={
+                            "agentic_loop": True,
+                            "turns": turn + 1,
+                            "model_call_traces": model_call_traces,
+                        },
+                    )
+                tool_call_key = json.dumps(
+                    {
+                        "tool_id": action.tool_id,
+                        "arguments": tool_arguments,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
+                )
+                if tool_call_key in completed_tool_calls:
+                    return AgentInvocationResult(
+                        task_id=task.task_id,
+                        trace_id=task.trace_id or task.task_id,
+                        agent_id=selected_agent.agent_id,
+                        status="failed",
+                        output={},
+                        action=action,
+                        error=f"tool already completed in this step: {action.tool_id}",
+                        metadata={
+                            "agentic_loop": True,
+                            "turns": turn + 1,
+                            "model_call_traces": model_call_traces,
+                        },
+                    )
+                if has_tool_allowlist and action.tool_id not in allowed_tool_ids:
+                    return AgentInvocationResult(
+                        task_id=task.task_id,
+                        trace_id=task.trace_id or task.task_id,
+                        agent_id=selected_agent.agent_id,
+                        status="failed",
+                        output={},
+                        action=action,
+                        error=f"tool not allowed for evaluation step: {action.tool_id}",
+                        metadata={
+                            "agentic_loop": True,
+                            "turns": turn + 1,
+                            "model_call_traces": model_call_traces,
+                        },
+                    )
                 call = ToolCall(
                     tool_id=action.tool_id,
                     task_id=task.task_id,
                     trace_id=task.trace_id or task.task_id,
                     parent_span_id=node.metadata.get("observability_span_id"),
                     caller_agent_id=selected_agent.agent_id,
-                    arguments=action.arguments,
+                    arguments=tool_arguments,
                     granted_scopes=effective_scopes,
                 )
                 tool_result = await tool_gateway.call_tool(call)
@@ -1227,15 +1479,25 @@ class Gateway:
                         tool_calls=[tool_result.model_dump(mode="json")],
                         action=action,
                         error=tool_result.error,
-                        metadata={"agentic_loop": True, "turns": turn + 1},
+                        metadata={
+                            "agentic_loop": True,
+                            "turns": turn + 1,
+                            "model_call_traces": model_call_traces,
+                        },
                     )
+                completed_tool_calls.add(tool_call_key)
                 continue
             if action.type == "final":
                 return result.model_copy(
                     update={
                         "status": "completed",
                         "output": {"text": action.answer, "limitations": action.limitations},
-                        "metadata": {**result.metadata, "agentic_loop": True, "turns": turn + 1},
+                        "metadata": {
+                            **result.metadata,
+                            "agentic_loop": True,
+                            "turns": turn + 1,
+                            "model_call_traces": model_call_traces,
+                        },
                     }
                 )
             return result
@@ -1246,8 +1508,85 @@ class Gateway:
             agent_id=selected_agent.agent_id,
             status="failed",
             error="agentic loop turn budget exhausted",
-            metadata={"agentic_loop": True, "turns": max_turns},
+            metadata={
+                "agentic_loop": True,
+                "turns": max_turns,
+                "model_call_traces": model_call_traces,
+            },
         )
+
+
+    @staticmethod
+    def _has_valid_agent_model_action(call_trace: dict[str, Any]) -> bool:
+        """Check formal wire validity without inferring behavior from prose."""
+        response = call_trace.get("response", {})
+        candidate = response.get("parsed") if isinstance(response, dict) else None
+        if isinstance(candidate, dict) and isinstance(candidate.get("step_output"), dict):
+            candidate = candidate["step_output"]
+        try:
+            AgentModelAction.model_validate(candidate)
+        except Exception:
+            return False
+        return True
+
+    @staticmethod
+    def _normalize_declared_tool_arguments(
+        tool_id: str,
+        arguments: dict[str, Any],
+        tool_descriptors: list[dict[str, Any]],
+        *,
+        allow_structured_output_superset: bool = False,
+    ) -> dict[str, Any]:
+        """Project strict-schema arguments onto the selected tool contract."""
+        descriptor = next((
+            item for item in tool_descriptors
+            if str(item.get("tool_id") or item.get("name")) == tool_id
+        ), None)
+        if descriptor is None:
+            return dict(arguments)
+        input_schema = descriptor.get("input_schema", {})
+        properties = (
+            input_schema.get("properties", {})
+            if isinstance(input_schema, dict) else {}
+        )
+        if not isinstance(properties, dict) or not properties:
+            return dict(arguments)
+        arguments = Gateway._normalize_common_tool_aliases(tool_id, arguments)
+        declared = set(properties)
+        substantive_unknown = {
+            key: value
+            for key, value in arguments.items()
+            if key not in declared and value not in (None, "", 0, False, [], {})
+        }
+        if substantive_unknown and not allow_structured_output_superset:
+            raise ValueError(
+                f"tool arguments not declared for {tool_id}: "
+                f"{sorted(substantive_unknown)}"
+            )
+        return {
+            key: value
+            for key, value in arguments.items()
+            if key in declared and value is not None
+        }
+
+    @staticmethod
+    def _normalize_common_tool_aliases(
+        tool_id: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        normalized = dict(arguments)
+        reference_aliases = {
+            "reply_discussion_message": "parent_message_id",
+            "quote_discussion_message": "quoted_message_id",
+        }
+        reference_field = reference_aliases.get(tool_id)
+        if (
+            reference_field
+            and not normalized.get(reference_field)
+            and normalized.get("message_id")
+        ):
+            normalized[reference_field] = normalized["message_id"]
+        return normalized
 
     async def _negotiate_protocol(
         self, target_protocols: list[ProtocolType], trace_id: str = ""
@@ -1338,7 +1677,7 @@ class Gateway:
             },
         )
         response = decoded_response.get("content", "")
-        response_text = response.get("text", "") if isinstance(response, dict) else str(response)
+        response_text = str(response.get("text", "")) if isinstance(response, dict) else str(response)
         response_tool_calls = response.get("tool_calls", []) if isinstance(response, dict) else []
         response_agent_calls = response.get("agent_calls", []) if isinstance(response, dict) else []
 

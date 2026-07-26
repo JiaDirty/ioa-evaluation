@@ -22,6 +22,7 @@ class ArtifactAggregator:
         text_parts: list[str] = []
         for artifact in artifacts:
             text = artifact.content.get("text") if isinstance(artifact.content, dict) else str(artifact.content)
+            text = str(text)
             text_parts.append(f"[{artifact.producer_agent_id}] {text}")
             contributions.append({
                 "agent_id": artifact.producer_agent_id,

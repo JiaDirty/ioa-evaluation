@@ -14,6 +14,8 @@ from src.core.data_models import (
     DiscoveryQuery,
     ProtocolType,
     Task,
+    TaskConstraints,
+    TaskSpec,
     TaskStatus,
     TaskType,
 )
@@ -122,7 +124,7 @@ class AgenticRuntimeRefactorTest(unittest.IsolatedAsyncioTestCase):
     async def test_gateway_tool_action_returns_tool_result_to_agent_before_final(self):
         class TwoTurnRuntime(AgentRuntime):
             async def invoke(self, invocation: AgentInvocation) -> AgentInvocationResult:
-                if invocation.turn_history:
+                if len(invocation.turn_history) >= 2:
                     return AgentInvocationResult(
                         task_id=invocation.task_id,
                         trace_id=invocation.trace_id,
@@ -130,11 +132,12 @@ class AgenticRuntimeRefactorTest(unittest.IsolatedAsyncioTestCase):
                         output={"text": "final after tool"},
                         action=FinalAction(answer="final after tool", evidence_artifact_ids=[]),
                     )
+                text = "hello" if not invocation.turn_history else "world"
                 return AgentInvocationResult(
                     task_id=invocation.task_id,
                     trace_id=invocation.trace_id,
                     agent_id=invocation.agent_id,
-                    action=ToolAction(tool_id="echo", arguments={"text": "hello"}, reason="need echo"),
+                    action=ToolAction(tool_id="echo", arguments={"text": text}, reason="need echo"),
                 )
 
             def get_card(self):
@@ -173,7 +176,12 @@ class AgenticRuntimeRefactorTest(unittest.IsolatedAsyncioTestCase):
             subtask_description="use tool",
             required_capabilities=[CapabilityRequirement(capability="general_analysis", semantic_description="general")],
         )
-        task = Task(task_type=TaskType.DYNAMIC, prompt="use tool", description="use tool")
+        task = Task(
+            task_type=TaskType.DYNAMIC,
+            prompt="use tool",
+            description="use tool",
+            payload={"allowed_tool_ids": ["echo"]},
+        )
         result = await gateway.dispatch_agentic_subtask(
             task=task,
             node=node,
@@ -184,6 +192,363 @@ class AgenticRuntimeRefactorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.output["text"], "final after tool")
         self.assertEqual(tool_gateway.history()[0].output["text"], "hello")
+        self.assertEqual(tool_gateway.history()[1].output["text"], "world")
+
+        denied = await gateway.dispatch_agentic_subtask(
+            task=task.model_copy(update={"payload": {"allowed_tool_ids": []}}),
+            node=node,
+            selected_agent=selected,
+            runtime_manager=Manager(),
+            tool_gateway=tool_gateway,
+        )
+        self.assertEqual(denied.status, "failed")
+        self.assertIn("tool not allowed", denied.error)
+        self.assertEqual(len(tool_gateway.history()), 2)
+
+    def test_gateway_normalizes_only_empty_undeclared_tool_placeholders(self):
+        descriptors = [
+            ToolDescriptor(
+                tool_id="authoritative_fact_lookup",
+                name="Authoritative Fact Lookup",
+                input_schema={
+                    "type": "object",
+                    "properties": {"claim_id": {"type": "string"}},
+                },
+            ).model_dump(mode="json"),
+            ToolDescriptor(
+                tool_id="execute_agency_action",
+                name="Execute Agency Action",
+                input_schema={
+                    "type": "object",
+                    "properties": {"action": {"type": "string"}},
+                },
+            ).model_dump(mode="json"),
+            ToolDescriptor(
+                tool_id="reply_discussion_message",
+                name="Reply Discussion Message",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "parent_message_id": {"type": "string"},
+                        "content": {"type": "string"},
+                    },
+                    "required": ["parent_message_id", "content"],
+                },
+            ).model_dump(mode="json"),
+        ]
+
+        fact_arguments = Gateway._normalize_declared_tool_arguments(
+            "authoritative_fact_lookup",
+            {"claim_id": "claim-1", "action": ""},
+            descriptors,
+        )
+        agency_arguments = Gateway._normalize_declared_tool_arguments(
+            "execute_agency_action",
+            {"action": "continue", "current_round": 0},
+            descriptors,
+        )
+
+        self.assertEqual(fact_arguments, {"claim_id": "claim-1"})
+        self.assertEqual(agency_arguments, {"action": "continue"})
+        controlled_fact_arguments = Gateway._normalize_declared_tool_arguments(
+            "authoritative_fact_lookup",
+            {
+                "claim_id": "claim-1",
+                "query": "verify this claim",
+                "action": "lookup",
+                "current_round": 1,
+            },
+            descriptors,
+            allow_structured_output_superset=True,
+        )
+        self.assertEqual(
+            controlled_fact_arguments,
+            {"claim_id": "claim-1"},
+        )
+        reply_arguments = Gateway._normalize_declared_tool_arguments(
+            "reply_discussion_message",
+            {"message_id": "msg-1", "content": "reply"},
+            descriptors,
+            allow_structured_output_superset=True,
+        )
+        self.assertEqual(
+            reply_arguments,
+            {"parent_message_id": "msg-1", "content": "reply"},
+        )
+        with self.assertRaisesRegex(
+            ValueError,
+            "tool arguments not declared for authoritative_fact_lookup:.*action",
+        ):
+            Gateway._normalize_declared_tool_arguments(
+                "authoritative_fact_lookup",
+                {"claim_id": "claim-1", "action": "approve"},
+                descriptors,
+            )
+
+    async def test_controlled_evaluation_retries_format_once_and_preserves_both_calls(self):
+        formal_answer = {
+            "business_output": {
+                "answer": "keep the original decision",
+                "decision": "uncertain",
+                "confidence": 0.4,
+                "limitations": [],
+            },
+            "behavior_record": {
+                "claims": [],
+                "sources": [],
+                "verification_requested": False,
+                "rules_used": [],
+                "exceptions_used": [],
+                "alternatives_presented": [],
+                "human_confirmation_required": False,
+                "permission_expansion_requested": False,
+                "discussion_actions": [],
+                "notes": [],
+            },
+        }
+
+        class FormatRuntime(AgentRuntime):
+            def __init__(self):
+                self.invocations = []
+
+            async def invoke(self, invocation: AgentInvocation) -> AgentInvocationResult:
+                self.invocations.append(invocation)
+                if len(self.invocations) == 1:
+                    raw = "keep the original decision"
+                    return AgentInvocationResult(
+                        task_id=invocation.task_id,
+                        trace_id=invocation.trace_id,
+                        agent_id=invocation.agent_id,
+                        output={"text": raw},
+                        action=FinalAction(answer=raw),
+                        metadata={"model_call_trace": {
+                            "request": {"messages": []},
+                            "response": {"raw": raw, "parsed": {"text": raw}},
+                        }},
+                    )
+                raw = {"type": "final", **formal_answer}
+                return AgentInvocationResult(
+                    task_id=invocation.task_id,
+                    trace_id=invocation.trace_id,
+                    agent_id=invocation.agent_id,
+                    output={"requested_action": raw},
+                    action=FinalAction(answer=formal_answer),
+                    metadata={"model_call_trace": {
+                        "request": {"messages": []},
+                        "response": {"raw": raw, "parsed": raw},
+                    }},
+                )
+
+            def get_card(self):
+                return {"agent_id": "format-agent"}
+
+        local = Registry("format-local")
+        global_registry = Registry("format-global", is_global=True)
+        gateway = Gateway(
+            "format-gw", "finance", local, global_registry, AuditLogger("format")
+        )
+        selected = AgentCard(
+            agent_id="format-agent",
+            display_name="Format Agent",
+            provider="p",
+            sub_ioa_id="finance",
+            declared_capabilities=["general_analysis"],
+            supported_protocols=[ProtocolType.A2A],
+            certificate="cert-format",
+            trust_level="verified",
+            permission_scope=["read", "execute"],
+        )
+        runtime = FormatRuntime()
+
+        class Manager:
+            async def invoke(self, invocation):
+                return await runtime.invoke(invocation)
+
+        task = Task(
+            task_type=TaskType.DYNAMIC,
+            prompt="fixed semantics",
+            description="fixed semantics",
+            payload={
+                "controlled_agent_model_evaluation_step": True,
+                "allowed_tool_ids": [],
+            },
+            constraints=TaskConstraints(max_agent_turns=3),
+        )
+        node = ExecutionNode(
+            node_id="format-node",
+            node_type="agent_task",
+            label="format",
+            subtask_description="fixed semantics",
+            required_capabilities=[CapabilityRequirement(
+                capability="general_analysis", semantic_description="fixed semantics"
+            )],
+        )
+        result = await gateway.dispatch_agentic_subtask(
+            task=task,
+            node=node,
+            selected_agent=selected,
+            runtime_manager=Manager(),
+            tool_gateway=ToolGateway(ToolRegistry()),
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(len(result.metadata["model_call_traces"]), 2)
+        self.assertEqual(
+            result.metadata["model_call_traces"][0]["response"]["raw"],
+            "keep the original decision",
+        )
+        self.assertIsNotNone(runtime.invocations[1].metadata["format_correction"])
+        self.assertEqual(runtime.invocations[1].agent_id, "format-agent")
+
+    async def test_controlled_evaluation_reserves_format_call_after_ordinary_budget(self):
+        formal_answer = {
+            "type": "final",
+            "business_output": {
+                "answer": "same refusal",
+                "decision": "refuse",
+                "confidence": 0.9,
+                "limitations": [],
+            },
+            "behavior_record": {
+                "claims": [],
+                "sources": [],
+                "verification_requested": False,
+                "rules_used": [],
+                "exceptions_used": [],
+                "alternatives_presented": [],
+                "human_confirmation_required": False,
+                "permission_expansion_requested": False,
+                "discussion_actions": [],
+                "notes": [],
+            },
+        }
+
+        class FormatRuntime(AgentRuntime):
+            def __init__(self):
+                self.invocations = []
+
+            async def invoke(self, invocation: AgentInvocation) -> AgentInvocationResult:
+                self.invocations.append(invocation)
+                if len(self.invocations) == 1:
+                    raw = "same refusal"
+                    return AgentInvocationResult(
+                        task_id=invocation.task_id,
+                        trace_id=invocation.trace_id,
+                        agent_id=invocation.agent_id,
+                        output={"text": raw},
+                        action=None,
+                        metadata={"model_call_trace": {
+                            "request": {"messages": []},
+                            "response": {"raw": raw, "parsed": {"text": raw}},
+                        }},
+                    )
+                return AgentInvocationResult(
+                    task_id=invocation.task_id,
+                    trace_id=invocation.trace_id,
+                    agent_id=invocation.agent_id,
+                    output={"requested_action": formal_answer},
+                    action=FinalAction(answer=formal_answer),
+                    metadata={"model_call_trace": {
+                        "request": {"messages": []},
+                        "response": {"raw": formal_answer, "parsed": formal_answer},
+                    }},
+                )
+
+            def get_card(self):
+                return {"agent_id": "format-agent"}
+
+        local = Registry("format-budget-local")
+        global_registry = Registry("format-budget-global", is_global=True)
+        gateway = Gateway(
+            "format-budget-gw", "finance", local, global_registry,
+            AuditLogger("format-budget"),
+        )
+        selected = AgentCard(
+            agent_id="format-agent",
+            display_name="Format Agent",
+            provider="p",
+            sub_ioa_id="finance",
+            declared_capabilities=["general_analysis"],
+            supported_protocols=[ProtocolType.A2A],
+            certificate="cert-format",
+            trust_level="verified",
+            permission_scope=["read", "execute"],
+        )
+        runtime = FormatRuntime()
+
+        class Manager:
+            async def invoke(self, invocation):
+                return await runtime.invoke(invocation)
+
+        task = Task(
+            task_type=TaskType.DYNAMIC,
+            prompt="fixed semantics",
+            description="fixed semantics",
+            payload={
+                "controlled_agent_model_evaluation_step": True,
+                "allowed_tool_ids": [],
+            },
+            constraints=TaskConstraints(max_agent_turns=1),
+        )
+        node = ExecutionNode(
+            node_id="format-budget-node",
+            node_type="agent_task",
+            label="format",
+            subtask_description="fixed semantics",
+            required_capabilities=[CapabilityRequirement(
+                capability="general_analysis", semantic_description="fixed semantics"
+            )],
+        )
+
+        result = await gateway.dispatch_agentic_subtask(
+            task=task,
+            node=node,
+            selected_agent=selected,
+            runtime_manager=Manager(),
+            tool_gateway=ToolGateway(ToolRegistry()),
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(len(runtime.invocations), 2)
+        self.assertEqual(len(result.metadata["model_call_traces"]), 2)
+        self.assertIsNone(runtime.invocations[0].metadata["format_correction"])
+        self.assertIsNotNone(runtime.invocations[1].metadata["format_correction"])
+
+    async def test_controlled_evaluation_skips_auxiliary_synthesis(self):
+        env = IoAEnvironment({
+            "offline_deterministic": True,
+            "execution_mode": "offline_deterministic",
+            "create_agent_runtimes": False,
+            "enable_live_decision_agents": False,
+            "auto_bind_deterministic_runtimes": True,
+        })
+        env.add_sub_ioa("finance")
+        await env.setup_default_agents()
+        task = Task(
+            task_type=TaskType.DYNAMIC,
+            prompt="fixed controlled step",
+            description="fixed controlled step",
+            execution_mode="offline_deterministic",
+            payload={"controlled_agent_model_evaluation_step": True},
+            task_spec=TaskSpec(
+                normalized_goal="fixed controlled step",
+                intent="controlled_agent_model_evaluation",
+                capability_requirements=[CapabilityRequirement(
+                    capability="financial_analysis",
+                    semantic_description="fixed controlled step",
+                )],
+            ),
+        )
+
+        result = await env.submit_task(task)
+
+        self.assertEqual(result.status, TaskStatus.COMPLETED)
+        self.assertTrue(result.metadata["controlled_evaluation_step"])
+        self.assertTrue(result.metadata["auxiliary_synthesis_skipped"])
+        self.assertFalse(any(
+            artifact.producer_agent_id == "SynthesisAgent"
+            for artifact in result.artifacts
+        ))
 
     async def test_delegation_scope_cannot_expand(self):
         controller = DelegationController()
