@@ -897,13 +897,55 @@ def _compact_turn_history(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "role_state": visible_input.get("role_state", {}),
             },
             "output_json": {
-                "step_output": output_json.get("step_output", {}),
+                "step_output": _history_visible_value(
+                    output_json.get("step_output", {})
+                ),
                 "status": output_json.get("status", ""),
                 "error": output_json.get("error", ""),
             },
-            "tool_calls": turn.get("tool_calls_json", []),
+            "tool_calls": _history_visible_value(turn.get("tool_calls_json", [])),
         })
     return compact
+
+
+def _history_visible_value(value: Any) -> Any:
+    """Remove evaluator-only keys before replaying prior turns to tested models."""
+    forbidden_drop_keys = {
+        "category",
+        "category_code",
+        "controller_group",
+        "expected_gaming_behavior",
+        "expected_safe_behavior",
+        "ground_truth",
+        "hidden_goal",
+        "judge_focus",
+        "manipulation_goal",
+        "risk_type",
+        "risky_behavior",
+        "state_update_policy",
+        "supported_by_ground_truth",
+        "supports_manipulation_goal",
+        "variant",
+    }
+    renamed_keys = {
+        "canonical_answer": "tool_answer",
+        "canonical_fact": "tool_answer",
+    }
+    if isinstance(value, list):
+        return [_history_visible_value(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    visible: dict[str, Any] = {}
+    for key, item in value.items():
+        key_text = str(key)
+        if key_text in forbidden_drop_keys:
+            continue
+        target_key = renamed_keys.get(key_text, key_text)
+        cleaned = _history_visible_value(item)
+        if cleaned is None:
+            continue
+        visible[target_key] = cleaned
+    return visible
 
 
 def _latest_final_model_output(

@@ -205,6 +205,84 @@ class AgenticRuntimeRefactorTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("tool not allowed", denied.error)
         self.assertEqual(len(tool_gateway.history()), 2)
 
+    async def test_gateway_duplicate_tool_action_is_recorded_not_failed(self):
+        class RepeatingToolRuntime(AgentRuntime):
+            async def invoke(self, invocation: AgentInvocation) -> AgentInvocationResult:
+                return AgentInvocationResult(
+                    task_id=invocation.task_id,
+                    trace_id=invocation.trace_id,
+                    agent_id=invocation.agent_id,
+                    action=ToolAction(
+                        tool_id="echo",
+                        arguments={"text": "same"},
+                        reason="repeat echo",
+                    ),
+                )
+
+            def get_card(self):
+                return {"agent_id": "repeat-tool-agent"}
+
+        local = Registry("repeat-tool-local")
+        global_registry = Registry("repeat-tool-global", is_global=True)
+        gateway = Gateway(
+            "repeat-tool-gw", "finance", local, global_registry,
+            AuditLogger("repeat-tool"),
+        )
+        selected = AgentCard(
+            agent_id="repeat-tool-agent",
+            display_name="Repeat Tool Agent",
+            provider="p",
+            sub_ioa_id="finance",
+            declared_capabilities=["general_analysis"],
+            supported_protocols=[ProtocolType.A2A],
+            certificate="cert-repeat-tool",
+            trust_level="verified",
+            permission_scope=["read", "execute"],
+        )
+        tool_registry = ToolRegistry()
+        tool_registry.register(
+            ToolDescriptor(tool_id="echo", name="Echo"),
+            lambda text: {"text": text},
+        )
+        tool_gateway = ToolGateway(tool_registry)
+
+        class Manager:
+            async def invoke(self, invocation):
+                return await RepeatingToolRuntime().invoke(invocation)
+
+        task = Task(
+            task_type=TaskType.DYNAMIC,
+            prompt="repeat tool",
+            description="repeat tool",
+            payload={"allowed_tool_ids": ["echo"]},
+        )
+        node = ExecutionNode(
+            node_id="n",
+            node_type="agent_task",
+            label="n",
+            subtask_description="repeat tool",
+            required_capabilities=[
+                CapabilityRequirement(
+                    capability="general_analysis",
+                    semantic_description="general",
+                )
+            ],
+        )
+
+        result = await gateway.dispatch_agentic_subtask(
+            task=task,
+            node=node,
+            selected_agent=selected,
+            runtime_manager=Manager(),
+            tool_gateway=tool_gateway,
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertTrue(result.output["duplicate_tool_call"])
+        self.assertEqual(result.action.tool_id, "echo")
+        self.assertEqual(result.metadata["duplicate_tool_call"]["tool_id"], "echo")
+        self.assertEqual(len(tool_gateway.history()), 1)
+
     def test_gateway_normalizes_only_empty_undeclared_tool_placeholders(self):
         descriptors = [
             ToolDescriptor(

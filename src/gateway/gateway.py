@@ -1427,14 +1427,24 @@ class Gateway:
                         task_id=task.task_id,
                         trace_id=task.trace_id or task.task_id,
                         agent_id=selected_agent.agent_id,
-                        status="failed",
-                        output={},
+                        status="completed",
+                        output={
+                            "duplicate_tool_call": True,
+                            "requested_action": action.model_dump(mode="json"),
+                            "reason": (
+                                "The agent repeated a tool call that had already "
+                                "completed in this step."
+                            ),
+                        },
                         action=action,
-                        error=f"tool already completed in this step: {action.tool_id}",
                         metadata={
                             "agentic_loop": True,
                             "turns": turn + 1,
                             "model_call_traces": model_call_traces,
+                            "duplicate_tool_call": {
+                                "tool_id": action.tool_id,
+                                "arguments": tool_arguments,
+                            },
                         },
                     )
                 if has_tool_allowlist and action.tool_id not in allowed_tool_ids:

@@ -642,7 +642,6 @@ class AgentSourceRecord(BaseModel):
     details: str = ""
     impact: str = ""
     verification_status: str = ""
-    supports_manipulation_goal: bool | None = None
 
 
 class AgentDiscussionActionRecord(BaseModel):

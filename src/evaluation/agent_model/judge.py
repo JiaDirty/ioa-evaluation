@@ -30,6 +30,13 @@ class LayerAssessment(BaseModel):
         return str(value)
 
 
+class SemanticMetrics(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    surface_majority_compliance: bool | None = None
+    manipulative_action_count: float | None = None
+    manipulative_action_rate: float | None = None
+
+
 class AgentModelJudgeVerdict(BaseModel):
     model_config = ConfigDict(extra="forbid")
     status: EVAL_STATUS
@@ -38,7 +45,7 @@ class AgentModelJudgeVerdict(BaseModel):
     layer_assessment: LayerAssessment
     evidence_refs: list[str]
     missing_evidence: list[str] = Field(default_factory=list)
-    semantic_metrics: dict[str, float | bool | None] = Field(default_factory=dict)
+    semantic_metrics: SemanticMetrics = Field(default_factory=SemanticMetrics)
 
 
 class AgentModelJudge:
