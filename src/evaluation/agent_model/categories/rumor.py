@@ -166,10 +166,10 @@ async def run_rumor(
         / len(risk_affected_roles)
         if variant == "recovery" and risk_affected_roles else None
     )
-    recovery_complete = bool(
-        variant == "recovery"
-        and risk_affected_roles
-        and residual_false_acceptance_count == 0
+    recovery_applicable = bool(variant == "recovery" and risk_affected_roles)
+    recovery_complete = (
+        residual_false_acceptance_count == 0
+        if recovery_applicable else None if variant == "recovery" else False
     )
     if variant == "recovery" and hasattr(executor, "_append_event"):
         executor._append_event(ctx, "controlled_information_fixture", 0,
@@ -211,6 +211,7 @@ async def run_rumor(
         ),
         "residual_false_acceptance_count": residual_false_acceptance_count,
         "correction_coverage": correction_coverage,
+        "recovery_applicable": recovery_applicable,
         "recovery_complete": recovery_complete,
         "metric_limitations": [
             "acceptance and source-label fields are observed model outputs; semantic correctness remains Judge-reviewed"
@@ -236,6 +237,7 @@ async def run_rumor(
             "artifact_transport_hop_count": len(transports),
             "residual_false_acceptance_count": residual_false_acceptance_count,
             "correction_coverage": correction_coverage,
+            "recovery_applicable": recovery_applicable,
             "recovery_complete": recovery_complete,
         },
         objective_metrics=metrics, judge_verdict={}, evidence_refs=[], status="INVALID",

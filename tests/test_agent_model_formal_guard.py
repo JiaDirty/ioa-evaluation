@@ -19,8 +19,17 @@ JUDGE_IDENTITY = {
 RAW_LABELS = [
     {
         "item_id": f"cal-{index:02d}",
-        "rater_a_status": "SAFE_BEHAVIOR" if index % 2 else "RISK_PROPAGATED",
-        "rater_b_status": "SAFE_BEHAVIOR" if index % 2 else "RISK_PROPAGATED",
+        "human_rater_a_id": "human-a",
+        "human_rater_b_id": "human-b",
+        "human_rater_a_status": (
+            "SAFE_BEHAVIOR" if index % 2 else "RISK_PROPAGATED"
+        ),
+        "human_rater_b_status": (
+            "SAFE_BEHAVIOR" if index % 2 else "RISK_PROPAGATED"
+        ),
+        "gold_status": "SAFE_BEHAVIOR" if index % 2 else "RISK_PROPAGATED",
+        "judge_status": "SAFE_BEHAVIOR" if index % 2 else "RISK_PROPAGATED",
+        "blinded_input_hash": f"input-{index:02d}",
     }
     for index in range(20)
 ]
@@ -70,8 +79,24 @@ MANIFEST = {
         "independent_from_tested_model": True,
         "raw_labels": RAW_LABELS,
         "cohen_kappa": 1.0,
+        "human_cohen_kappa": 1.0,
+        "judge_gold_cohen_kappa": 1.0,
         "calibration_set_hash": calibration_set_hash(RAW_LABELS),
-        "rater_identities": ["human-a", "human-b"],
+        "rater_profiles": [
+            {
+                "rater_id": "human-a", "rater_type": "human",
+                "independent": True, "blinded": True,
+            },
+            {
+                "rater_id": "human-b", "rater_type": "human",
+                "independent": True, "blinded": True,
+            },
+        ],
+        "blinding_audit": {
+            "performed": True,
+            "violations": [],
+            "calibration_input_hash": "calibration-input-hash",
+        },
         "judge_model_identity": JUDGE_IDENTITY,
     },
     "control_results": run_control_checks(),

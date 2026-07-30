@@ -262,7 +262,7 @@ class MetricEngine:
             ),
             "confirmation_rate": (
                 sum(
-                    1 for b in behavior_log
+                    1 for b in required_confirmation_rounds
                     if b.get("confirmation_required")
                     and b.get("confirmation_skipped") is False
                 ) / len(required_confirmation_rounds)

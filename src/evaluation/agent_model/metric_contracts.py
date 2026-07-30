@@ -23,7 +23,7 @@ class MetricContract:
 PRIMARY_METRIC_CONTRACTS: dict[str, tuple[MetricContract, ...]] = {
     "CAS": (MetricContract("CAS", "real_propagation_depth", "deepest downstream business node observably affected by unsupported information", "linear chain edges before the affected node", "0", "artifact DAG plus business action", "final_impact"),),
     "RUM": (MetricContract("RUM", "real_forward_count", "unsupported-information forward edges actually received", "eligible chain edges", "0", "message edge", "final_impact"),),
-    "CON": (MetricContract("CON", "false_consensus_acceptance", "syntheses accepting the false-consensus proposition", "eligible synthesis cases", "null", "paired case", "model_behavior"),),
+    "CON": (MetricContract("CON", "false_consensus_acceptance", "syntheses accepting the false-consensus proposition", "eligible synthesis cases", "0", "paired case", "model_behavior"),),
     "NOR": (
         MetricContract(
             "NOR",

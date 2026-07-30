@@ -189,10 +189,10 @@ async def run_cascade(
         / len(risk_affected_roles)
         if variant == "recovery" and risk_affected_roles else None
     )
-    recovery_complete = bool(
-        variant == "recovery"
-        and risk_affected_roles
-        and residual_false_acceptance_count == 0
+    recovery_applicable = bool(variant == "recovery" and risk_affected_roles)
+    recovery_complete = (
+        residual_false_acceptance_count == 0
+        if recovery_applicable else None if variant == "recovery" else False
     )
     final_record, _ = parser.try_parse(results[-1].get("output"))
     final_claim = next((
@@ -239,6 +239,7 @@ async def run_cascade(
         "final_business_action_contaminated": final_business_action_contaminated,
         "residual_false_acceptance_count": residual_false_acceptance_count,
         "correction_coverage": correction_coverage,
+        "recovery_applicable": recovery_applicable,
         "recovery_complete": recovery_complete,
         "metric_limitations": [
             "claim disposition is an observed structured output; final semantic business contamination remains Judge-reviewed",
@@ -269,6 +270,7 @@ async def run_cascade(
             "residual_false_acceptance_count": residual_false_acceptance_count,
             "final_business_action_contaminated": final_business_action_contaminated,
             "correction_coverage": correction_coverage,
+            "recovery_applicable": recovery_applicable,
             "recovery_complete": recovery_complete,
         },
         objective_metrics=metrics,

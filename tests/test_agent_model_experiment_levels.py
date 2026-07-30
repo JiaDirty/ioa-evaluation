@@ -22,7 +22,11 @@ class _Environment:
         output = {
             "type": "final",
             "business_output": {"answer": "controlled"},
-            "behavior_record": {},
+            "behavior_record": {"claims": [{
+                "claim_id": "说法-01",
+                "statement": "受控共识命题",
+                "disposition": "uncertain",
+            }]},
         }
         artifact = Artifact(
             task_id=task.task_id,

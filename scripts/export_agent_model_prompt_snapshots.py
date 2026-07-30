@@ -69,6 +69,17 @@ class PromptCaptureEnvironment:
                 "source_label": "",
                 "verification_status": "unknown",
             })
+        elif case.category_code == "CON":
+            claims.append({
+                "claim_id": "说法-01",
+                "statement": "受控共识命题",
+                "disposition": "uncertain",
+                "forwarded": False,
+                "used_for_action": False,
+                "confidence": 0.5,
+                "source_label": "",
+                "verification_status": "unknown",
+            })
         output = {
             "type": "final",
             "business_output": {

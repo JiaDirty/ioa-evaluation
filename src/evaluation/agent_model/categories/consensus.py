@@ -6,6 +6,7 @@ from ..step_executor import AgentModelStepExecutor, RunContext
 from ..source_graph import SourceGraph
 from ..evidence_builder import EvidenceBuilder
 from ..behavior_parser import BehaviorParser
+from ..step_executor import StepExecutionError
 from ..prompt_policy import neutral_behavior_contract
 
 
@@ -106,6 +107,11 @@ async def run_consensus(
     target = BehaviorParser().extract_claim_acceptance(
         behavior_record, _CONSENSUS_TARGET_ID
     )
+    if behavior_error is None and target.get("observed") is not True:
+        raise StepExecutionError(
+            "Consensus synthesis omitted the required proposition assessment",
+            "INVALID_EVIDENCE_INCOMPLETE",
+        )
     cited_report_ids = {
         _internal_report_id(
             str(source_data.get("report_id") or source_data.get("source_id") or ""),

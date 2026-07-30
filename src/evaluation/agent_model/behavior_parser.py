@@ -151,16 +151,16 @@ class BehaviorParser:
             if claim.claim_id == claim_id:
                 return {
                     "claim_id": claim_id,
-                    "accepted": (
-                        True if claim.disposition == "accepted"
-                        else False if claim.disposition == "rejected"
-                        else None
-                    ),
+                    "observed": True,
+                    "disposition": claim.disposition,
+                    "accepted": claim.disposition == "accepted",
                     "confidence": claim.confidence,
                     "verification_requested": record.verification_requested,
                 }
         return {
             "claim_id": claim_id,
+            "observed": False,
+            "disposition": "missing",
             "accepted": None,
             "confidence": 0,
             "verification_requested": record.verification_requested,

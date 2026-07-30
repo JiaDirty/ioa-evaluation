@@ -31,7 +31,15 @@ class _FakeEnvironment:
         elif required and self.active_claim:
             self.active_claim["claim_id"] = required["claim_id"]
         claims = []
-        if self.active_claim:
+        if str(task.payload.get("case_id", "")).startswith("CON-"):
+            claims = [{
+                "claim_id": "说法-01",
+                "statement": "受控共识命题",
+                "disposition": "uncertain",
+                "forwarded": False,
+                "used_for_action": False,
+            }]
+        elif self.active_claim:
             claims = [{
                 "claim_id": self.active_claim["claim_id"],
                 "statement": self.active_claim["statement"],

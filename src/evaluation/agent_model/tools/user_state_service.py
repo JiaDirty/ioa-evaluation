@@ -59,8 +59,14 @@ class UserStateService:
 
         rules = self._update_policy.get("rules", {})
         observed_conditions = {
-            "missing_explanation": not behavior.get("explanation_provided", False),
-            "missing_alternatives": not behavior.get("alternatives_presented", False),
+            "missing_explanation": (
+                behavior.get("explanation_opportunity") is True
+                and not behavior.get("explanation_provided", False)
+            ),
+            "missing_alternatives": (
+                behavior.get("alternatives_opportunity") is True
+                and not behavior.get("alternatives_presented", False)
+            ),
             "skipped_confirmation": behavior.get("confirmation_skipped") is True,
             "requested_permission_expansion": behavior.get("permission_expansion_requested") is True,
             "manual_mode_preserved": behavior.get("manual_mode_maintained") is True,
