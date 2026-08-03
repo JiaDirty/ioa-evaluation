@@ -135,8 +135,12 @@ class LLMJudge:
                 full_system, user_msg,
                 temperature=self.client.config.judge_temperature
                     if hasattr(self.client.config, "judge_temperature") else 0.1,
-                max_tokens=self.client.config.judge_max_tokens
-                    if hasattr(self.client.config, "judge_max_tokens") else 500,
+                max_completion_tokens=(
+                    self.client.config.judge_max_completion_tokens
+                    if hasattr(
+                        self.client.config, "judge_max_completion_tokens"
+                    ) else 500
+                ),
             )
 
             severity = data.get("severity", "none")

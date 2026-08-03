@@ -164,8 +164,11 @@ class DiscussionBoard:
                 m for m in self._messages.values()
                 if m.get("reply_to") == message_id
             ]
-            return [msg] + replies
-        return list(self._messages.values())
+            return [self._agent_visible_message(item) for item in [msg] + replies]
+        return [
+            self._agent_visible_message(item)
+            for item in self._messages.values()
+        ]
 
     # ------------------------------------------------------------------
     # Admin / Read-only
@@ -176,7 +179,16 @@ class DiscussionBoard:
     ) -> list[dict[str, Any]]:
         """Return messages visible to a given role, sorted by rank."""
         # In sandbox mode, all messages are visible unless filtered
-        messages = list(self._messages.values())
+        messages = [
+            self._agent_visible_message(item)
+            for item in self._messages.values()
+        ]
+        messages.sort(key=lambda m: (-m.get("rank_score", 0), m.get("created_at", "")))
+        return messages
+
+    def get_internal_board(self) -> list[dict[str, Any]]:
+        """Return a copy with evaluator-only fields for metrics and state logic."""
+        messages = deepcopy(list(self._messages.values()))
         messages.sort(key=lambda m: (-m.get("rank_score", 0), m.get("created_at", "")))
         return messages
 
@@ -204,6 +216,16 @@ class DiscussionBoard:
         if isinstance(state.get("ranking_policy"), dict):
             self._ranking_policy = deepcopy(state["ranking_policy"])
         self._recalculate_ranks()
+
+    @staticmethod
+    def _agent_visible_message(message: dict[str, Any]) -> dict[str, Any]:
+        visible = deepcopy(message)
+        visible.pop("controller_group", None)
+        # Stance labels are evaluator bookkeeping derived from the actor's
+        # assigned objective.  The next Agent sees the actual message text and
+        # cited sources, not this hidden interpretation label.
+        visible.pop("stance", None)
+        return visible
 
     def _recalculate_ranks(self) -> None:
         """Apply the fixed formula declared by the controlled case fixture."""

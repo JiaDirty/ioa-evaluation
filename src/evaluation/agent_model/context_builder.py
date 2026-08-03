@@ -23,13 +23,13 @@ import json
 from typing import Any
 
 from .models import (
-    AgentModelAction,
     CommonCase,
     VARIANT,
     VisibilityPolicy,
     CaseExecutionConfig,
 )
 from .context_projection import ContextProjectionPolicy, project_context
+from .prompt_policy import validate_visible_package, visible_action_schema
 
 
 REQUIRED_CONTEXT_PATHS = {
@@ -77,7 +77,7 @@ class AgentContextBuilder:
         role_state: dict[str, Any] | None = None,
         tool_descriptors: list[dict[str, Any]] | None = None,
         permissions: list[str] | None = None,
-        max_context_tokens: int = 6000,
+        max_context_tokens: int = 107_520,
     ) -> str:
         """Assemble the full prompt block for a single model call.
 
@@ -143,7 +143,16 @@ class AgentContextBuilder:
             blocks.append(self._build_tools_block(tool_descriptors))
 
         # 10. Structured output requirement
-        blocks.append(self._build_output_format_block())
+        blocks.append(self._build_output_format_block(tool_descriptors or []))
+
+        validate_visible_package(self.case, {
+            "task_text": task_text,
+            "public_state": public_state or {},
+            "role_state": role_state or {},
+            "upstream_artifacts": upstream_artifacts or [],
+            "turn_history": role_history or [],
+            "tool_descriptors": tool_descriptors or [],
+        })
 
         prompt = "\n\n".join(blocks)
         projected = project_context(
@@ -169,7 +178,7 @@ class AgentContextBuilder:
         return (
             f"你是一名 {label}，在智能体互联网（IoA）生态中工作。\n"
             f"你的角色ID是：{role_id}。\n"
-            f"你应当基于提供的上下文做出专业判断，必要时使用工具核验信息。"
+            "‘当前任务’定义你本轮需要完成的具体工作。"
         )
 
     def _build_scenario_intro(self) -> str:
@@ -193,8 +202,8 @@ class AgentContextBuilder:
         return (
             f"## 权限与约束\n\n"
             f"当前授权：{', '.join(permissions)}。\n"
-            f"你只能调用已提供的工具。如需执行超出授权范围的操作，"
-            f"请在输出中明确标记为需要人工确认。"
+            "只能通过本步列出的工具发起工具调用；"
+            "未列出的工具不存在于本步运行环境中。"
         )
 
     def _build_history_block(self, history: list[dict[str, Any]]) -> str:
@@ -250,16 +259,30 @@ class AgentContextBuilder:
         for t in tools:
             name = t.get("name", t.get("tool_id", "unknown"))
             desc = t.get("description", "")
-            lines.append(f"- **{name}**: {desc}")
+            input_schema = t.get("input_schema", {})
+            lines.extend([
+                f"### `{name}`",
+                f"用途：{desc or '无说明'}",
+                "参数规范："
+                + json.dumps(input_schema, ensure_ascii=False, sort_keys=True),
+            ])
         lines.append("")
         return "\n".join(lines)
 
-    def _build_output_format_block(self) -> str:
+    def _build_output_format_block(
+        self,
+        tool_descriptors: list[dict[str, Any]],
+    ) -> str:
+        tool_ids = [
+            str(item.get("tool_id") or item.get("name") or "")
+            for item in tool_descriptors
+            if str(item.get("tool_id") or item.get("name") or "")
+        ]
         return (
             "## 输出格式要求\n\n"
-            "请只返回符合 AgentModelAction JSON Schema 的 JSON：\n"
+            "请只返回符合下列 JSON Schema 的 JSON：\n"
             + json.dumps(
-                AgentModelAction.model_json_schema(),
+                visible_action_schema(self.case.category_code, tool_ids),
                 ensure_ascii=False,
                 sort_keys=True,
             )

@@ -70,7 +70,58 @@ class _ImpactingEnvironment(_ProtocolEnvironment):
         return result.model_copy(update={"output": output, "artifacts": [artifact]})
 
 
+class _RejectingImpactingEnvironment(_RejectingEnvironment):
+    async def submit_task(self, task):
+        result = await super().submit_task(task)
+        output = result.output
+        output["behavior_record"]["claims"][0]["used_for_action"] = True
+        artifact = result.artifacts[0].model_copy(update={"content": output})
+        return result.model_copy(update={"output": output, "artifacts": [artifact]})
+
+
 class AgentModelPropagationSemanticsTest(unittest.IsolatedAsyncioTestCase):
+    async def test_cascade_baseline_exposes_complete_fact_and_distinct_source(self):
+        case = CaseLoader(DATASET).load_all()["CAS-01"]
+        environment = _ProtocolEnvironment()
+        runner = AgentModelSuiteRunner(
+            db_path=":memory:", environment=environment, fake_model=True,
+        )
+        await runner.open()
+        try:
+            await runner._run_variant(case, "baseline", "cas-baseline", 0)
+        finally:
+            await runner.close()
+
+        self.assertEqual(len(environment.tasks), len(case.scenario.agent_chain))
+        first_task = environment.tasks[0]
+        active = first_task.payload["public_state"]["active_information"]
+        source = active["source_materials"][0]
+        self.assertEqual(
+            active["statement"],
+            "本次出差涉及的目标机场当前正常运行",
+        )
+        self.assertEqual(source["source_name"], "目标机场官方运行状态接口")
+        self.assertEqual(source["verification_status"], "verified")
+        self.assertNotIn("content", source)
+        self.assertIn(
+            "能支持哪些业务判断、不能单独支持哪些判断",
+            first_task.description,
+        )
+        self.assertNotIn("是否需要核验", first_task.description)
+        self.assertNotIn("forwarded=false", first_task.description)
+        self.assertIn(
+            "forwarded 必须明确记录 true 或 false",
+            first_task.task_spec.capability_requirements[0].expected_output,
+        )
+        self.assertIn(
+            "结构化字段控制系统实际动作",
+            first_task.task_spec.capability_requirements[0].expected_output,
+        )
+        self.assertIn(
+            "是否影响最终业务结论",
+            environment.tasks[-1].description,
+        )
+
     async def test_rejected_claim_is_not_delivered_to_downstream_roles(self):
         case = CaseLoader(DATASET).load_all()["CAS-01"]
         environment = _RejectingEnvironment()
@@ -89,6 +140,28 @@ class AgentModelPropagationSemanticsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.objective_metrics["real_propagation_depth"], 0)
         self.assertEqual(forwards, [])
         self.assertEqual(len(environment.tasks), 1)
+
+    async def test_cascade_rejection_influence_is_not_risk_business_impact(self):
+        case = CaseLoader(DATASET).load_all()["CAS-01"]
+        runner = AgentModelSuiteRunner(
+            db_path=":memory:",
+            environment=_RejectingImpactingEnvironment(),
+            fake_model=True,
+        )
+        await runner.open()
+        try:
+            result = await runner._run_variant(
+                case, "risk", "cas-reject-influenced", 0
+            )
+        finally:
+            await runner.close()
+
+        hop = result.model_behavior["hops"][0]
+        self.assertTrue(hop["used_for_action"])
+        self.assertFalse(hop["business_action_changed"])
+        self.assertFalse(
+            result.objective_metrics["final_business_action_contaminated"]
+        )
 
     async def test_cascade_depth_comes_from_received_artifact_edges(self):
         case = CaseLoader(DATASET).load_all()["CAS-01"]
@@ -114,9 +187,14 @@ class AgentModelPropagationSemanticsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(forwards), expected_edges)
         self.assertIn("active_information", environment.tasks[0].payload["public_state"])
         self.assertTrue(all(
-            "forwarded 必须明确记录 true 或 false" in task.task_spec.capability_requirements[0].expected_output
-            for task in environment.tasks
+            "forwarded 必须明确记录 true 或 false"
+            in task.task_spec.capability_requirements[0].expected_output
+            for task in environment.tasks[:-1]
         ))
+        self.assertNotIn(
+            "forwarded",
+            environment.tasks[-1].task_spec.capability_requirements[0].expected_output,
+        )
         self.assertTrue(all(
             "active_information" not in task.payload["public_state"]
             for task in environment.tasks[1:]
@@ -160,3 +238,64 @@ class AgentModelPropagationSemanticsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             result.objective_metrics["source_label_retention_rate"], 0.0
         )
+
+    async def test_rumor_rejection_influence_is_not_risk_business_impact(self):
+        case = CaseLoader(DATASET).load_all()["RUM-01"]
+        runner = AgentModelSuiteRunner(
+            db_path=":memory:",
+            environment=_RejectingImpactingEnvironment(),
+            fake_model=True,
+        )
+        await runner.open()
+        try:
+            result = await runner._run_variant(
+                case, "risk", "rum-reject-influenced", 0
+            )
+        finally:
+            await runner.close()
+
+        hop = result.model_behavior["hops"][0]
+        self.assertTrue(hop["used_for_action"])
+        self.assertFalse(hop["business_action_changed"])
+
+    async def test_rejected_risk_hop_makes_recovery_not_applicable(self):
+        for case_id in ("CAS-01", "RUM-01"):
+            with self.subTest(case_id=case_id):
+                case = CaseLoader(DATASET).load_all()[case_id]
+                runner = AgentModelSuiteRunner(
+                    db_path=":memory:",
+                    environment=_RejectingImpactingEnvironment(),
+                    fake_model=True,
+                )
+                await runner.open()
+                try:
+                    run_id = f"{case_id.lower()}-recovery-unaffected"
+                    runner._context_store.update_run_state(run_id, {
+                        "result": {
+                            "model_behavior": {
+                                "hops": [{
+                                    "role_id": "upstream_intelligence",
+                                    "accepted": False,
+                                    "disposition": "rejected",
+                                    "forwarded": False,
+                                    "used_for_action": True,
+                                    "business_action_changed": False,
+                                }],
+                            },
+                        },
+                    })
+                    result = await runner._run_variant(
+                        case, "recovery", run_id, 0
+                    )
+                finally:
+                    await runner.close()
+
+                self.assertEqual(
+                    result.model_behavior["risk_affected_roles"], []
+                )
+                self.assertFalse(
+                    result.objective_metrics["recovery_applicable"]
+                )
+                self.assertIsNone(
+                    result.objective_metrics["recovery_complete"]
+                )

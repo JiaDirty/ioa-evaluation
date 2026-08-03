@@ -22,7 +22,7 @@ from src.core.data_models import (
 from src.decision_agents import TaskSpecificationAgent
 from src.experiment.runner import IoAEnvironment
 from src.experiment.scenario_loader import ScenarioLoader
-from src.gateway.gateway import Gateway
+from src.gateway.gateway import Gateway, _agent_visible_tool_result
 from src.orchestration import DelegationController, DelegationRequest, PlanValidationError, PlanValidator
 from src.orchestration.graph import ExecutionGraph, ExecutionNode
 from src.orchestration.planner import AgenticOrchestrationPlanner
@@ -33,6 +33,236 @@ from src.tools import ToolDescriptor, ToolGateway, ToolRegistry
 
 
 class AgenticRuntimeRefactorTest(unittest.IsolatedAsyncioTestCase):
+    def test_agent_visible_tool_result_removes_audit_only_fields(self):
+        raw = {
+            "call_id": "internal-call",
+            "tool_id": "authoritative_fact_lookup",
+            "status": "completed",
+            "output": {
+                "answer": "可见结论",
+                "query_key": "RUM:RUM-01:rumor_status",
+                "fixture_hit": True,
+                "semantic_success": True,
+                "nested": {
+                    "controller_group": "coordinated",
+                    "target_controller_group": "independent",
+                    "content": "可见内容",
+                },
+            },
+            "metadata": {"trace_id": "internal-trace"},
+        }
+
+        visible = _agent_visible_tool_result(raw)
+
+        self.assertEqual(visible["tool_id"], "authoritative_fact_lookup")
+        self.assertEqual(visible["output"]["answer"], "可见结论")
+        self.assertEqual(visible["output"]["nested"], {"content": "可见内容"})
+        serialized = json.dumps(visible, ensure_ascii=False)
+        for forbidden in (
+            "RUM-01", "query_key", "fixture_hit", "semantic_success",
+            "controller_group", "call_id", "metadata", "trace_id",
+        ):
+            self.assertNotIn(forbidden, serialized)
+
+    def test_valid_agent_model_json_string_does_not_require_format_correction(self):
+        payload = {
+            "type": "final",
+            "business_output": {
+                "answer": "keep the decision",
+                "decision": "keep",
+                "confidence": 0.9,
+                "limitations": [],
+            },
+            "behavior_record": {},
+            "tool_call": None,
+            "reason": "",
+        }
+        trace = {
+            "response": {
+                "raw": json.dumps(payload),
+                "parsed": json.dumps(payload),
+            }
+        }
+
+        self.assertTrue(Gateway._has_valid_agent_model_action(trace))
+
+    async def test_valid_agent_model_json_string_completes_in_one_gateway_call(self):
+        payload = {
+            "type": "final",
+            "business_output": {
+                "answer": "keep the decision",
+                "decision": "keep",
+                "confidence": 0.9,
+                "limitations": [],
+            },
+            "behavior_record": {},
+            "tool_call": None,
+            "reason": "",
+        }
+
+        class JsonStringRuntime(AgentRuntime):
+            def __init__(self):
+                self.invocations = []
+
+            async def invoke(self, invocation: AgentInvocation) -> AgentInvocationResult:
+                self.invocations.append(invocation)
+                serialized = json.dumps(payload)
+                return AgentInvocationResult(
+                    task_id=invocation.task_id,
+                    trace_id=invocation.trace_id,
+                    agent_id=invocation.agent_id,
+                    action=FinalAction(answer=payload),
+                    metadata={"model_call_trace": {
+                        "request": {"messages": []},
+                        "response": {"raw": serialized, "parsed": serialized},
+                    }},
+                )
+
+            def get_card(self):
+                return {"agent_id": "json-string-agent"}
+
+        runtime = JsonStringRuntime()
+
+        class Manager:
+            async def invoke(self, invocation):
+                return await runtime.invoke(invocation)
+
+        gateway = Gateway(
+            "json-string-gw",
+            "finance",
+            Registry("json-string-local"),
+            Registry("json-string-global", is_global=True),
+            AuditLogger("json-string"),
+        )
+        selected = AgentCard(
+            agent_id="json-string-agent",
+            display_name="JSON String Agent",
+            provider="p",
+            sub_ioa_id="finance",
+            declared_capabilities=["general_analysis"],
+            supported_protocols=[ProtocolType.A2A],
+            certificate="cert-json-string",
+            trust_level="verified",
+            permission_scope=["read", "execute"],
+        )
+        task = Task(
+            task_type=TaskType.DYNAMIC,
+            prompt="fixed semantics",
+            description="fixed semantics",
+            payload={
+                "controlled_agent_model_evaluation_step": True,
+                "allowed_tool_ids": [],
+            },
+        )
+        node = ExecutionNode(
+            node_id="json-string-node",
+            node_type="agent_task",
+            label="json string",
+            subtask_description="fixed semantics",
+            required_capabilities=[CapabilityRequirement(
+                capability="general_analysis",
+                semantic_description="fixed semantics",
+            )],
+        )
+
+        result = await gateway.dispatch_agentic_subtask(
+            task=task,
+            node=node,
+            selected_agent=selected,
+            runtime_manager=Manager(),
+            tool_gateway=ToolGateway(ToolRegistry()),
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(len(runtime.invocations), 1)
+        self.assertIsNone(runtime.invocations[0].metadata["format_correction"])
+        self.assertEqual(len(result.metadata["model_call_traces"]), 1)
+
+    async def test_runtime_connection_error_is_not_sent_to_format_correction(self):
+        class ConnectionFailureRuntime(AgentRuntime):
+            def __init__(self):
+                self.invocations = []
+
+            async def invoke(self, invocation: AgentInvocation) -> AgentInvocationResult:
+                self.invocations.append(invocation)
+                return AgentInvocationResult(
+                    task_id=invocation.task_id,
+                    trace_id=invocation.trace_id,
+                    agent_id=invocation.agent_id,
+                    status="failed",
+                    error="Connection error.",
+                    metadata={"model_call_trace": {
+                        "request": {"messages": []},
+                        "response": {
+                            "raw": None,
+                            "parsed": None,
+                            "error": "Connection error.",
+                        },
+                    }},
+                )
+
+            def get_card(self):
+                return {"agent_id": "connection-agent"}
+
+        runtime = ConnectionFailureRuntime()
+
+        class Manager:
+            async def invoke(self, invocation):
+                return await runtime.invoke(invocation)
+
+        gateway = Gateway(
+            "connection-gw",
+            "finance",
+            Registry("connection-local"),
+            Registry("connection-global", is_global=True),
+            AuditLogger("connection"),
+        )
+        selected = AgentCard(
+            agent_id="connection-agent",
+            display_name="Connection Agent",
+            provider="p",
+            sub_ioa_id="finance",
+            declared_capabilities=["general_analysis"],
+            supported_protocols=[ProtocolType.A2A],
+            certificate="cert-connection",
+            trust_level="verified",
+            permission_scope=["read", "execute"],
+        )
+        task = Task(
+            task_type=TaskType.DYNAMIC,
+            prompt="fixed semantics",
+            description="fixed semantics",
+            payload={
+                "controlled_agent_model_evaluation_step": True,
+                "allowed_tool_ids": [],
+            },
+            constraints=TaskConstraints(max_agent_turns=1),
+        )
+        node = ExecutionNode(
+            node_id="connection-node",
+            node_type="agent_task",
+            label="connection",
+            subtask_description="fixed semantics",
+            required_capabilities=[CapabilityRequirement(
+                capability="general_analysis",
+                semantic_description="fixed semantics",
+            )],
+        )
+
+        result = await gateway.dispatch_agentic_subtask(
+            task=task,
+            node=node,
+            selected_agent=selected,
+            runtime_manager=Manager(),
+            tool_gateway=ToolGateway(ToolRegistry()),
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.error, "Connection error.")
+        self.assertEqual(len(runtime.invocations), 1)
+        self.assertIsNone(runtime.invocations[0].metadata["format_correction"])
+        self.assertEqual(len(result.metadata["model_call_traces"]), 1)
+
     async def test_prompt_only_api_defaults_to_agentic(self):
         reset_state()
         client = TestClient(app)
@@ -205,9 +435,17 @@ class AgenticRuntimeRefactorTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("tool not allowed", denied.error)
         self.assertEqual(len(tool_gateway.history()), 2)
 
-    async def test_gateway_duplicate_tool_action_is_recorded_not_failed(self):
+    async def test_controlled_duplicate_tool_action_continues_to_forced_final(self):
         class RepeatingToolRuntime(AgentRuntime):
             async def invoke(self, invocation: AgentInvocation) -> AgentInvocationResult:
+                if invocation.metadata.get("force_final_turn") is True:
+                    return AgentInvocationResult(
+                        task_id=invocation.task_id,
+                        trace_id=invocation.trace_id,
+                        agent_id=invocation.agent_id,
+                        output={"text": "final after duplicate"},
+                        action=FinalAction(answer="final after duplicate"),
+                    )
                 return AgentInvocationResult(
                     task_id=invocation.task_id,
                     trace_id=invocation.trace_id,
@@ -254,7 +492,12 @@ class AgenticRuntimeRefactorTest(unittest.IsolatedAsyncioTestCase):
             task_type=TaskType.DYNAMIC,
             prompt="repeat tool",
             description="repeat tool",
-            payload={"allowed_tool_ids": ["echo"]},
+            execution_mode="offline_deterministic",
+            payload={
+                "controlled_agent_model_evaluation_step": True,
+                "allowed_tool_ids": ["echo"],
+            },
+            constraints=TaskConstraints(max_agent_turns=3),
         )
         node = ExecutionNode(
             node_id="n",
@@ -278,10 +521,99 @@ class AgenticRuntimeRefactorTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result.status, "completed")
-        self.assertTrue(result.output["duplicate_tool_call"])
-        self.assertEqual(result.action.tool_id, "echo")
-        self.assertEqual(result.metadata["duplicate_tool_call"]["tool_id"], "echo")
+        self.assertEqual(result.output["text"], "final after duplicate")
+        self.assertEqual(result.action.type, "final")
+        self.assertEqual(
+            result.metadata["duplicate_tool_calls"][0]["tool_id"], "echo"
+        )
         self.assertEqual(len(tool_gateway.history()), 1)
+
+    async def test_controlled_step_fails_extra_tool_action_without_executing_it(self):
+        class TwoDifferentToolsRuntime(AgentRuntime):
+            async def invoke(self, invocation: AgentInvocation) -> AgentInvocationResult:
+                text = "first" if not invocation.turn_history else "second"
+                return AgentInvocationResult(
+                    task_id=invocation.task_id,
+                    trace_id=invocation.trace_id,
+                    agent_id=invocation.agent_id,
+                    action=ToolAction(
+                        tool_id="echo",
+                        arguments={"text": text},
+                        reason=f"request {text}",
+                    ),
+                )
+
+            def get_card(self):
+                return {"agent_id": "limited-tool-agent"}
+
+        gateway = Gateway(
+            "limited-tool-gw", "finance", Registry("limited-tool-local"),
+            Registry("limited-tool-global", is_global=True),
+            AuditLogger("limited-tool"),
+        )
+        selected = AgentCard(
+            agent_id="limited-tool-agent",
+            display_name="Limited Tool Agent",
+            provider="p",
+            sub_ioa_id="finance",
+            declared_capabilities=["general_analysis"],
+            supported_protocols=[ProtocolType.A2A],
+            certificate="cert-limited-tool",
+            trust_level="verified",
+            permission_scope=["read", "execute"],
+        )
+        registry = ToolRegistry()
+        registry.register(
+            ToolDescriptor(tool_id="echo", name="Echo"),
+            lambda text: {"text": text},
+        )
+
+        class Manager:
+            async def invoke(self, invocation):
+                return await TwoDifferentToolsRuntime().invoke(invocation)
+
+        task = Task(
+            task_type=TaskType.DYNAMIC,
+            prompt="one action",
+            description="one action",
+            execution_mode="offline_deterministic",
+            payload={
+                "controlled_agent_model_evaluation_step": True,
+                "allowed_tool_ids": ["echo"],
+            },
+            constraints=TaskConstraints(
+                max_agent_turns=3,
+                max_total_tool_calls=1,
+            ),
+        )
+        node = ExecutionNode(
+            node_id="limited-tool-node",
+            node_type="agent_task",
+            label="limited tool",
+            subtask_description="one action",
+            required_capabilities=[CapabilityRequirement(
+                capability="general_analysis",
+                semantic_description="one action",
+            )],
+        )
+        tool_gateway = ToolGateway(registry)
+
+        result = await gateway.dispatch_agentic_subtask(
+            task=task,
+            node=node,
+            selected_agent=selected,
+            runtime_manager=Manager(),
+            tool_gateway=tool_gateway,
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertIn("tool-call limit was reached", result.error)
+        self.assertTrue(result.output["tool_call_limit_exceeded"])
+        self.assertEqual(
+            result.output["requested_action"]["arguments"]["text"], "second"
+        )
+        self.assertEqual(len(tool_gateway.history()), 1)
+        self.assertEqual(tool_gateway.history()[0].output["text"], "first")
 
     def test_gateway_normalizes_only_empty_undeclared_tool_placeholders(self):
         descriptors = [
@@ -363,7 +695,7 @@ class AgenticRuntimeRefactorTest(unittest.IsolatedAsyncioTestCase):
                 descriptors,
             )
 
-    async def test_controlled_evaluation_retries_format_once_and_preserves_both_calls(self):
+    async def test_controlled_evaluation_marks_first_malformed_response_invalid(self):
         formal_answer = {
             "business_output": {
                 "answer": "keep the original decision",
@@ -469,16 +801,130 @@ class AgenticRuntimeRefactorTest(unittest.IsolatedAsyncioTestCase):
             tool_gateway=ToolGateway(ToolRegistry()),
         )
 
-        self.assertEqual(result.status, "completed")
-        self.assertEqual(len(result.metadata["model_call_traces"]), 2)
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(len(runtime.invocations), 1)
+        self.assertEqual(len(result.metadata["model_call_traces"]), 1)
         self.assertEqual(
             result.metadata["model_call_traces"][0]["response"]["raw"],
             "keep the original decision",
         )
-        self.assertIsNotNone(runtime.invocations[1].metadata["format_correction"])
-        self.assertEqual(runtime.invocations[1].agent_id, "format-agent")
+        self.assertEqual(
+            result.output["invalid_response"], "keep the original decision"
+        )
+        self.assertEqual(
+            result.metadata["tested_response_policy"], "first_response_only"
+        )
+        self.assertFalse(result.metadata["format_correction_attempted"])
+        self.assertIn("on tested response", result.error)
 
-    async def test_controlled_evaluation_reserves_format_call_after_ordinary_budget(self):
+    async def test_controlled_semantic_contradiction_is_recorded_not_parse_failed(self):
+        formal_answer = {
+            "type": "final",
+            "business_output": {
+                "answer": "目标机场当前正常运行。",
+                "decision": "继续制定出差方案",
+                "confidence": 1.0,
+                "limitations": [],
+            },
+            "behavior_record": {
+                "claims": [{
+                    "claim_id": "信息-01",
+                    "disposition": "accepted",
+                    "forwarded": False,
+                    "used_for_action": True,
+                    "confidence": 1.0,
+                }],
+                "sources": [],
+            },
+            "reason": "信息得到支持，决定将产物交给下一角色。",
+        }
+
+        class ContradictoryRuntime(AgentRuntime):
+            def __init__(self):
+                self.invocations = []
+
+            async def invoke(self, invocation: AgentInvocation) -> AgentInvocationResult:
+                self.invocations.append(invocation)
+                return AgentInvocationResult(
+                    task_id=invocation.task_id,
+                    trace_id=invocation.trace_id,
+                    agent_id=invocation.agent_id,
+                    output={"requested_action": formal_answer},
+                    action=FinalAction(answer=formal_answer),
+                    metadata={"model_call_trace": {
+                        "request": {"messages": []},
+                        "response": {"raw": formal_answer, "parsed": formal_answer},
+                    }},
+                )
+
+            def get_card(self):
+                return {"agent_id": "contradictory-agent"}
+
+        local = Registry("semantic-local")
+        global_registry = Registry("semantic-global", is_global=True)
+        gateway = Gateway(
+            "semantic-gw", "news", local, global_registry, AuditLogger("semantic")
+        )
+        selected = AgentCard(
+            agent_id="contradictory-agent",
+            display_name="Contradictory Agent",
+            provider="p",
+            sub_ioa_id="news",
+            declared_capabilities=["general_analysis"],
+            supported_protocols=[ProtocolType.A2A],
+            certificate="cert-semantic",
+            trust_level="verified",
+            permission_scope=["read", "execute"],
+        )
+        runtime = ContradictoryRuntime()
+
+        class Manager:
+            async def invoke(self, invocation):
+                return await runtime.invoke(invocation)
+
+        task = Task(
+            task_type=TaskType.DYNAMIC,
+            prompt="fixed semantics",
+            description="fixed semantics",
+            payload={
+                "controlled_agent_model_evaluation_step": True,
+                "allowed_tool_ids": [],
+                "forward_claim_id": "信息-01",
+            },
+            constraints=TaskConstraints(max_agent_turns=1),
+        )
+        node = ExecutionNode(
+            node_id="semantic-node",
+            node_type="agent_task",
+            label="semantic",
+            subtask_description="fixed semantics",
+            required_capabilities=[CapabilityRequirement(
+                capability="general_analysis",
+                semantic_description="fixed semantics",
+            )],
+        )
+
+        result = await gateway.dispatch_agentic_subtask(
+            task=task,
+            node=node,
+            selected_agent=selected,
+            runtime_manager=Manager(),
+            tool_gateway=ToolGateway(ToolRegistry()),
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(len(runtime.invocations), 1)
+        self.assertEqual(
+            result.metadata["tested_response_policy"], "first_response_only"
+        )
+        self.assertFalse(result.metadata["format_correction_attempted"])
+        self.assertTrue(result.metadata["semantic_consistency_errors"])
+        self.assertIn(
+            "传递决定",
+            result.metadata["semantic_consistency_errors"][0],
+        )
+
+    async def test_controlled_evaluation_does_not_reserve_format_call(self):
         formal_answer = {
             "type": "final",
             "business_output": {
@@ -586,11 +1032,14 @@ class AgenticRuntimeRefactorTest(unittest.IsolatedAsyncioTestCase):
             tool_gateway=ToolGateway(ToolRegistry()),
         )
 
-        self.assertEqual(result.status, "completed")
-        self.assertEqual(len(runtime.invocations), 2)
-        self.assertEqual(len(result.metadata["model_call_traces"]), 2)
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(len(runtime.invocations), 1)
+        self.assertEqual(len(result.metadata["model_call_traces"]), 1)
         self.assertIsNone(runtime.invocations[0].metadata["format_correction"])
-        self.assertIsNotNone(runtime.invocations[1].metadata["format_correction"])
+        self.assertEqual(
+            result.metadata["tested_response_policy"], "first_response_only"
+        )
+        self.assertFalse(result.metadata["format_correction_attempted"])
 
     async def test_controlled_evaluation_skips_auxiliary_synthesis(self):
         env = IoAEnvironment({
@@ -623,6 +1072,7 @@ class AgenticRuntimeRefactorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, TaskStatus.COMPLETED)
         self.assertTrue(result.metadata["controlled_evaluation_step"])
         self.assertTrue(result.metadata["auxiliary_synthesis_skipped"])
+        self.assertEqual(len(result.metadata["model_call_traces"]), 1)
         self.assertFalse(any(
             artifact.producer_agent_id == "SynthesisAgent"
             for artifact in result.artifacts

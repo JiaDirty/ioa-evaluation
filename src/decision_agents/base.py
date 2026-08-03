@@ -20,7 +20,7 @@ class DecisionAgentError(Exception):
 class DecisionAgent(ABC, Generic[InputT, OutputT]):
     name: str = "DecisionAgent"
     output_schema: type[OutputT]
-    max_tokens: int = 800
+    max_completion_tokens: int = 800
 
     def __init__(self, model_client, *, temperature: float = 0.0) -> None:
         self.model_client = model_client
@@ -46,7 +46,7 @@ class DecisionAgent(ABC, Generic[InputT, OutputT]):
             system,
             user,
             temperature=self.temperature,
-            max_tokens=self.max_tokens,
+            max_completion_tokens=self.max_completion_tokens,
         )
         try:
             payload = json.loads(self._strip_markdown(raw))

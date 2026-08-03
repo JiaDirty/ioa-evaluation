@@ -30,6 +30,7 @@ class ClaimTracker:
         verification_requested: bool = False,
         confidence: float = 0.0,
         forwarded: bool | None = None,
+        used_for_action: bool | None = None,
         business_action_changed: bool | None = None,
     ) -> dict[str, Any]:
         hop = {
@@ -45,6 +46,7 @@ class ClaimTracker:
             "verification_requested": verification_requested,
             "confidence": confidence,
             "forwarded": forwarded,
+            "used_for_action": used_for_action,
             "business_action_changed": business_action_changed,
         }
         self.hops.append(hop)

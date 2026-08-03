@@ -73,7 +73,14 @@ class AgentModelExperimentLevelsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(key_result.experiment_level, "key_node")
         self.assertEqual(eco_result.experiment_level, "ecosystem")
         self.assertEqual(len(key_env.tasks), 1)
-        self.assertEqual(len(eco_env.tasks), len(case.scenario.reports) + 1)
+        self.assertEqual(len(eco_env.tasks), len(case.scenario.reports) + 2)
+        self.assertTrue(all(
+            task.execution_mode == "offline_deterministic"
+            for task in key_env.tasks + eco_env.tasks
+        ))
+        self.assertEqual(
+            eco_env.tasks[-2].payload["role_id"], "consensus_risk_agent"
+        )
         self.assertEqual(
             len(eco_result.system_response["ecosystem_report_artifact_ids"]),
             len(case.scenario.reports),
@@ -81,5 +88,5 @@ class AgentModelExperimentLevelsTest(unittest.IsolatedAsyncioTestCase):
         synthesis_event = artifact_events[-1]
         self.assertEqual(
             len(synthesis_event["payload"]["parent_artifact_ids"]),
-            len(case.scenario.reports),
+            len(case.scenario.reports) + 1,
         )

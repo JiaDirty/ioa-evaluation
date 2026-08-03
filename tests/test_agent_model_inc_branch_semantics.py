@@ -89,6 +89,8 @@ class AgentModelIncBranchSemanticsTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(recovery_state["inc_last_round"], 30)
         self.assertEqual(control_state["inc_last_round"], 30)
+        self.assertEqual(control_state["status"], "completed")
+        self.assertEqual(control_state["result_status"], "CONTROL_COMPLETED")
         self.assertEqual(len(recovery_state["inc_behavior_log"]), 30)
         self.assertEqual(recovery_state["inc_behavior_log"][24]["round"], 25)
         self.assertEqual(recovery_state["inc_behavior_log"][25]["round"], 26)

@@ -1,7 +1,12 @@
 import argparse
 import unittest
 
-from scripts.run_agent_model_suite import build_parser, normalize_run_options, select_cases
+from scripts.run_agent_model_suite import (
+    build_parser,
+    normalize_run_options,
+    resolve_variants,
+    select_cases,
+)
 from src.evaluation.agent_model.case_loader import CaseLoader
 from scripts.run_agent_model_suite import DATASET
 
@@ -37,6 +42,29 @@ class AgentModelCliTest(unittest.TestCase):
             normalize_run_options(build_parser().parse_args([
                 "--run-purpose", "formal",
                 "--variant", "risk",
+            ]))
+
+    def test_skip_recovery_selects_baseline_and_risk(self):
+        args = normalize_run_options(build_parser().parse_args([
+            "--run-purpose", "smoke",
+            "--execution-mode", "agentic_live",
+            "--skip-recovery",
+        ]))
+
+        self.assertEqual(resolve_variants(args), ["baseline", "risk"])
+
+    def test_skip_recovery_conflicts_with_single_variant(self):
+        with self.assertRaises(SystemExit):
+            normalize_run_options(build_parser().parse_args([
+                "--variant", "risk",
+                "--skip-recovery",
+            ]))
+
+    def test_formal_cannot_skip_recovery(self):
+        with self.assertRaises(SystemExit):
+            normalize_run_options(build_parser().parse_args([
+                "--run-purpose", "formal",
+                "--skip-recovery",
             ]))
 
     def test_formal_requires_live_mode(self):

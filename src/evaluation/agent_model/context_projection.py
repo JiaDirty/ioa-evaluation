@@ -33,7 +33,11 @@ class ContextProjectionResult:
 
 
 def _tokens(value: Any) -> int:
-    return max(1, (len(json.dumps(value, ensure_ascii=False, default=str)) + 3) // 4)
+    # Treat each UTF-8 byte as one token.  This intentionally overestimates
+    # Chinese text so the early projection check cannot approve an input that
+    # the final provider preflight would reject.
+    serialized = json.dumps(value, ensure_ascii=False, default=str)
+    return max(1, len(serialized.encode("utf-8")))
 
 
 def _scan_taint(value: Any, path: str = "") -> str | None:

@@ -3,6 +3,7 @@ from pathlib import Path
 
 from src.evaluation.agent_model.case_loader import CaseLoader
 from src.evaluation.agent_model.tools.runtime_registry import register_case_tools
+from src.gateway.gateway import _agent_visible_tool_result
 from src.tools.gateway import ToolGateway
 from src.tools.models import ToolCall
 
@@ -16,6 +17,23 @@ class _Environment:
 
 
 class AgentModelToolRegistrationTest(unittest.IsolatedAsyncioTestCase):
+    async def test_agent_tool_replay_keeps_facts_but_hides_evaluator_answers(self):
+        raw = {
+            "supported": False,
+            "canonical_fact": "受控事实结果",
+            "canonical_safe_answer": "这是评分器结论",
+            "minimum_required_verification": True,
+            "fixture_hit": True,
+        }
+
+        visible = _agent_visible_tool_result(raw)
+
+        self.assertEqual(visible, {
+            "supported": False,
+            "fact_result": "受控事实结果",
+        })
+        self.assertIn("canonical_safe_answer", raw)
+
     async def test_authoritative_fixture_is_callable_only_through_gateway(self):
         case = CaseLoader(DATASET).load_all()["CAS-01"]
         environment = _Environment()
@@ -24,7 +42,7 @@ class AgentModelToolRegistrationTest(unittest.IsolatedAsyncioTestCase):
 
         result = await environment.tool_gateway.call_tool(ToolCall(
             tool_id="authoritative_fact_lookup",
-            arguments={"claim_id": fixture.query_key},
+            arguments={"claim_id": "信息-02"},
         ))
 
         self.assertEqual(result.status, "completed")
@@ -33,14 +51,14 @@ class AgentModelToolRegistrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.output["fixture_hit"])
         self.assertTrue(result.output["semantic_success"])
 
-    async def test_authoritative_lookup_accepts_public_claim_id(self):
+    async def test_authoritative_lookup_uses_the_single_visible_claim_id(self):
         case = CaseLoader(DATASET).load_all()["CAS-01"]
         environment = _Environment()
         register_case_tools(environment, case)
 
         result = await environment.tool_gateway.call_tool(ToolCall(
             tool_id="authoritative_fact_lookup",
-            arguments={"lookup_id": case.scenario.claim.claim_id},
+            arguments={"claim_id": "信息-02"},
         ))
 
         self.assertEqual(result.status, "completed")
@@ -48,38 +66,66 @@ class AgentModelToolRegistrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.output["fixture_hit"])
         self.assertTrue(result.output["semantic_success"])
 
-    async def test_authoritative_lookup_accepts_public_rumor_id(self):
+    async def test_cascade_lookup_answers_the_proposition_actually_queried(self):
+        case = CaseLoader(DATASET).load_all()["CAS-01"]
+        environment = _Environment()
+        register_case_tools(environment, case)
+
+        baseline = await environment.tool_gateway.call_tool(ToolCall(
+            tool_id="authoritative_fact_lookup",
+            arguments={"claim_id": "信息-01"},
+        ))
+        risk = await environment.tool_gateway.call_tool(ToolCall(
+            tool_id="authoritative_fact_lookup",
+            arguments={"claim_id": "信息-02"},
+        ))
+        recovery = await environment.tool_gateway.call_tool(ToolCall(
+            tool_id="authoritative_fact_lookup",
+            arguments={"claim_id": "信息-03"},
+        ))
+
+        self.assertEqual(baseline.output["claim_id"], "信息-01")
+        self.assertTrue(baseline.output["supported"])
+        self.assertEqual(
+            baseline.output["canonical_fact"],
+            case.scenario.variants.baseline.initial_information,
+        )
+        self.assertEqual(risk.output["claim_id"], "信息-02")
+        self.assertFalse(risk.output["supported"])
+        self.assertEqual(recovery.output["claim_id"], "信息-03")
+        self.assertTrue(recovery.output["supported"])
+        self.assertEqual(
+            recovery.output["canonical_fact"],
+            case.scenario.variants.recovery.correction,
+        )
+
+    async def test_rumor_lookup_uses_the_visible_information_id(self):
         case = CaseLoader(DATASET).load_all()["RUM-01"]
         environment = _Environment()
         register_case_tools(environment, case)
 
         result = await environment.tool_gateway.call_tool(ToolCall(
             tool_id="authoritative_fact_lookup",
-            arguments={"lookup_id": case.scenario.rumor.rumor_id},
+            arguments={"claim_id": "信息-02"},
         ))
 
         self.assertEqual(result.status, "completed")
-        self.assertEqual(result.output["rumor_id"], "信息-02")
+        self.assertEqual(result.output["claim_id"], "信息-02")
         self.assertTrue(result.output["fixture_hit"])
         self.assertTrue(result.output["semantic_success"])
 
-    async def test_authoritative_lookup_accepts_consensus_public_ids(self):
+    async def test_consensus_lookup_uses_the_assessment_target_id(self):
         case = CaseLoader(DATASET).load_all()["CON-01"]
         environment = _Environment()
         register_case_tools(environment, case)
 
-        report_result = await environment.tool_gateway.call_tool(ToolCall(
+        result = await environment.tool_gateway.call_tool(ToolCall(
             tool_id="authoritative_fact_lookup",
-            arguments={"lookup_id": case.scenario.reports[-1].report_id},
-        ))
-        source_result = await environment.tool_gateway.call_tool(ToolCall(
-            tool_id="authoritative_fact_lookup",
-            arguments={"lookup_id": case.scenario.ground_truth.authority_source_ids[0]},
+            arguments={"claim_id": "说法-01"},
         ))
 
-        self.assertEqual(report_result.status, "completed")
-        self.assertTrue(report_result.output["fixture_hit"])
-        self.assertTrue(source_result.output["fixture_hit"])
+        self.assertEqual(result.status, "completed")
+        self.assertTrue(result.output["fixture_hit"])
 
     async def test_authoritative_lookup_miss_is_not_semantic_success(self):
         case = CaseLoader(DATASET).load_all()["CAS-01"]
@@ -88,34 +134,27 @@ class AgentModelToolRegistrationTest(unittest.IsolatedAsyncioTestCase):
 
         result = await environment.tool_gateway.call_tool(ToolCall(
             tool_id="authoritative_fact_lookup",
-            arguments={"lookup_id": "not-visible-in-this-case"},
+            arguments={"claim_id": "not-visible-in-this-case"},
         ))
 
         self.assertEqual(result.status, "completed")
         self.assertFalse(result.output["fixture_hit"])
         self.assertFalse(result.output["semantic_success"])
 
-    async def test_incentive_lookup_accepts_fixture_key_and_task_id(self):
+    async def test_incentive_lookup_uses_the_visible_material_id(self):
         case = CaseLoader(DATASET).load_all()["INC-01"]
         environment = _Environment()
         register_case_tools(environment, case)
-        first_task = case.scenario.task_sequence[0]
-
-        by_fixture = await environment.tool_gateway.call_tool(ToolCall(
+        result = await environment.tool_gateway.call_tool(ToolCall(
             tool_id="authoritative_fact_lookup",
-            arguments={"lookup_id": first_task.fixture_key},
-        ))
-        by_task = await environment.tool_gateway.call_tool(ToolCall(
-            tool_id="authoritative_fact_lookup",
-            arguments={"lookup_id": first_task.task_id},
+            arguments={"claim_id": "材料-01"},
         ))
 
-        self.assertEqual(by_fixture.status, "completed")
-        self.assertTrue(by_fixture.output["fixture_hit"])
-        self.assertTrue(by_fixture.output["semantic_success"])
-        self.assertNotIn("fixture_key", by_task.output)
-        self.assertEqual(by_task.output["information_id"], "材料-01")
-        self.assertTrue(by_task.output["fixture_hit"])
+        self.assertEqual(result.status, "completed")
+        self.assertTrue(result.output["fixture_hit"])
+        self.assertTrue(result.output["semantic_success"])
+        self.assertNotIn("fixture_key", result.output)
+        self.assertEqual(result.output["information_id"], "材料-01")
 
     async def test_consensus_and_norm_tools_are_case_scoped(self):
         cases = CaseLoader(DATASET).load_all()
@@ -202,7 +241,7 @@ class AgentModelToolRegistrationTest(unittest.IsolatedAsyncioTestCase):
             tool_id="post_discussion_message",
             arguments={
                 "content": "controlled sandbox post",
-                "stance": "neutral_evidence",
+                "source_ids": [],
             },
         ))
         board = await environment.tool_gateway.call_tool(ToolCall(

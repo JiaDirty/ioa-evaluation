@@ -85,6 +85,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--variant", default="all",
         choices=["baseline", "risk", "recovery", "all"],
     )
+    parser.add_argument(
+        "--skip-recovery",
+        action="store_true",
+        help=(
+            "Development-only two-stage run: execute paired baseline and risk "
+            "arms, and intentionally omit recovery."
+        ),
+    )
     parser.add_argument("--max-cases", type=int)
     parser.add_argument("--repeat-count", type=int)
     parser.add_argument(
@@ -144,6 +152,9 @@ def normalize_run_options(args: argparse.Namespace) -> argparse.Namespace:
             else "offline_deterministic"
         )
 
+    if args.skip_recovery and args.variant != "all":
+        raise SystemExit("--skip-recovery cannot be combined with --variant")
+
     if args.run_purpose == "formal":
         if args.execution_mode != "agentic_live":
             raise SystemExit("--run-purpose formal requires --execution-mode agentic_live")
@@ -151,6 +162,8 @@ def normalize_run_options(args: argparse.Namespace) -> argparse.Namespace:
             raise SystemExit("--run-purpose formal cannot use --offline-fake-model")
         if args.variant != "all":
             raise SystemExit("--run-purpose formal requires --variant all")
+        if args.skip_recovery:
+            raise SystemExit("--run-purpose formal requires the recovery stage")
         if args.experiment_level != "both":
             raise SystemExit("--run-purpose formal requires --experiment-level both")
         if args.case_id:
@@ -165,6 +178,15 @@ def normalize_run_options(args: argparse.Namespace) -> argparse.Namespace:
             )
 
     return args
+
+
+def resolve_variants(args: argparse.Namespace) -> list[str]:
+    """Return the stages selected for this suite run."""
+    if getattr(args, "skip_recovery", False):
+        return ["baseline", "risk"]
+    if args.variant == "all":
+        return ["baseline", "risk", "recovery"]
+    return [args.variant]
 
 
 def select_cases(args: argparse.Namespace, cases: dict[str, Any]) -> list[Any]:
@@ -280,6 +302,7 @@ def save_results(
         "run_purpose": run_purpose,
         "execution_mode": execution_mode,
         "variants": variants,
+        "recovery_executed": "recovery" in variants,
         "generated_at": datetime.now().isoformat(),
         "formal_score_eligible": formal_eligible,
         "formal_watermark": watermark if formal_eligible else None,
@@ -292,6 +315,10 @@ def save_results(
         ),
         "offline_fake_model": offline,
         "total": len(results),
+        "run_aborted": run_manifest.get("run_aborted"),
+        "planned_result_total": run_manifest.get("planned_result_total"),
+        "completed_result_total": run_manifest.get("completed_result_total"),
+        "missing_result_total": run_manifest.get("missing_result_total"),
         "paired_unit_total": len(paired_results),
         "paired_unit_eligible": sum(
             pair.formal_aggregate_eligible for pair in paired_results
@@ -314,10 +341,13 @@ def build_run_manifest(
     planned_order: list[str] | None = None,
 ) -> dict[str, Any]:
     cases = CaseLoader(DATASET).load_all()
+    selected_variants = resolve_variants(args)
     resolved_config = {
         "execution_mode": args.execution_mode,
         "run_purpose": args.run_purpose,
         "variant": args.variant,
+        "selected_variants": selected_variants,
+        "recovery_executed": "recovery" in selected_variants,
         "repeat_count": args.repeat_count,
         "experiment_level": getattr(args, "experiment_level", "both"),
         "provider_seed": None,
@@ -332,10 +362,36 @@ def build_run_manifest(
         split_cases(cases),
     )
     manifest.update(_model_identity_manifest())
+    selected_case_ids = [
+        case_id for case_id in (planned_order or sorted(cases))
+        if case_id in cases
+    ]
+    manifest["tested_model_request_config_by_case"] = {
+        case_id: {
+            "temperature": cases[case_id].tested_model_config.temperature,
+            "top_p": cases[case_id].tested_model_config.top_p,
+            "max_completion_tokens": (
+                cases[case_id].tested_model_config.max_output_tokens
+            ),
+            "timeout": (
+                cases[case_id].execution_config.request_timeout_seconds
+            ),
+            "retry_count": (
+                cases[case_id].execution_config.max_api_retries + 1
+            ),
+            "retry_delay": (
+                cases[case_id].execution_config.retry_backoff_seconds
+            ),
+        }
+        for case_id in selected_case_ids
+    }
     manifest["model_config_hash"] = _json_hash({
         "resolved_execution_config": resolved_config,
         "tested_model_identity": manifest["tested_model_identity"],
         "judge_model_identity": manifest["judge_model_identity"],
+        "tested_model_request_config_by_case": manifest[
+            "tested_model_request_config_by_case"
+        ],
     })
     formal_case_ids = list(manifest["dataset_split"]["formal_evaluation"])
     formal_order = [
@@ -374,19 +430,48 @@ def _model_identity_manifest() -> dict[str, Any]:
     """Record public model identities and sampling settings without secrets."""
     from src.llm.config import get_agent_llm_config, get_judge_llm_config
 
-    def identity(config: Any) -> dict[str, Any]:
+    def identity(
+        config: Any,
+        *,
+        effective_token_field: str,
+        effective_temperature_field: str,
+    ) -> dict[str, Any]:
         endpoint = str(getattr(config, "base_url", "") or "provider-default")
         return {
             "provider": str(getattr(config, "provider", "")),
             "model": str(getattr(config, "model", "")),
             "endpoint_hash": hashlib.sha256(endpoint.encode()).hexdigest(),
-            "temperature": float(getattr(config, "temperature", 0.0)),
-            "max_tokens": int(getattr(config, "max_tokens", 0)),
+            "temperature": float(
+                getattr(config, effective_temperature_field, 0.0)
+            ),
+            "max_completion_tokens": int(
+                getattr(config, effective_token_field, 0)
+            ),
+            "context_window_tokens": int(
+                getattr(config, "context_window_tokens", 0)
+            ),
+            "model_max_completion_tokens": int(
+                getattr(config, "model_max_completion_tokens", 0)
+            ),
         }
 
+    tested_identity = identity(
+            get_agent_llm_config(),
+            effective_token_field="max_completion_tokens",
+            effective_temperature_field="temperature",
+        )
+    tested_identity["sampling_settings_scope"] = (
+        "default_only; actual case requests are recorded separately"
+    )
+    judge_identity = identity(
+            get_judge_llm_config(),
+            effective_token_field="judge_max_completion_tokens",
+            effective_temperature_field="judge_temperature",
+        )
+    judge_identity["sampling_settings_scope"] = "effective_judge_request"
     return {
-        "tested_model_identity": identity(get_agent_llm_config()),
-        "judge_model_identity": identity(get_judge_llm_config()),
+        "tested_model_identity": tested_identity,
+        "judge_model_identity": judge_identity,
     }
 
 
@@ -506,7 +591,7 @@ async def run(args: argparse.Namespace) -> int:
                 f"WARNING: v2 Judge unavailable ({exc}); results will remain INVALID.",
                 file=sys.stderr,
             )
-    variants = ["baseline", "risk", "recovery"] if args.variant == "all" else [args.variant]
+    variants = resolve_variants(args)
     try:
         validate_formal_run(
             FormalRunConfig(
@@ -535,6 +620,7 @@ async def run(args: argparse.Namespace) -> int:
         experiment_level="key_node",
     )
     await runner.open()
+    run_aborted: dict[str, Any] | None = None
     try:
         results: list[ThreeLayerResult] = []
         for case in selected:
@@ -548,23 +634,82 @@ async def run(args: argparse.Namespace) -> int:
             )
             for level in levels:
                 runner.experiment_level = level
-                results.extend(await runner.run_case(
+                case_results = await runner.run_case(
                     case,
                     variants=variants,
                     repeat_count=args.repeat_count,
-                ))
+                )
+                results.extend(case_results)
+                invalid_result = next(
+                    (
+                        result for result in case_results
+                        if result.status == "INVALID"
+                    ),
+                    None,
+                )
+                if invalid_result is not None and not offline:
+                    run_aborted = {
+                        "case_id": invalid_result.case_id,
+                        "variant": invalid_result.variant,
+                        "run_id": invalid_result.run_id,
+                        "failure_code": (
+                            invalid_result.model_behavior.get("failure_code")
+                            or invalid_result.judge_verdict.get("status")
+                            or "INVALID"
+                        ),
+                        "reason": (
+                            invalid_result.model_behavior.get("error")
+                            or invalid_result.judge_verdict.get("reason")
+                            or "The live evaluation stage was invalid"
+                        ),
+                    }
+                    break
+            if run_aborted is not None:
+                break
     finally:
         await runner.close()
 
+    planned_result_total = sum(
+        (
+            2
+            if case.category_code == "CON" and args.experiment_level == "both"
+            else 1
+        )
+        * len(variants)
+        * args.repeat_count
+        for case in selected
+    )
+    run_outcome = {
+        "run_aborted": run_aborted,
+        "planned_result_total": planned_result_total,
+        "completed_result_total": len(results),
+        "missing_result_total": max(0, planned_result_total - len(results)),
+    }
+    run_manifest.update(run_outcome)
+    run_manifest["actual_order"] = [
+        {
+            "run_id": result.run_id,
+            "case_id": result.case_id,
+            "variant": result.variant,
+            "experiment_level": result.experiment_level,
+        }
+        for result in results
+    ]
     trace_export = export_execution_trace(
         db_path,
         output_path.parent,
         suite_run_id=suite_run_id,
+        run_outcome=run_outcome,
     )
     run_manifest["trace_exports"] = {
         "record_count": trace_export["record_count"],
+        "run_result_count": trace_export["run_result_count"],
+        "scenario_snapshot_count": trace_export["scenario_snapshot_count"],
         "standalone_event_count": trace_export["standalone_event_count"],
         "files": trace_export["files"],
+        "complete_record_files": trace_export["complete_record_files"],
+        "process_record_files": trace_export["process_record_files"],
+        "readable_category_files": trace_export["readable_category_files"],
     }
     usage = trace_export["usage"]
     run_manifest["usage"] = {
@@ -607,15 +752,6 @@ async def run(args: argparse.Namespace) -> int:
         run_manifest["observed_tested_model_versions"] = observed_tested_versions
         run_manifest["observed_judge_model_versions"] = observed_judge_versions
     run_manifest["runtime_integrity_errors"] = runtime_integrity_errors
-    run_manifest["actual_order"] = [
-        {
-            "run_id": result.run_id,
-            "case_id": result.case_id,
-            "variant": result.variant,
-            "experiment_level": result.experiment_level,
-        }
-        for result in results
-    ]
     run_manifest["finished_at_utc"] = datetime.now(timezone.utc).isoformat()
     run_manifest["manifest_hash"] = sha256_bytes(
         json.dumps(run_manifest, ensure_ascii=False, sort_keys=True).encode()
@@ -635,10 +771,18 @@ async def run(args: argparse.Namespace) -> int:
         "suite_run_id": suite_run_id,
         "results": len(results),
         "output": str(output_path),
+        "complete_trace_jsonl": str(output_path.parent / "execution_trace.jsonl"),
+        "complete_trace_markdown": str(output_path.parent / "execution_trace.md"),
+        "complete_trace_html": str(output_path.parent / "execution_trace.html"),
         "readable_trace": str(output_path.parent / "execution_trace.md"),
         "visual_trace": str(output_path.parent / "execution_trace.html"),
+        "category_process_records": {
+            code: str(output_path.parent / relative_path)
+            for code, relative_path in trace_export["process_record_files"].items()
+        },
+        "run_aborted": run_aborted,
     }, ensure_ascii=False))
-    return 0
+    return 1 if run_aborted is not None else 0
 
 
 async def main() -> None:

@@ -25,7 +25,7 @@ from .models import (
 from .case_loader import CaseLoader
 from .context_store import AgentContextStore
 from .evidence_builder import EvidenceBuilder
-from .step_executor import AgentModelStepExecutor
+from .step_executor import AgentModelStepExecutor, StepExecutionError
 from .tools.runtime_registry import register_case_tools
 from .metric_contracts import validate_metric_contracts
 from .metric_contracts import PRIMARY_METRIC_CONTRACTS
@@ -38,6 +38,7 @@ from .evidence_consistency import (
     validate_post_judge_verdict,
     validate_pre_judge_evidence,
 )
+from .judge import objective_jud_status
 from .categories import (
     run_agency,
     run_cascade,
@@ -187,6 +188,7 @@ class AgentModelSuiteRunner:
 
         repetitions = repeat_count or case.execution_config.repeat_count
         for rep in range(repetitions):
+            abort_live_run = False
             paired_unit_id = self._paired_unit_id(case.case_id, rep)
             role_agent_bindings: dict[str, str] = {}
             role_agent_sub_ioas: dict[str, str] = {}
@@ -258,6 +260,17 @@ class AgentModelSuiteRunner:
                     )
                     results.append(result)
                     paired_variants[variant] = result
+                    if (
+                        self.execution_mode == "agentic_live"
+                        and result.status == "INVALID"
+                    ):
+                        abort_live_run = True
+                        logger.error(
+                            "Stopping live run after invalid result %s (%s)",
+                            run_id,
+                            result.judge_verdict.get("status", "INVALID"),
+                        )
+                        break
                     if variant == "risk" and self._risk_snapshot_eligible(result):
                         risk_run_id = run_id
                         risk_snapshot_id = f"snapshot-{paired_unit_id}-risk"
@@ -302,6 +315,9 @@ class AgentModelSuiteRunner:
                     results.append(invalid)
                     paired_variants[variant] = invalid
                     self._save_result_state(invalid)
+                    if self.execution_mode == "agentic_live":
+                        abort_live_run = True
+                        break
 
             paired = self._build_paired_result(
                 case=case,
@@ -324,6 +340,9 @@ class AgentModelSuiteRunner:
                     "formal_aggregate_eligible": paired.formal_aggregate_eligible,
                 }
                 self._save_result_state(result)
+
+            if abort_live_run:
+                break
 
         self._results.extend(results)
         return results
@@ -458,7 +477,7 @@ class AgentModelSuiteRunner:
         executor = AgentModelStepExecutor(
             self.environment,
             self._context_store,
-            execution_mode="agentic" if self.fake_model else "agentic_live",
+            execution_mode=self.execution_mode,
             history_run_id=history_run_id,
             experiment_level=self.experiment_level,
             role_agent_bindings=role_agent_bindings,
@@ -466,7 +485,50 @@ class AgentModelSuiteRunner:
         )
         executor.services = services
         evidence = EvidenceBuilder()
-        result = await runner(case, variant, run_id, executor, evidence)
+        execution_error: StepExecutionError | None = None
+        try:
+            result = await runner(case, variant, run_id, executor, evidence)
+        except StepExecutionError as exc:
+            # A controlled step failure (e.g. CAS/RUM propagation missing a
+            # required claim) is a measured INVALID outcome, not an unexpected
+            # crash. Preserve the original failure_code and message, then
+            # continue through the shared evidence-collection path below so
+            # executed steps still produce a Judge-addressable evidence bundle.
+            logger.warning("Step execution failed for %s: %s", run_id, exc)
+            execution_error = exc
+            result = ThreeLayerResult(
+                run_id=run_id,
+                case_id=case.case_id,
+                variant=variant,
+                risk_type=case.risk_type,
+                experiment_level=self.experiment_level,
+                paired_unit_id=paired_unit_id,
+                scenario_state_id=scenario_state_id,
+                parent_snapshot_id=parent_snapshot_id,
+                status="INVALID",
+                model_behavior={
+                    "error": str(exc),
+                    "failure_code": exc.failure_code,
+                },
+                judge_verdict={
+                    "status": exc.failure_code,
+                    "reason": str(exc),
+                },
+            )
+        unfinished_auxiliary_runs = [
+            state
+            for state in self._context_store.list_run_states(f"{run_id}-")
+            if state.get("status") == "running"
+            or state.get("stored_status") == "running"
+        ]
+        if unfinished_auxiliary_runs:
+            run_ids = ", ".join(
+                str(state.get("run_id", ""))
+                for state in unfinished_auxiliary_runs
+            )
+            raise RuntimeError(
+                f"Auxiliary evaluation runs did not finish: {run_ids}"
+            )
         result.experiment_level = self.experiment_level
         tool_state: dict[str, Any] = {}
         board = services.get("discussion_board")
@@ -480,14 +542,32 @@ class AgentModelSuiteRunner:
         result.paired_unit_id = paired_unit_id
         result.scenario_state_id = scenario_state_id
         result.parent_snapshot_id = parent_snapshot_id
-        if variant == "recovery" and parent_snapshot_id is not None:
+        if (
+            execution_error is None
+            and variant == "recovery"
+            and parent_snapshot_id is not None
+        ):
             self._apply_controlled_recovery_transition(
                 case=case,
                 result=result,
                 parent_snapshot_id=parent_snapshot_id,
                 repeat_index=repeat_index,
             )
+        semantic_consistency_issues: list[dict[str, Any]] = []
         for observation in executor.observations:
+            observation_errors = observation.get(
+                "semantic_consistency_errors", []
+            )
+            if isinstance(observation_errors, list):
+                semantic_consistency_issues.extend(
+                    {
+                        "role_id": str(observation.get("role_id", "")),
+                        "step_index": int(observation.get("step_index", 0)),
+                        "error": str(error),
+                    }
+                    for error in observation_errors
+                    if str(error).strip()
+                )
             evidence.record_agent_call(
                 run_id=run_id,
                 case_id=case.case_id,
@@ -523,6 +603,17 @@ class AgentModelSuiteRunner:
                     result=tool_call.get("result", {}),
                     caller_role=str(observation.get("role_id", "")),
                 )
+        if semantic_consistency_issues:
+            result.model_behavior = {
+                **result.model_behavior,
+                "semantic_consistency_errors": semantic_consistency_issues,
+            }
+            result.objective_metrics = {
+                **result.objective_metrics,
+                "semantic_consistency_error_count": len(
+                    semantic_consistency_issues
+                ),
+            }
         events = self._context_store.list_events(run_id)
         auxiliary_run_ids = []
         continued_control = result.system_response.get(
@@ -563,6 +654,14 @@ class AgentModelSuiteRunner:
                 "event_features": FeatureExtractor(events).extract(),
             }
         evidence_bundle = evidence.build_bundle(result)
+
+        if execution_error is not None:
+            # INVALID evidence bundles contain only real inputs, raw outputs,
+            # errors and recorded events. The Judge is not called and
+            # judge_audit stays empty — nothing is fabricated.
+            self._persist_evidence_package(result, evidence_bundle)
+            self._save_result_state(result)
+            return result
 
         metric_errors = validate_metric_contracts(
             case.category_code, result.objective_metrics
@@ -616,6 +715,21 @@ class AgentModelSuiteRunner:
                     verdict = verdict.model_dump(mode="json")
                 if not isinstance(verdict, dict):
                     raise RuntimeError("Judge callback must return a verdict mapping")
+                objective_status = objective_jud_status(result)
+                if objective_status is not None:
+                    proposed_status = verdict.get("status")
+                    if proposed_status != objective_status:
+                        verdict = {
+                            **verdict,
+                            "semantic_judge_status": proposed_status,
+                            "reason": (
+                                f"Recorded JUD metrics require {objective_status}; "
+                                f"the semantic Judge proposed {proposed_status}. "
+                                + str(verdict.get("reason", ""))
+                            ),
+                            "status": objective_status,
+                        }
+                    verdict["status_source"] = "recorded_jud_metrics"
                 judge_errors = validate_post_judge_verdict(case, result, verdict)
                 if judge_errors:
                     result.status = "INVALID"

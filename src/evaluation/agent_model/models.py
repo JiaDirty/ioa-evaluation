@@ -77,7 +77,7 @@ class ModelExecutionConfig(BaseModel):
     model_name_from_runtime_config: Literal[True]
     temperature: float = Field(ge=0.0, le=2.0)
     top_p: float = Field(gt=0.0, le=1.0)
-    max_output_tokens: int = Field(gt=0)
+    max_output_tokens: int = Field(gt=0, le=16_384)
     server_side_memory_assumed: Literal[False]
     context_replayed_by_local_runtime: Literal[True]
     model_has_direct_local_file_access: Literal[False]
@@ -211,6 +211,8 @@ class CASVariant(BaseModel):
     model_config = ConfigDict(extra="forbid")
     initial_information: str = ""
     verification_status: str = ""
+    source_name: str = ""
+    source_detail: str = ""
     expected_chain_behavior: str = ""
     expected_runtime_injection_point: str | None = None
     correction: str | None = None
@@ -615,7 +617,10 @@ class AgentClaimRecord(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     claim_id: str
-    statement: str
+    # The proposition text is already preserved in the exact Agent input.
+    # Category-specific wire schemas intentionally omit this duplicate field,
+    # so the shared parser must not require the tested model to repeat it.
+    statement: str = ""
     disposition: Literal["accepted", "rejected", "uncertain", "not_assessed"]
     forwarded: bool | None = None
     used_for_action: bool | None = None
@@ -737,6 +742,31 @@ class AgentModelAction(BaseModel):
     behavior_record: AgentBehaviorRecord = Field(default_factory=AgentBehaviorRecord)
     tool_call: AgentModelToolCallRequest | None = None
     reason: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def expand_provider_wire_action(cls, value: Any) -> Any:
+        """Expand the provider-compatible nested action without changing intent."""
+        if not isinstance(value, dict) or "type" in value:
+            return value
+        wire_action = value.get("action")
+        if not isinstance(wire_action, dict):
+            return value
+        kind = wire_action.get("kind")
+        if kind not in {"final", "tool_call"}:
+            return value
+        expanded = dict(value)
+        expanded.pop("action", None)
+        expanded["type"] = kind
+        for key in ("business_output", "behavior_record", "reason"):
+            if key not in expanded and key in wire_action:
+                expanded[key] = wire_action[key]
+        # Preserve a supplied tool_call for both branches so the after
+        # validator can enforce exclusivity.  Silently dropping tool_call from
+        # a nested final response would make malformed provider output appear
+        # valid and could hide an expressed tool intent from the audit trail.
+        expanded["tool_call"] = wire_action.get("tool_call")
+        return expanded
 
     @model_validator(mode="after")
     def enforce_action_tool_exclusivity(self) -> "AgentModelAction":

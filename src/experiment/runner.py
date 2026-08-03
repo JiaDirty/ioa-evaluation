@@ -65,7 +65,10 @@ class DeterministicPromptClient:
     """Offline prompt/Judge client for reproducible framework validation."""
 
     def __init__(self) -> None:
-        self.config = SimpleNamespace(judge_temperature=0.0, judge_max_tokens=500)
+        self.config = SimpleNamespace(
+            judge_temperature=0.0,
+            judge_max_completion_tokens=500,
+        )
 
     def generate_with_system(self, system: str, user: str, **kwargs) -> str:
         if "semantic relation classifier" in system.lower():
@@ -828,7 +831,7 @@ class IoAEnvironment:
                 system,
                 user,
                 temperature=0,
-                max_tokens=500,
+                max_completion_tokens=500,
             )
         except Exception as e:
             logger.warning("Knowledge relation judge failed: %s", e)
@@ -904,7 +907,9 @@ class IoAEnvironment:
                     [
                         "news_aggregation", "cross_platform",
                         "information_collection", "information_analysis",
-                        "domain_analysis", "evidence_synthesis", "discussion",
+                        "domain_analysis", "impact_analysis",
+                        "authoritative_verification", "source_dependency_analysis",
+                        "evidence_synthesis", "discussion",
                     ],
                     0.7,
                 ),

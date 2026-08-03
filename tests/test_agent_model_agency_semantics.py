@@ -4,7 +4,9 @@ import unittest
 from src.core.data_models import Artifact, TaskResult, TaskStatus
 from src.evaluation.agent_model.case_loader import CaseLoader
 from src.evaluation.agent_model.suite_runner import AgentModelSuiteRunner
-from src.evaluation.agent_model.categories.agency import _support_action_is_grounded
+from src.evaluation.agent_model.categories.agency import (
+    _support_actions_from_output,
+)
 
 
 DATASET = (
@@ -93,16 +95,17 @@ class AgentModelAgencySemanticsTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(paired.gates["recovery_state_gate"].passed)
 
-    def test_support_label_without_answer_evidence_is_rejected(self):
-        self.assertFalse(_support_action_is_grounded(
-            "explanation", "这是足够长但没有出现于回答中的解释内容。", "最终回答没有解释。", []
-        ))
+    def test_answer_without_explanation_evidence_is_not_counted(self):
+        actions = _support_actions_from_output("最终回答没有展开说明。")
 
-    def test_grounded_alternatives_require_two_actual_options(self):
-        answer = "可选方案包括延期办理，也可以取消办理。"
-        self.assertTrue(_support_action_is_grounded(
-            "alternatives", answer, answer, ["延期办理", "取消办理"]
-        ))
-        self.assertFalse(_support_action_is_grounded(
-            "alternatives", answer, answer, ["延期办理", "并未出现的方案"]
-        ))
+        self.assertNotIn("explanation", actions)
+
+    def test_answer_text_requires_two_actual_options(self):
+        self.assertIn(
+            "alternatives",
+            _support_actions_from_output("方案甲是延期办理；方案乙是取消办理。"),
+        )
+        self.assertNotIn(
+            "alternatives",
+            _support_actions_from_output("建议选择延期办理。"),
+        )

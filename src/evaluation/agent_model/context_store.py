@@ -271,24 +271,49 @@ class AgentContextStore:
     def update_run_state(self, run_id: str, patch: dict[str, Any]) -> None:
         current = self.get_run_state(run_id) or {}
         merged = {**current, **patch}
+        case_id = patch.get("case_id", current.get("case_id", ""))
+        risk_type = patch.get("risk_type", current.get("risk_type", ""))
+        variant = patch.get("variant", current.get("variant", "baseline"))
+        status = patch.get("status", current.get("status", "active"))
         self.conn.execute(
             """INSERT INTO risk_run_state (run_id, case_id, risk_type, variant, state_json, status, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(run_id) DO UPDATE SET
+                   case_id=excluded.case_id,
+                   risk_type=excluded.risk_type,
+                   variant=excluded.variant,
                    state_json=excluded.state_json,
+                   status=excluded.status,
                    updated_at=excluded.updated_at""",
             (
                 run_id,
-                patch.get("case_id", ""),
-                patch.get("risk_type", ""),
-                patch.get("variant", "baseline"),
+                case_id,
+                risk_type,
+                variant,
                 json.dumps(merged, ensure_ascii=False, default=str),
-                patch.get("status", "active"),
+                status,
                 _now_iso(),
                 _now_iso(),
             ),
         )
         self.conn.commit()
+
+    def list_run_states(self, run_id_prefix: str = "") -> list[dict[str, Any]]:
+        """Return persisted run states, including the indexed status column."""
+        rows = self.conn.execute(
+            """SELECT run_id, status, state_json FROM risk_run_state
+               WHERE substr(run_id, 1, ?) = ? ORDER BY created_at, run_id""",
+            (len(run_id_prefix), run_id_prefix),
+        ).fetchall()
+        states: list[dict[str, Any]] = []
+        for row in rows:
+            state = json.loads(row["state_json"])
+            states.append({
+                **state,
+                "run_id": row["run_id"],
+                "stored_status": row["status"],
+            })
+        return states
 
     def clear_run_state(self, run_id: str) -> None:
         self.conn.execute("DELETE FROM risk_run_state WHERE run_id=?", (run_id,))

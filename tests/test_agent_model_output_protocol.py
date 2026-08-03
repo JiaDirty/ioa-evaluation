@@ -2,10 +2,14 @@ import json
 import unittest
 from pathlib import Path
 
-from src.evaluation.agent_model.behavior_parser import BehaviorParser
+from src.evaluation.agent_model.behavior_parser import (
+    BehaviorParser,
+    semantic_consistency_errors,
+)
 from src.evaluation.agent_model.case_loader import CaseLoader
 from src.evaluation.agent_model.context_builder import AgentContextBuilder
 from src.evaluation.agent_model.models import AgentModelAction
+from src.evaluation.agent_model.prompt_policy import visible_action_schema
 from src.runtime.ag2_runtime import _convert_agent_model_action
 
 
@@ -21,6 +25,81 @@ class AgentModelOutputProtocolTest(unittest.TestCase):
         schema_text = json.dumps(AgentModelAction.model_json_schema())
 
         self.assertNotIn('"additionalProperties": true', schema_text)
+
+    def test_final_only_schema_omits_unreachable_tool_definitions(self):
+        for category in ("CAS", "CON", "RUM", "NOR", "INC", "JUD", "DIS", "AGE"):
+            with self.subTest(category=category):
+                definitions = visible_action_schema(category, []).get("$defs", {})
+                self.assertNotIn("AgentModelToolArguments", definitions)
+                self.assertNotIn("AgentModelToolCallRequest", definitions)
+
+    def test_provider_nested_action_is_expanded_without_changing_intent(self):
+        final = AgentModelAction.model_validate({
+            "action": {
+                "kind": "final",
+                "business_output": {"answer": "keep"},
+                "behavior_record": {},
+                "reason": "done",
+            },
+        })
+        tool = AgentModelAction.model_validate({
+            "action": {
+                "kind": "tool_call",
+                "tool_call": {
+                    "tool_id": "authoritative_fact_lookup",
+                    "arguments": {"claim_id": "信息-02"},
+                    "reason": "verify",
+                },
+            },
+        })
+
+        self.assertEqual(final.type, "final")
+        self.assertEqual(final.business_output.answer, "keep")
+        self.assertIsNone(final.tool_call)
+        self.assertEqual(tool.type, "tool_call")
+        self.assertEqual(tool.tool_call.tool_id, "authoritative_fact_lookup")
+        self.assertEqual(tool.business_output.answer, "")
+
+    def test_visible_cas_final_without_hidden_statement_is_parseable(self):
+        schema = visible_action_schema(
+            "CAS",
+            [],
+            required_claim_id="信息-01",
+            require_forward_decision=True,
+        )
+        claim_schema = schema["$defs"]["AgentClaimRecord"]
+        self.assertNotIn("statement", claim_schema["properties"])
+        self.assertNotIn("statement", claim_schema["required"])
+
+        action = AgentModelAction.model_validate({
+            "action": {
+                "kind": "final",
+                "business_output": {
+                    "answer": "机场当前正常运行。",
+                    "decision": "记录该信息。",
+                    "confidence": 1.0,
+                    "limitations": [],
+                },
+                "behavior_record": {
+                    "claims": [{
+                        "claim_id": "信息-01",
+                        "disposition": "accepted",
+                        "forwarded": False,
+                        "used_for_action": True,
+                        "confidence": 1.0,
+                    }],
+                    "sources": [{
+                        "source_id": "权威来源-01",
+                        "source_label": "机场官方接口",
+                        "impact": "支持机场运行状态判断。",
+                    }],
+                    "notes": [],
+                },
+                "reason": "依据工具结果作出判断。",
+            },
+        })
+
+        self.assertEqual(action.behavior_record.claims[0].statement, "")
 
     def test_unused_strict_tool_arguments_are_not_sent_to_gateway(self):
         converted = _convert_agent_model_action({
@@ -108,6 +187,26 @@ class AgentModelOutputProtocolTest(unittest.TestCase):
         self.assertIsNotNone(record_error)
         self.assertEqual(record.claims, [])
 
+    def test_nested_final_action_must_not_embed_tool_call(self):
+        raw = {
+            "action": {
+                "kind": "final",
+                "business_output": {"answer": "keep"},
+                "behavior_record": {},
+                "reason": "done",
+                "tool_call": {
+                    "tool_id": "authoritative_fact_lookup",
+                    "arguments": {"claim_id": "claim-1"},
+                    "reason": "lookup",
+                },
+            },
+        }
+
+        action, error = BehaviorParser().try_parse_action(raw)
+
+        self.assertIsNone(action)
+        self.assertIn("must not include tool_call", error)
+
     def test_tool_call_action_requires_tool_call_object(self):
         raw = {
             "type": "tool_call",
@@ -148,14 +247,67 @@ class AgentModelOutputProtocolTest(unittest.TestCase):
             "claim-cas-01",
         )
 
-    def test_context_builder_uses_agent_model_action_schema(self):
+    def test_context_builder_uses_category_specific_final_schema(self):
         case = CaseLoader(DATASET).load_all()["CAS-01"]
         prompt = AgentContextBuilder(case).build_prompt(
             role_id="synthesis",
             task_text="controlled task",
         )
 
-        self.assertIn("AgentModelAction", prompt)
         self.assertIn('"business_output"', prompt)
-        self.assertIn('"tool_call"', prompt)
+        self.assertNotIn('"tool_call"', prompt)
+        self.assertNotIn('"human_confirmation_required"', prompt)
         self.assertNotIn('"action_type"', prompt)
+
+    def test_semantic_consistency_reports_only_internal_contradictions(self):
+        action = {
+            "type": "final",
+            "business_output": {
+                "answer": "接受该说法，继续传递，并用于最终业务结论；已经核验。",
+                "decision": "传递",
+                "confidence": 0.7,
+                "limitations": [],
+            },
+            "reason": "把信息传给下一角色，并据此采取行动。",
+            "behavior_record": {
+                "claims": [{
+                    "claim_id": "claim-1",
+                    "statement": "待判断信息",
+                    "disposition": "accepted",
+                    "forwarded": False,
+                    "used_for_action": False,
+                    "verification_status": "unverified",
+                }],
+            },
+        }
+
+        errors = semantic_consistency_errors(action, "claim-1")
+
+        self.assertEqual(len(errors), 3)
+        self.assertTrue(any("传递决定" in item for item in errors))
+        self.assertTrue(any("采用情况" in item for item in errors))
+        self.assertTrue(any("核验状态" in item for item in errors))
+
+    def test_semantic_consistency_does_not_prefer_a_safe_decision(self):
+        action = {
+            "type": "final",
+            "business_output": {
+                "answer": "不接受该说法，不传递，也不用于最终业务结论；尚未核验。",
+                "decision": "不传递",
+                "confidence": 0.7,
+                "limitations": [],
+            },
+            "reason": "不把信息传给下一角色，不据此采取行动。",
+            "behavior_record": {
+                "claims": [{
+                    "claim_id": "claim-1",
+                    "statement": "待判断信息",
+                    "disposition": "rejected",
+                    "forwarded": False,
+                    "used_for_action": False,
+                    "verification_status": "unverified",
+                }],
+            },
+        }
+
+        self.assertEqual(semantic_consistency_errors(action, "claim-1"), [])

@@ -79,8 +79,8 @@ class _RecoveryCorrectionEnvironment(_ProtocolEnvironment):
         active = task.payload.get("public_state", {}).get(
             "active_information", {}
         )
-        if active.get("related_claim_id"):
-            self.corrects_claim_id = active["related_claim_id"]
+        if active.get("updates_information_id"):
+            self.corrects_claim_id = active["updates_information_id"]
         claim = result.output["behavior_record"]["claims"][0]
         if variant in {"risk", "recovery"}:
             claim.update({
