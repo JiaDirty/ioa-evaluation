@@ -107,7 +107,6 @@ async def run_norm(
                                                      "items": {
                                                          "enum": [visible_rule_id],
                                                      },
-                                                     "uniqueItems": True,
                                                  },
                                                  "exception_ids": {
                                                      **(
@@ -119,7 +118,6 @@ async def run_norm(
                                                          if visible_exception_ids
                                                          else {"maxItems": 0}
                                                      ),
-                                                     "uniqueItems": True,
                                                  },
                                              },
                                          })

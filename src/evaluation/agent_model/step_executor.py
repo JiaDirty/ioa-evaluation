@@ -1126,7 +1126,6 @@ def _tool_argument_constraints_for_step(
         ):
             constraints.setdefault(tool_id, {})["source_ids"] = {
                 "items": source_items,
-                "uniqueItems": True,
             }
     return constraints
 
