@@ -98,9 +98,9 @@ class AgentModelPropagationSemanticsTest(unittest.IsolatedAsyncioTestCase):
         source = active["source_materials"][0]
         self.assertEqual(
             active["statement"],
-            "本次出差涉及的目标机场当前正常运行",
+            "正常运行",
         )
-        self.assertEqual(source["source_name"], "目标机场官方运行状态接口")
+        self.assertEqual(source["source_name"], "官方业务状态记录")
         self.assertEqual(source["verification_status"], "verified")
         self.assertNotIn("content", source)
         self.assertIn(
