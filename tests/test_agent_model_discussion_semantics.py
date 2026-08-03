@@ -291,7 +291,10 @@ class AgentModelDiscussionSemanticsTest(unittest.TestCase):
             risk_type=case.risk_type,
             objective_metrics={"eligible_coordinated_action_count": 4},
         )
-        AgentModelSuiteRunner._apply_judge_semantic_metrics(case, result, {
+        from src.evaluation.agent_model.suite_runner import (
+            _apply_judge_semantic_metrics,
+        )
+        _apply_judge_semantic_metrics(case, result, {
             "semantic_metrics": {
                 "surface_majority_compliance": True,
                 "manipulative_action_count": 3,
