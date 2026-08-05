@@ -1515,7 +1515,7 @@ P0 决定测评是否真实运行；P1 决定正式结果是否适合论文报�
 涉及文件：
 
 - `src/evaluation/agent_model/metric_contracts.py`（新增）
-- `docs/agent_model_v2_validity_contract.md`（新增）
+- `docs/02_八项Agent模型安全测评/Agent模型八项测评有效性规范.md`（新增）
 - `tests/test_agent_model_construct_validity.py`（新增）
 
 验收：
@@ -1783,7 +1783,7 @@ git diff --check
 可以直接设置：
 
 ```text
-按 docs/agent_model_v2_strict_refactor_execution_plan.md 执行 IOA Agent 模型八项安全测评的论文级严格改造：完成 prompt isolation、统一输出协议、事件日志与指标派生、工具公开 ID、paired baseline/risk/recovery gate、baseline 独立与 risk/recovery 状态分支、execution config 核验、工具 case 隔离、稳定 role binding、taint 防泄漏、context projection、append-only 幂等事件日志、INC 分支语义、FormalRunGuard，并实现 DIS/INC/AGE/CAS/RUM/NOR/JUD/CON 八类核心闭环、P1 正式结果要求和语义测试；不新建分支，不运行付费模型实验。
+按 `docs/02_八项Agent模型安全测评/Agent模型八项测评严格改造执行记录.md` 执行 IOA Agent 模型八项安全测评的论文级严格改造：完成 prompt isolation、统一输出协议、事件日志与指标派生、工具公开 ID、paired baseline/risk/recovery gate、baseline 独立与 risk/recovery 状态分支、execution config 核验、工具 case 隔离、稳定 role binding、taint 防泄漏、context projection、append-only 幂等事件日志、INC 分支语义、FormalRunGuard，并实现 DIS/INC/AGE/CAS/RUM/NOR/JUD/CON 八类核心闭环、P1 正式结果要求和语义测试；不新建分支，不运行付费模型实验。
 ```
 
 ## 13. 历史代码执行进度记录（已被第 14 节取代）
@@ -1881,12 +1881,12 @@ git diff --check
 - JUD 使用受控 UserSimulator、scope/expiry/state-bound token 和 Gateway 高影响动作阻断；20 条用例的恢复阶段均提供具体偏好值，只有真实确认工具事件才计为确认。
 - DIS 使用同一 DiscussionBoard 状态、真实 post/reply/quote/like/report/query 事件和 recovery 综合轮。
 - AGE 使用 action/permission 工具与 UserStateEvent，核心状态变化不采信模型自报。
-- 八类 primary metric contract、三轴报告合同、零分母 `null` 规则和构念边界已固定于 `docs/agent_model_v2_validity_contract.md`。
+- 八类 primary metric contract、三轴报告合同、零分母 `null` 规则和构念边界已固定于 `docs/02_八项Agent模型安全测评/Agent模型八项测评有效性规范.md`。
 - category summary 包含分布、bootstrap CI、invalid rate、failure code 和 sensitivity note。
 - 160 条数据全部标记为开发过程已接触的预注册测评集，未接触保留集为 0；四项确定性检查只验证事件与特征提取管线，不冒充真实模型对照。
 - 固定 seed 的类别交错 scheduler、planned/actual order、provider version drift 检查已实现。
 - 独立 `run_manifest.json` 包含 Git/diff、dataset/case、code/package、环境、模型配置、prompt/tool/fixture/topology、split/order、时间和 usage/runtime 字段；不同 manifest family 禁止合并。
-- 每次运行保存完整模型请求、原始响应、解析结果、实际 Agent、工具调用、产物、状态事件、逐次重试、耗时和用量；自动导出 `execution_trace.jsonl`、中文 `execution_trace.md`、可搜索折叠的 `execution_trace.html` 与 `trace_summary.json`，具体见 `docs/agent_model_trace_guide.md`。
+- 每次运行保存完整模型请求、原始响应、解析结果、实际 Agent、工具调用、产物、状态事件、逐次重试、耗时和用量；自动导出 `execution_trace.jsonl`、中文 `execution_trace.md`、可搜索折叠的 `execution_trace.html` 与 `trace_summary.json`，具体见 `docs/02_八项Agent模型安全测评/Agent模型安全测评记录说明.md`。
 - formal 在 CLI 和库层 fail-closed：必须 live、三 arm、CON 双层、完整 manifest、四项 controls、独立盲评 Judge 校准报告且 `Cohen's kappa >= 0.8`；合格结果才生成 formal watermark。
 
 ### 本地验收证据

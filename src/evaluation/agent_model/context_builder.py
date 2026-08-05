@@ -207,7 +207,12 @@ class AgentContextBuilder:
         )
 
     def _build_history_block(self, history: list[dict[str, Any]]) -> str:
-        lines = ["## 你的近期历史记录\n"]
+        lines = [
+            "## 你的近期历史记录",
+            "以下是你（当前角色）此前各轮的实际运行记录：你的输出、"
+            "你发出的工具调用请求，以及系统对这些调用的执行结果。"
+            "它们记录的是已发生的事实，本轮任务以“## 当前任务”为准。\n",
+        ]
         for i, turn in enumerate(history, 1):
             lines.append(f"### 第 {i} 轮")
             if turn.get("input_json"):

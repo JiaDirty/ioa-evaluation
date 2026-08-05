@@ -111,6 +111,9 @@ def _build_model_prompt(invocation: AgentInvocation) -> str:
         sections.extend([
             "",
             "## 近期历史",
+            "以下是你（当前角色）此前各轮的实际运行记录：你的输出、"
+            "你发出的工具调用请求，以及系统对这些调用的执行结果。"
+            "它们记录的是已发生的事实，本轮任务以“## 当前任务”为准。",
             _json_text(visible_turn_history),
         ])
     role_state = invocation.context.get("role_state", {})

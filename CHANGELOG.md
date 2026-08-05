@@ -1,19 +1,19 @@
-# Changelog
+# 版本更新记录
 
-## Unreleased
+## 尚未发布
 
-- Added unified event/span observability with redacted payload persistence and SQLite replay.
-- Added dynamic system, execution, and interaction graph APIs plus resumable task/experiment WebSockets.
-- Added the responsive IoA runtime console for live progress and step-level input/output inspection.
+- 增加统一的事件和步骤记录，保存前对敏感内容脱敏，并支持从 SQLite 回放。
+- 增加动态系统图、执行图、交互图接口，以及可恢复的任务和实验 WebSocket 连接。
+- 增加响应式 IoA 运行控制台，可查看实时进度和每一步输入输出。
 
 ## v1.1.0
 
-- Added MCP server registry, JSON-RPC HTTP MCP client, and MCP ToolGateway provider.
-- Added provider-aware ToolGateway with local and MCP tool dispatch.
-- Added ToolExecutionContext injection for AgentRuntime tool calls.
-- Added SQLite-backed Task, Event, ToolCall, and Artifact stores.
-- Added in-process background task runner with queued/running/cancel/retry states.
-- Added orchestration ExecutionGraph models and task execution graph API.
-- Added tool input schema validation and sensitive argument redaction.
-- Added MCP registry, execution graph, live events, tool history, and retry/cancel frontend views.
-- Added production hardening docs for MCP integration and task lifecycle.
+- 增加 MCP 服务注册、JSON-RPC HTTP 客户端和 MCP ToolGateway 提供器。
+- ToolGateway 可以根据工具来源分发本地工具和 MCP 工具。
+- AgentRuntime 调用工具时会注入 `ToolExecutionContext`。
+- 增加基于 SQLite 的任务、事件、工具调用和产物存储。
+- 增加进程内后台任务执行器，支持排队、运行、取消和重试状态。
+- 增加 `ExecutionGraph` 执行图数据结构和查询接口。
+- 增加工具输入结构检查和敏感参数脱敏。
+- 前端增加 MCP 注册、执行图、实时事件、工具历史、重试和取消页面。
+- 增加 MCP 集成和任务生命周期的运行说明。

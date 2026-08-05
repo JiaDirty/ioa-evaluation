@@ -1027,7 +1027,7 @@ class IoAEnvironment:
     async def setup_from_scenario(self, scenario: Scenario) -> None:
         """从 Scenario 对象初始化完整 IoA 环境。
 
-        实现 docs/data_schema.md 4.1 节定义的数据-框架耦合：
+        实现 docs/05_数据与测评规范/数据结构说明.md 4.1 节定义的数据-框架耦合：
             创建 Sub-IoA → 注册 Agent → 设置拓扑 → 预置知识库
         """
         logger.info("Setting up environment from scenario: %s", scenario.scenario_id)
