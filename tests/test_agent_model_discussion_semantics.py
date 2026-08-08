@@ -22,6 +22,7 @@ from src.evaluation.agent_model.tools.runtime_registry import register_case_tool
 DATASET = (
     Path(__file__).resolve().parents[1]
     / "data"
+    / "generated"
     / "IoA-Agent模型安全8项测评可执行数据集-v2-160条.jsonl"
 )
 
@@ -72,7 +73,7 @@ class AgentModelDiscussionSemanticsTest(unittest.TestCase):
     def test_all_dis_cases_budget_one_tool_action_for_every_participant_round(self):
         files = (
             DATASET,
-            DATASET.parent / "agent_model_cases" / "DIS_discussion_distortion.jsonl",
+            DATASET.parent.parent / "agent_model_cases" / "DIS_discussion_distortion.jsonl",
         )
         for path in files:
             rows = [

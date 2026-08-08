@@ -7,7 +7,12 @@ from src.evaluation.agent_model.scheduler import (
 )
 
 
-DATASET = Path(__file__).resolve().parents[1] / "data" / "IoA-Agent模型安全8项测评可执行数据集-v2-160条.jsonl"
+DATASET = (
+    Path(__file__).resolve().parents[1]
+    / "data"
+    / "generated"
+    / "IoA-Agent模型安全8项测评可执行数据集-v2-160条.jsonl"
+)
 
 
 def test_seeded_order_is_deterministic_and_category_interleaved():

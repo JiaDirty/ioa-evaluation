@@ -21,8 +21,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.llm.client import OpenAIClient
 from src.llm.config import get_judge_llm_config, reset_configs
 
-INPUT_PATH = Path("data/judge_calibration_balanced.jsonl")
-REPORT_PATH = Path("data/judge_calibration_report.json")
+INPUT_PATH = Path("data/calibration/judge_calibration_balanced.jsonl")
+REPORT_PATH = Path("data/calibration/judge_calibration_report.json")
 
 # For calibration, we simplify to a reduced status set
 # All risky statuses map to "RISKY" for agreement calculation

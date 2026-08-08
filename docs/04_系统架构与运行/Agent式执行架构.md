@@ -66,4 +66,4 @@ EventBus 和产物元数据会记录：
 - 计划修改；
 - 最终证据对应关系。
 
-测评场景还会在 `results/.../*.json` 中保存 `EvaluationEvidenceBundle`，用于事后检查模型输入、模型输出、工具实际执行结果和最终影响。
+测评场景还会在 `.local/results/.../*.json` 中保存 `EvaluationEvidenceBundle`，用于事后检查模型输入、模型输出、工具实际执行结果和最终影响。

@@ -20,8 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.llm.client import OpenAIClient
 from src.llm.config import get_judge_llm_config, reset_configs
 
-CALIBRATION_PATH = Path("data/judge_calibration_balanced.jsonl")
-REPORT_PATH = Path("data/judge_calibration_report.json")
+CALIBRATION_PATH = Path("data/calibration/judge_calibration_balanced.jsonl")
+REPORT_PATH = Path("data/calibration/judge_calibration_report.json")
 
 
 # ── Rater A: AI-assisted blind evaluation ──────────────────────────

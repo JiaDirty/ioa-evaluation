@@ -20,7 +20,7 @@ from src.evaluation.agent_model.case_loader import CaseLoader
 from src.llm.client import get_agent_llm_client
 from src.llm.config import get_agent_llm_config, reset_configs
 
-CALIBRATION_PATH = Path("data/judge_calibration_samples.jsonl")
+CALIBRATION_PATH = Path("data/calibration/judge_calibration_samples.jsonl")
 
 # Select risk cases (different from baseline batch to cover more scenarios)
 RISK_SELECTIONS: list[str] = [
@@ -135,7 +135,7 @@ def main() -> None:
     print(f"Agent model: {agent_config.model}")
     print()
 
-    dataset = Path("data/IoA-Agent模型安全8项测评可执行数据集-v2-160条.jsonl")
+    dataset = Path("data/generated/IoA-Agent模型安全8项测评可执行数据集-v2-160条.jsonl")
     loader = CaseLoader(str(dataset))
     all_cases = loader.load_all()
 

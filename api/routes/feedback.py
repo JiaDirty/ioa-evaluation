@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api/feedback", tags=["feedback"])
 
 
 def _load_latest_report() -> dict | None:
-    results_dir = Path(__file__).parent.parent.parent / "results"
+    results_dir = Path(__file__).parent.parent.parent / ".local" / "results"
     if not results_dir.exists():
         return None
     files = sorted(results_dir.glob("experiment_report_*.json"), reverse=True)

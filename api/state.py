@@ -12,7 +12,7 @@ _env: IoAEnvironment | None = None
 _envs: dict[str, IoAEnvironment] = {}
 _lock = asyncio.Lock()
 task_store: dict[str, dict] = {}
-DEFAULT_SQLITE_PATH = Path("data/ioa_runtime.sqlite3")
+DEFAULT_SQLITE_PATH = Path(".local/state/ioa_runtime.sqlite3")
 
 
 async def get_ioa_env(execution_mode: str | None = None) -> IoAEnvironment:

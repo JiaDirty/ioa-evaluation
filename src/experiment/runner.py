@@ -526,7 +526,7 @@ class IoAEnvironment:
         # 全局基础设施
         self.global_registry = Registry("global", is_global=True)
         self.audit_logger = AuditLogger("global")
-        sqlite_path = self.config.get("sqlite_path", "data/ioa_runtime.sqlite3")
+        sqlite_path = self.config.get("sqlite_path", ".local/state/ioa_runtime.sqlite3")
         self.persistence_db = SQLiteDatabase(sqlite_path)
         self.task_store = SQLiteTaskStore(self.persistence_db)
         self.event_store = SQLiteEventStore(self.persistence_db)

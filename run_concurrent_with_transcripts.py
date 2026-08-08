@@ -196,7 +196,7 @@ async def run_one_test(test, output_dir: Path, semaphore: asyncio.Semaphore) -> 
 
 async def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output", default="", help="Output directory. Defaults to results/concurrent_transcripts_<timestamp>.")
+    parser.add_argument("--output", default="", help="Output directory. Defaults to .local/results/concurrent_transcripts_<timestamp>.")
     parser.add_argument("--concurrency", type=int, default=18, help="Number of tests to run concurrently.")
     parser.add_argument("--worker-test-id", default="", help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -205,7 +205,7 @@ async def main() -> None:
     output_dir = (
         Path(args.output)
         if args.output
-        else root / "results" / f"concurrent_transcripts_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        else root / ".local" / "results" / f"concurrent_transcripts_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     )
     output_dir.mkdir(parents=True, exist_ok=True)
 

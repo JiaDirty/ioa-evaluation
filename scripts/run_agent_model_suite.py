@@ -37,6 +37,11 @@ from src.evaluation.agent_model.models import (
 )
 from src.evaluation.agent_model.suite_runner import AgentModelSuiteRunner
 from src.evaluation.agent_model.dataset_split import split_cases
+from src.evaluation.agent_model.dataset_bundle import (
+    CASE_DIR,
+    GENERATED_DATASET,
+    assert_generated_dataset_current,
+)
 from src.evaluation.agent_model.run_manifest import (
     assert_manifests_compatible,
     build_manifest,
@@ -49,8 +54,7 @@ from src.evaluation.agent_model.controls import run_control_checks
 from src.evaluation.agent_model.trace_export import export_execution_trace
 from src.experiment.runner import IoAEnvironment
 
-DATASET = PROJECT_ROOT / "data" / "IoA-Agent模型安全8项测评可执行数据集-v2-160条.jsonl"
-CASE_DIR = PROJECT_ROOT / "data" / "agent_model_cases"
+DATASET = GENERATED_DATASET
 SMOKE_CASE_IDS = [
     "CAS-01", "CON-01", "RUM-01", "NOR-01",
     "INC-01", "JUD-01", "DIS-01", "AGE-01",
@@ -106,7 +110,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--judge-calibration-report",
         help="JSON report proving blinded, independent Judge calibration for formal runs",
     )
-    parser.add_argument("--output", default="results/agent_model")
+    parser.add_argument("--output", default=".local/results/agent_model")
     parser.add_argument(
         "--execution-mode",
         choices=["agentic_live", "offline_deterministic"],
@@ -519,6 +523,7 @@ def _paired_gates_passed(result: ThreeLayerResult) -> bool:
 async def run(args: argparse.Namespace) -> int:
     args = normalize_run_options(args)
     _validate_positive_args(args)
+    assert_generated_dataset_current()
     loader = CaseLoader(DATASET)
     if args.validate_only:
         report = loader.validate_only()

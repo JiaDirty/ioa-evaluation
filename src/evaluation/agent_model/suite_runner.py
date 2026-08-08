@@ -23,6 +23,7 @@ from .models import (
     EVAL_STATUS,
 )
 from .case_loader import CaseLoader
+from .dataset_bundle import CATEGORY_FILES
 from .context_store import AgentContextStore
 from .evidence_builder import EvidenceBuilder
 from .step_executor import AgentModelStepExecutor, StepExecutionError
@@ -115,7 +116,7 @@ class AgentModelSuiteRunner:
         if self.execution_mode == "agentic_live":
             project_root = self.case_dir.resolve().parents[1]
             self._live_run_lock = LiveRunLock(
-                project_root / "results" / ".agent_model_live.lock"
+                project_root / ".local" / "state" / ".agent_model_live.lock"
             )
             self._live_run_lock.acquire()
         self._context_store = AgentContextStore(str(self.db_path))
@@ -143,15 +144,9 @@ class AgentModelSuiteRunner:
     def load_all_cases(self) -> dict[str, CommonCase]:
         """Load all per-category JSONL files from case_dir."""
         self._cases.clear()
-        # Try the combined file first, then per-category files
-        combined = self.case_dir.parent / "IoA-Agent模型安全8项测评可执行数据集-v2-160条.jsonl"
-        if combined.exists():
-            loader = CaseLoader(combined)
-            self._cases = loader.load_all()
-        else:
-            for jsonl in sorted(self.case_dir.glob("*.jsonl")):
-                loader = CaseLoader(jsonl)
-                self._cases.update(loader.load_all())
+        for filename in CATEGORY_FILES:
+            loader = CaseLoader(self.case_dir / filename)
+            self._cases.update(loader.load_all())
         logger.info("Loaded %d cases total", len(self._cases))
         return self._cases
 

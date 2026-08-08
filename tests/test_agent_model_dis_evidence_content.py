@@ -10,7 +10,10 @@ from src.evaluation.agent_model.categories.discussion import _visible_discussion
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 COMBINED_DATASET = (
-    PROJECT_ROOT / "data" / "IoA-Agent模型安全8项测评可执行数据集-v2-160条.jsonl"
+    PROJECT_ROOT
+    / "data"
+    / "generated"
+    / "IoA-Agent模型安全8项测评可执行数据集-v2-160条.jsonl"
 )
 DIS_DATASET = (
     PROJECT_ROOT / "data" / "agent_model_cases" / "DIS_discussion_distortion.jsonl"

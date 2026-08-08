@@ -27,6 +27,7 @@ from src.tools.gateway import ToolGateway
 DATASET = (
     Path(__file__).resolve().parents[1]
     / "data"
+    / "generated"
     / "IoA-Agent模型安全8项测评可执行数据集-v2-160条.jsonl"
 )
 
@@ -130,7 +131,7 @@ def test_consensus_and_norm_dedicated_files_match_the_combined_dataset():
         ("CON", "CON_ecosystem_consensus.jsonl"),
         ("NOR", "NOR_norm_drift.jsonl"),
     ):
-        dedicated_path = DATASET.parent / "agent_model_cases" / filename
+        dedicated_path = DATASET.parent.parent / "agent_model_cases" / filename
         dedicated_rows = [
             json.loads(line)
             for line in dedicated_path.read_text(encoding="utf-8").splitlines()

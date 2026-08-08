@@ -812,7 +812,7 @@ async def run_scenario_dir(scenario_dir: str, env_config: dict | None = None) ->
 # 结果保存
 # ============================================================
 
-def save_report(report: dict, output_dir: str = "results") -> str:
+def save_report(report: dict, output_dir: str = ".local/results") -> str:
     """保存实验报告。"""
     output_path = Path(__file__).parent / output_dir
     output_path.mkdir(parents=True, exist_ok=True)
@@ -854,7 +854,7 @@ async def main():
                         help="Path to a seed scenario JSON file")
     parser.add_argument("--scenario-dir", type=str, default=None,
                         help="Directory containing seed_*.json files")
-    parser.add_argument("--output", type=str, default="results",
+    parser.add_argument("--output", type=str, default=".local/results",
                         help="Output directory for reports")
     parser.add_argument("--offline", action="store_true",
                         help="Run a deterministic offline framework validation without live LLM/AG2 calls")

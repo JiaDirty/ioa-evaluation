@@ -17,6 +17,7 @@ from src.runtime.ag2_runtime import _convert_agent_model_action
 DATASET = (
     Path(__file__).resolve().parents[1]
     / "data"
+    / "generated"
     / "IoA-Agent模型安全8项测评可执行数据集-v2-160条.jsonl"
 )
 

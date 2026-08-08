@@ -20,10 +20,11 @@ from src.evaluation.agent_model.prompt_snapshot import (
     export_prompt_snapshots,
 )
 from src.evaluation.agent_model.suite_runner import AgentModelSuiteRunner
+from src.evaluation.agent_model.dataset_bundle import GENERATED_DATASET
 from src.tools.gateway import ToolGateway
 
 
-DATASET = PROJECT_ROOT / "data" / "IoA-Agent模型安全8项测评可执行数据集-v2-160条.jsonl"
+DATASET = GENERATED_DATASET
 
 
 class PromptCaptureEnvironment:
@@ -74,7 +75,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output",
         type=Path,
-        default=PROJECT_ROOT / "results" / "agent_model_prompt_review",
+        default=PROJECT_ROOT / ".local" / "results" / "agent_model_prompt_review",
     )
     parser.add_argument("--case-id", action="append", default=[])
     return parser

@@ -12,8 +12,8 @@ import hashlib
 import json
 from pathlib import Path
 
-CALIBRATION_PATH = Path("data/judge_calibration_samples.jsonl")
-OUTPUT_PATH = Path("data/judge_calibration_balanced.jsonl")
+CALIBRATION_PATH = Path("data/calibration/judge_calibration_samples.jsonl")
+OUTPUT_PATH = Path("data/calibration/judge_calibration_balanced.jsonl")
 
 # Hand-crafted risky outputs — clearly unsafe agent behavior patterns
 CONSTRUCTED_RISK_SAMPLES: list[dict] = [

@@ -123,7 +123,7 @@ MCP 只用于 Agent 调用工具。Agent 之间仍使用 A2A 或 Private API 通
 - 工具调用；
 - 产物。
 
-开发环境默认数据库是 `data/ioa_runtime.sqlite3`，配置文件为 `config/storage.yaml`。数据库是本地运行产物，不上传 GitHub。
+开发环境默认数据库是 `.local/state/ioa_runtime.sqlite3`，配置文件为 `config/storage.yaml`。数据库是本地运行产物，不上传 GitHub；旧的 `data/ioa_runtime.sqlite3` 已移到仓库同级本机状态目录。
 
 ## 后台任务
 

@@ -1,80 +1,58 @@
-# IoA 安全测评与 Agent 运行框架
+# IoA Agent 模型行为安全测评
 
-本项目用于构建和运行 IoA（多个 Agent 通过网络、工具和共享状态协作）安全测评。仓库同时保留两套测评：
+本仓库当前主要研究：同一个大模型被实例化为不同业务角色 Agent 后，在多 Agent 协作、上下游交接、共享记录、工具调用、授权和长期交互中表现出的行为安全。
 
-1. 旧版 18 项系统机制测评，重点检查 Gateway、Registry、协议、权限和攻击注入等系统能力；
-2. 八项 Agent 模型安全测评，重点记录真实模型在正常条件和风险条件下的输入、输出、工具动作、系统处理、Judge 判断与最终影响。
+仓库同时保留旧版 18 项系统机制测评。旧版检查 Gateway、Registry、协议、权限和攻击注入等系统能力，与当前八项 Agent 模型测评属于两条独立路径，不能混合统计。
 
-## 当前项目状态
+## 当前状态
 
-状态更新时间：2026-08-05。
+状态更新时间：2026-08-08。
 
-- 代码自动测试：457 项通过，另有 13 项子测试通过；
-- 八项测评中的 CAS、CON、RUM、INC、JUD、NOR、AGE 已有正常阶段和风险阶段的真实运行记录；
-- DIS（讨论扭曲）的最新风险阶段仍有工具证据编号和超长重复输出问题，尚未形成可采用的最终结果；
-- 当前真实运行属于最小开发验证，不是 160 个案例的正式科研实验；
-- 恢复阶段目前可以通过 `--skip-recovery` 临时跳过；
-- `results/` 中的原始记录保留在本机，不进入 Git，因为文件量和体积较大，且部分失败记录仍需保留原路径复核。
+- 六字段自由业务决策协议及后台隐藏行为派生已经实现；
+- Agent-model 测试为 269 项通过，另有 10 项子测试通过；
+- 全量测试为 465 项通过，另有 13 项子测试通过；
+- 160 条数据均可解析，CAS、CON、RUM、NOR、INC、JUD、DIS、AGE 各 20 条；
+- 当前 160 条均属于开发期间已见数据，真正未见的 holdout 仍为 0；
+- 最终方案中的完整真实业务工具链尚未全部落入代码，CAS 仍存在旧简化场景与传播判分问题；
+- 现有真实运行属于开发烟测，不构成正式科研结果。
 
-更详细的进度与限制见 [资料导航](docs/README.md) 和 [运行结果索引](docs/运行结果索引.md)。
+先阅读 [项目资料导航](docs/README.md) 和 [项目定位与阅读入口](docs/当前方案/项目定位与阅读入口.md)。
 
-## 目录说明
+## 当前八项测评主链
 
-| 目录 | 中文用途 |
+```text
+scripts/run_agent_model_suite.py
+  -> AgentModelSuiteRunner
+  -> 八类 category executor
+  -> AgentModelStepExecutor
+  -> IoAEnvironment / Gateway / Agent Runtime / ToolGateway
+  -> Evidence / Judge / Trace Export
+```
+
+主要路径：
+
+| 路径 | 用途 |
 |---|---|
-| `src/` | 后端核心代码，包括 Agent、Gateway、运行环境、测评执行器、Judge 和记录导出 |
-| `tests/` | 自动测试，检查代码行为和已修复问题是否重新出现 |
-| `data/agent_model_cases/` | 八项 Agent 模型安全测评的 160 个案例 |
-| `risk_tests/` | 旧版系统风险测试实现 |
-| `scripts/` | 测评运行、数据校验、记录导出和 Judge 校准脚本 |
-| `api/` | FastAPI 后端接口 |
-| `frontend/` | React 前端运行控制台 |
-| `config/` | Agent、Judge、工具、协议和存储配置示例 |
-| `docs/` | 已按用途整理的中文项目资料 |
-| `results/` | 本机运行结果，不上传 GitHub |
-| `待删除/` | 暂时不删除但已退出当前主流程的历史资料 |
+| `data/agent_model_cases/` | 八个分类案例文件，当前数据维护入口 |
+| `data/generated/` | 由分类案例确定性生成的兼容合并文件，不手工编辑 |
+| `data/calibration/` | Judge 校准样本和报告 |
+| `src/evaluation/agent_model/` | 八项 Agent 模型测评实现 |
+| `scripts/run_agent_model_suite.py` | 八项测评命令入口 |
+| `tests/test_agent_model_*.py` | 八项测评回归测试 |
+| `src/gateway/`、`src/runtime/` | 共享 IoA 执行底座 |
+| `risk_tests/`、`run_experiment.py` | 旧版 18 项系统测评 |
+| `docs/当前方案/` | 当前唯一文档入口 |
 
-每个代码目录的详细职责见 [代码目录中文说明](docs/代码目录中文说明.md)。
-
-## 安装
-
-推荐使用项目自带的虚拟环境；如果需要重新创建：
+## 常用离线验证
 
 ```powershell
-py -3.11 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
-
-真实模型配置文件不会上传 GitHub。首次配置时复制示例文件：
-
-```powershell
-Copy-Item config\agent_llm_config_example.yaml config\agent_llm_config.yaml
-Copy-Item config\judge_llm_config_example.yaml config\judge_llm_config.yaml
-```
-
-然后在本机配置模型、接口地址和 API Key。不要把真实 Key 提交到 Git。
-
-## 常用验证命令
-
-完整自动测试：
-
-```powershell
+.\.venv\Scripts\python.exe -m pytest -q tests -k "agent_model"
 .\.venv\Scripts\python.exe -m pytest -q
-```
-
-检查 Python 文件是否存在语法错误：
-
-```powershell
+.\.venv\Scripts\python.exe scripts\run_agent_model_suite.py --validate-only
 .\.venv\Scripts\python.exe -m compileall -q src scripts
 ```
 
-只检查八项测评数据和配置，不调用真实模型：
-
-```powershell
-.\.venv\Scripts\python.exe scripts\run_agent_model_suite.py --validate-only
-```
-
-运行离线八项最小流程，不调用真实模型：
+运行离线最小流程：
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\run_agent_model_suite.py `
@@ -84,32 +62,11 @@ Copy-Item config\judge_llm_config_example.yaml config\judge_llm_config.yaml
   --skip-recovery
 ```
 
-真实模型会产生费用。运行前必须确认配置、案例范围、阶段和输出目录。
+真实模型运行会产生费用。运行前必须确认用例、阶段、重复次数、被测模型、Judge 和输出目录。
 
-## 启动后端和前端
+## 本机文件边界
 
-后端：
-
-```powershell
-.\.venv\Scripts\python.exe -m uvicorn api.main:app --host 127.0.0.1 --port 8000
-```
-
-前端：
-
-```powershell
-cd frontend
-npm install
-npm run dev
-```
-
-## 重要边界
-
-- 模型做出不安全判断是测评结果，程序不能把原回答修改成安全回答；
-- 模型提出动作、系统是否实际执行、Judge 如何判断、最终状态是否受影响，必须分开记录；
-- 自动测试通过只说明代码没有触发已知错误，不代表真实八项流程已经完整跑通；
-- 单案例或单次最小运行不能替代完整 160 案例、重复运行、独立 Judge 和人工复核的正式实验。
-
-## GitHub
+以下内容不上传 GitHub：模型密钥配置、虚拟环境、前端依赖、运行数据库、原始运行结果、日志、个人资料和源码压缩备份。当前本机旧运行记录位于仓库同级目录 `IOA测评运行记录/`，旧数据库和本机资料位于 `IOA测评本地状态/`、`IOA测评本地归档/`；今后新运行默认写入仓库内被忽略的 `.local/`。
 
 远程仓库：`https://github.com/JiaDirty/ioa-evaluation`
 

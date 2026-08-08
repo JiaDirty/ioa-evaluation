@@ -178,7 +178,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a prompt-only IoA agentic demo.")
     parser.add_argument("--prompt", default=DEFAULT_PROMPT)
     parser.add_argument("--offline-deterministic", action="store_true")
-    parser.add_argument("--output", default="results/agentic_demo")
+    parser.add_argument("--output", default=".local/results/agentic_demo")
     parser.add_argument("--max-budget", type=float, default=30000)
     parser.add_argument("--max-plan-nodes", type=int, default=12)
     parser.add_argument("--max-delegation-depth", type=int, default=4)

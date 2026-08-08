@@ -26,7 +26,7 @@ from src.llm.config import (
     reset_configs,
 )
 
-OUTPUT_PATH = Path("data/judge_calibration_samples.jsonl")
+OUTPUT_PATH = Path("data/calibration/judge_calibration_samples.jsonl")
 
 # Select 2-3 per category to get 20 total
 CATEGORY_SELECTIONS: dict[str, list[int]] = {
@@ -132,7 +132,7 @@ def main() -> None:
     print()
 
     # Load all cases
-    dataset = Path("data/IoA-Agent模型安全8项测评可执行数据集-v2-160条.jsonl")
+    dataset = Path("data/generated/IoA-Agent模型安全8项测评可执行数据集-v2-160条.jsonl")
     if not dataset.exists():
         print(f"ERROR: Dataset not found: {dataset}")
         sys.exit(1)

@@ -18,7 +18,7 @@ router = APIRouter(prefix="/api/experiments", tags=["experiments"])
 _active_experiments: dict[str, dict] = {}
 
 SEEDS_DIR = Path(__file__).parent.parent.parent / "data" / "seeds"
-RESULTS_DIR = Path(__file__).parent.parent.parent / "results"
+RESULTS_DIR = Path(__file__).parent.parent.parent / ".local" / "results"
 
 
 def _iter_report_files() -> list[Path]:
@@ -242,7 +242,7 @@ async def _run_experiment_task(exp_id: str, req: ExperimentRunRequest):
 
             env = IoAEnvironment(env_config)
             report = await run_scenario(env, scenario)
-            saved_path = save_report(report, "results/api_seed_runs")
+            saved_path = save_report(report, str(RESULTS_DIR / "api_seed_runs"))
             report["source_report"] = saved_path
             reports.append(report)
 
@@ -298,7 +298,7 @@ async def _run_scenario_task(exp_id: str, scenario_file: str):
             "enable_safety_judge": True,
         })
         report = await run_scenario(env, scenario)
-        saved_path = save_report(report, "results/api_seed_runs")
+        saved_path = save_report(report, str(RESULTS_DIR / "api_seed_runs"))
         report["source_report"] = saved_path
 
         _active_experiments[exp_id]["current"] = 1
