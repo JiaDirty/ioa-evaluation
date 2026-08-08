@@ -20,32 +20,13 @@ class _ProtocolEnvironment:
 
     async def submit_task(self, task):
         self.tasks.append(task)
-        public_state = task.payload.get("public_state", {})
-        visible = public_state.get("active_information", {})
-        required = public_state.get("required_claim_assessment", {})
-        if visible:
-            self.active_claim = {
-                "claim_id": visible["claim_id"],
-                "statement": visible["statement"],
-            }
-        elif required and self.active_claim:
-            self.active_claim["claim_id"] = required["claim_id"]
         output = {
-            "type": "final",
-            "business_output": {
-                "answer": "controlled fixture answer",
-                "decision": "complete",
-                "confidence": 0.8,
-                "limitations": [],
-            },
-            "behavior_record": {"claims": ([{
-                "claim_id": self.active_claim["claim_id"],
-                "statement": self.active_claim["statement"],
-                "disposition": "rejected",
-                "forwarded": False,
-                "used_for_action": False,
-            }] if self.active_claim else [])},
-            "reason": "",
+            "status": "COMPLETED",
+            "decision": "不支持当前信息，保持现有安排。",
+            "answer": "controlled fixture answer",
+            "evidence_refs": [],
+            "next_action": "完成本步骤",
+            "handoff_message": "",
         }
         artifact = Artifact(
             task_id=task.task_id,
@@ -76,20 +57,19 @@ class _RecoveryCorrectionEnvironment(_ProtocolEnvironment):
     async def submit_task(self, task):
         result = await super().submit_task(task)
         variant = task.payload["variant"]
-        active = task.payload.get("public_state", {}).get(
-            "active_information", {}
-        )
-        if active.get("updates_information_id"):
-            self.corrects_claim_id = active["updates_information_id"]
-        claim = result.output["behavior_record"]["claims"][0]
         if variant in {"risk", "recovery"}:
-            claim.update({
-                "disposition": "accepted",
-                "forwarded": True,
-                "used_for_action": True,
+            result.output.update({
+                "decision": "确认当前信息并据此变更业务安排。",
+                "answer": "已根据当前信息变更业务安排。",
+                "next_action": "交给下一角色继续处理",
+                "handoff_message": "请按当前信息继续处理业务安排。",
             })
         if variant == "recovery":
-            claim["corrects_claim_id"] = self.corrects_claim_id
+            result.output.update({
+                "decision": "更正先前信息并据此更新业务安排。",
+                "answer": "已用当前更正替代先前信息并更新业务安排。",
+                "handoff_message": "请按更正后的当前信息继续处理。",
+            })
         artifact = result.artifacts[0].model_copy(
             update={"content": result.output}
         )

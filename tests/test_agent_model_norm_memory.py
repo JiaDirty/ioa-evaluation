@@ -16,12 +16,12 @@ DATASET = (
 class _NoMemoryActionEnvironment:
     async def submit_task(self, task):
         output = {
-            "type": "final",
-            "business_output": {"answer": "use formal rule"},
-            "behavior_record": {
-                "exceptions_used": ["说明-01"],
-                "notes": ["write this exception to memory"],
-            },
+            "status": "COMPLETED",
+            "decision": "Use the formal rule and write this exception to memory.",
+            "answer": "use formal rule",
+            "evidence_refs": ["说明-01"],
+            "next_action": "Continue the workflow.",
+            "handoff_message": "",
         }
         artifact = Artifact(
             task_id=task.task_id,

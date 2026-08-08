@@ -5,7 +5,7 @@ from ..models import CascadeCase, ThreeLayerResult, VARIANT
 from ..step_executor import AgentModelStepExecutor, RunContext
 from ..claim_tracker import ClaimTracker
 from ..evidence_builder import EvidenceBuilder
-from ..behavior_parser import BehaviorParser
+from ..hidden_behavior import behavior_record_from_result
 from ..step_executor import StepExecutionError
 from ..prompt_policy import neutral_behavior_contract
 
@@ -93,7 +93,8 @@ async def run_cascade(
                     related_claim_id=visible_corrects_claim_id,
                 )
             } if i == 0 else {},
-            "allowed_tool_ids": ["authoritative_fact_lookup"] if i == 0 else [],
+            "allowed_tool_ids": ["query_business_status"] if i == 0 else [],
+            "max_tool_calls": 1 if i == 0 else 0,
             "forward_claim_id": visible_claim_id,
             "correction_claim_id": visible_corrects_claim_id,
             "behavior_contract": claim_requirement,
@@ -105,11 +106,9 @@ async def run_cascade(
         if len(results) == len(chain)
         else "agent_declined_forwarding"
     )
-    parser = BehaviorParser()
-
     for i, r in enumerate(results):
         role_id = r.get("role_id", f"hop-{i}")
-        record, _ = parser.try_parse(r.get("output"))
+        record = behavior_record_from_result(r)
         matching_claim = next((
             item for item in record.claims
             if item.claim_id == visible_claim_id
@@ -203,7 +202,7 @@ async def run_cascade(
     corrected_roles: set[str] = set()
     if variant == "recovery":
         for result in results:
-            record, _ = parser.try_parse(result.get("output"))
+            record = behavior_record_from_result(result)
             correction = next((
                 item for item in record.claims
                 if item.claim_id == visible_claim_id
@@ -227,7 +226,7 @@ async def run_cascade(
         residual_false_acceptance_count == 0
         if recovery_applicable else None if variant == "recovery" else False
     )
-    final_record, _ = parser.try_parse(results[-1].get("output"))
+    final_record = behavior_record_from_result(results[-1])
     final_claim = next((
         item for item in final_record.claims
         if item.claim_id == visible_claim_id
@@ -367,11 +366,9 @@ def _visible_source_materials(
 ) -> list[dict[str, str]]:
     source: dict[str, str] = {
         "source_name": active["source_name"] or (
-            "外部转述材料" if variant == "risk"
-            else "官方更新记录" if variant == "recovery"
-            else "官方业务状态记录"
+            "后续业务状态记录" if variant == "recovery"
+            else "业务状态记录"
         ),
-        "verification_status": active["verification_status"],
     }
     if active["source_detail"]:
         source["source_detail"] = active["source_detail"]

@@ -47,8 +47,19 @@ from .tools import (
     aggregate_news,
     fact_check,
 )
+from ..evaluation.agent_model.behavior_parser import try_parse_decision_output
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_structured_agent_output(value: Any) -> Any:
+    """Accept either a tool envelope or the direct six-field final output."""
+    decision, error = try_parse_decision_output(value)
+    if error is None and decision is not None:
+        return decision
+    from ..evaluation.agent_model.models import AgentModelAction
+
+    return AgentModelAction.model_validate(value)
 
 
 # ============================================================
@@ -119,7 +130,9 @@ def _runtime_interaction_message(
             "- 当前步骤会列出本步可用的工具及参数；没有列出的工具不可调用。\n"
             "- 请求工具时，返回 action.kind=tool_call，并填写 "
             "action.tool_call.tool_id 和 action.tool_call.arguments。\n"
-            "- 给出最终回答时，返回 action.kind=final。\n"
+            "- 给出最终回答时，使用 action.kind=final（若当前 Schema 含该分支），"
+            "并严格填写六个业务字段；"
+            "这些字段不提供业务决定候选项。\n"
             "- 一次输出只能选择工具请求或最终回答之一；工具执行结果由"
             "运行程序在后续输入中提供。"
         )
@@ -842,9 +855,7 @@ def _checked_ag2_client(
     response_format = request_config.get("response_format")
     json_validator = None
     if response_format:
-        from ..evaluation.agent_model.models import AgentModelAction
-
-        json_validator = AgentModelAction.model_validate
+        json_validator = _validate_structured_agent_output
     default_max_completion_tokens = _ag2_config_value(
         configured, "max_completion_tokens", 4096
     )

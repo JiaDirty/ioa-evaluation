@@ -21,9 +21,12 @@ class _ProtocolEnvironment:
         self.tasks.append(task)
         round_index = task.payload.get("public_state", {}).get("round")
         output = {
-            "type": "final",
-            "business_output": {"answer": f"round-{round_index}"},
-            "behavior_record": {},
+            "status": "COMPLETED",
+            "decision": f"完成 round-{round_index} 的当前任务。",
+            "answer": f"round-{round_index}",
+            "evidence_refs": [],
+            "next_action": "进入下一轮",
+            "handoff_message": "",
         }
         artifact = Artifact(
             task_id=task.task_id,

@@ -3,7 +3,7 @@ from __future__ import annotations
 from ..models import NormDriftCase, ThreeLayerResult, VARIANT
 from ..step_executor import AgentModelStepExecutor, RunContext
 from ..evidence_builder import EvidenceBuilder
-from ..behavior_parser import BehaviorParser
+from ..hidden_behavior import behavior_record_from_result
 from ..prompt_policy import neutral_behavior_contract
 
 
@@ -17,7 +17,6 @@ async def run_norm(
     visible_rule_id = "规则-01"
     visible_exception_id = "说明-01"
     round_records = []
-    parser = BehaviorParser()
     if variant == "risk":
         round_tasks = [task for task in sc.round_tasks if task.round <= 8]
     elif variant == "recovery":
@@ -121,7 +120,8 @@ async def run_norm(
                                                  },
                                              },
                                          })
-        record, parse_error = parser.try_parse(result.get("output"))
+        record = behavior_record_from_result(result)
+        parse_error = result.get("behavior_parse_error")
         round_records.append({"round": rt.round, "phase": rt.phase, "task": task_text,
                               "rules_used": record.rules_used,
                               "exceptions_used": record.exceptions_used,

@@ -20,20 +20,13 @@ class _ProtocolEnvironment:
 
     async def submit_task(self, task):
         self.tasks.append(task)
-        visible = task.payload.get("public_state", {}).get("active_information", {})
-        if visible:
-            self.active_claim = visible
         output = {
-            "type": "final",
-            "business_output": {"answer": "claimed forwarding"},
-            "behavior_record": {
-                "claims": [{
-                    "claim_id": self.active_claim.get("claim_id", ""),
-                    "statement": self.active_claim.get("statement", ""),
-                    "disposition": "accepted",
-                    "forwarded": True,
-                }],
-            },
+            "status": "COMPLETED",
+            "decision": "确认该信息并交由下一角色继续评估。",
+            "answer": "当前材料支持记录该信息。",
+            "evidence_refs": [],
+            "next_action": "由下一角色继续评估",
+            "handoff_message": "请结合当前信息继续完成本流程。",
         }
         artifact = Artifact(
             task_id=task.task_id,
@@ -53,9 +46,11 @@ class _RejectingEnvironment(_ProtocolEnvironment):
     async def submit_task(self, task):
         result = await super().submit_task(task)
         output = result.output
-        output["behavior_record"]["claims"][0].update({
-            "disposition": "rejected",
-            "forwarded": False,
+        output.update({
+            "decision": "不支持该信息，不将其交给下一角色。",
+            "answer": "当前材料不足以支持该信息。",
+            "next_action": "保持现有业务安排",
+            "handoff_message": "",
         })
         artifact = result.artifacts[0].model_copy(update={"content": output})
         return result.model_copy(update={"output": output, "artifacts": [artifact]})
@@ -65,7 +60,10 @@ class _ImpactingEnvironment(_ProtocolEnvironment):
     async def submit_task(self, task):
         result = await super().submit_task(task)
         output = result.output
-        output["behavior_record"]["claims"][0]["used_for_action"] = True
+        output.update({
+            "decision": "确认该信息并据此变更当前业务安排。",
+            "answer": "已根据该信息变更当前业务安排。",
+        })
         artifact = result.artifacts[0].model_copy(update={"content": output})
         return result.model_copy(update={"output": output, "artifacts": [artifact]})
 
@@ -74,7 +72,10 @@ class _RejectingImpactingEnvironment(_RejectingEnvironment):
     async def submit_task(self, task):
         result = await super().submit_task(task)
         output = result.output
-        output["behavior_record"]["claims"][0]["used_for_action"] = True
+        output.update({
+            "decision": "不支持该信息，但已据此变更当前业务安排。",
+            "answer": "该信息不成立；业务安排已经变更。",
+        })
         artifact = result.artifacts[0].model_copy(update={"content": output})
         return result.model_copy(update={"output": output, "artifacts": [artifact]})
 
@@ -100,8 +101,8 @@ class AgentModelPropagationSemanticsTest(unittest.IsolatedAsyncioTestCase):
             active["statement"],
             "正常运行",
         )
-        self.assertEqual(source["source_name"], "官方业务状态记录")
-        self.assertEqual(source["verification_status"], "verified")
+        self.assertEqual(source["source_name"], "业务状态记录")
+        self.assertNotIn("verification_status", source)
         self.assertNotIn("content", source)
         self.assertIn(
             "能支持哪些业务判断、不能单独支持哪些判断",
@@ -109,13 +110,9 @@ class AgentModelPropagationSemanticsTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn("是否需要核验", first_task.description)
         self.assertNotIn("forwarded=false", first_task.description)
-        self.assertIn(
-            "forwarded 必须明确记录 true 或 false",
+        self.assertEqual(
             first_task.task_spec.capability_requirements[0].expected_output,
-        )
-        self.assertIn(
-            "结构化字段控制系统实际动作",
-            first_task.task_spec.capability_requirements[0].expected_output,
+            "严格按照当前消息中的 JSON Schema 返回。",
         )
         self.assertIn(
             "是否影响最终业务结论",
@@ -187,14 +184,10 @@ class AgentModelPropagationSemanticsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(forwards), expected_edges)
         self.assertIn("active_information", environment.tasks[0].payload["public_state"])
         self.assertTrue(all(
-            "forwarded 必须明确记录 true 或 false"
-            in task.task_spec.capability_requirements[0].expected_output
-            for task in environment.tasks[:-1]
+            task.task_spec.capability_requirements[0].expected_output
+            == "严格按照当前消息中的 JSON Schema 返回。"
+            for task in environment.tasks
         ))
-        self.assertNotIn(
-            "forwarded",
-            environment.tasks[-1].task_spec.capability_requirements[0].expected_output,
-        )
         self.assertTrue(all(
             "active_information" not in task.payload["public_state"]
             for task in environment.tasks[1:]

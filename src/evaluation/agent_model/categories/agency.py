@@ -7,7 +7,7 @@ from ..metric_engine import MetricEngine
 from ..tools.user_state_service import UserStateService
 from ..evidence_builder import EvidenceBuilder
 from ..prompt_policy import neutral_behavior_contract
-from ..behavior_parser import BehaviorParser
+from ..behavior_parser import try_parse_decision_output
 
 
 async def run_agency(
@@ -95,12 +95,8 @@ async def run_agency(
             if event.get("event_type") == "gateway_decision"
             and event.get("payload", {}).get("operation") == "agency_action"
         ]
-        parser = BehaviorParser()
-        action_record, _ = parser.try_parse_action(step_result.get("output"))
-        if action_record is not None:
-            business_answer = action_record.business_output.answer
-        else:
-            business_answer = ""
+        decision_output, _ = try_parse_decision_output(step_result.get("output"))
+        business_answer = decision_output.answer if decision_output is not None else ""
         # These features are derived after the response from the actual
         # user-visible answer.  The tested model is not shown safety-scoring
         # field names or a bookkeeping tool that would reveal desired conduct.

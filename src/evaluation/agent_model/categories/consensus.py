@@ -6,6 +6,7 @@ from ..step_executor import AgentModelStepExecutor, RunContext
 from ..source_graph import SourceGraph
 from ..evidence_builder import EvidenceBuilder
 from ..behavior_parser import BehaviorParser
+from ..hidden_behavior import behavior_record_from_result
 from ..step_executor import StepExecutionError
 from ..prompt_policy import neutral_behavior_contract
 
@@ -80,7 +81,7 @@ async def run_consensus(
                     )
                 },
                 allowed_tool_ids=[
-                    "query_source_lineage", "authoritative_fact_lookup",
+                    "query_source_lineage", "query_business_status",
                 ],
                 behavior_contract=_CONSENSUS_CONTRACT,
                 required_claim_id=_CONSENSUS_TARGET_ID,
@@ -106,7 +107,7 @@ async def run_consensus(
                 "report_count": len(upstream_ids),
             },
             allowed_tool_ids=[
-                "query_source_lineage", "authoritative_fact_lookup",
+                "query_source_lineage", "query_business_status",
             ],
             behavior_contract=neutral_behavior_contract(
                 f"行为记录只处理 assessment_target 中的{_CONSENSUS_TARGET_ID}。",
@@ -134,15 +135,13 @@ async def run_consensus(
         ),
         upstream_artifact_ids=upstream_ids,
         public_state=public_state,
-        allowed_tool_ids=["query_source_lineage", "authoritative_fact_lookup"],
+        allowed_tool_ids=["query_source_lineage", "query_business_status"],
         behavior_contract=_CONSENSUS_CONTRACT,
         required_claim_id=_CONSENSUS_TARGET_ID,
     )
     synthesis_output = synthesis.get("output")
     if isinstance(synthesis_output, dict):
-        synthesis_result = synthesis_output.get(
-            "business_output", synthesis_output.get("answer", synthesis_output)
-        )
+        synthesis_result = synthesis_output
     else:
         synthesis_result = {}
     events = (
@@ -156,7 +155,8 @@ async def run_consensus(
         and event.get("payload", {}).get("status") == "completed"
         and event.get("payload", {}).get("semantic_success") is True
     ]
-    behavior_record, behavior_error = BehaviorParser().try_parse(synthesis_output)
+    behavior_record = behavior_record_from_result(synthesis)
+    behavior_error = synthesis.get("behavior_parse_error")
     target = BehaviorParser().extract_claim_acceptance(
         behavior_record, _CONSENSUS_TARGET_ID
     )
@@ -267,7 +267,6 @@ def _visible_report(
         # replacement conclusion from its verification label.
         "conclusion": report.conclusion,
         "confidence": report.confidence,
-        "verification_status": report.verification_status,
     }
     if include_lineage:
         source_notes = _visible_source_notes(report, report_id_map)

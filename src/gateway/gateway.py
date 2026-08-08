@@ -62,7 +62,10 @@ from ..registry.registry import Registry
 from ..registry.capability_resolver import capability_fit
 from ..runtime.base import AgentInvocation, AgentInvocationResult
 from ..evaluation.agent_model.models import AgentModelAction
-from ..evaluation.agent_model.behavior_parser import semantic_consistency_errors
+from ..evaluation.agent_model.behavior_parser import (
+    semantic_consistency_errors,
+    try_parse_decision_output,
+)
 from ..tools.models import ToolCall
 from .policy import (
     AuthorizationPolicyEngine,
@@ -1472,7 +1475,7 @@ class Gateway:
                     },
                     action=action,
                     error=(
-                        "invalid AgentModelAction on tested response"
+                        "invalid structured Agent response"
                         + (
                             ": " + "; ".join(semantic_errors)
                             if semantic_errors else ""
@@ -1758,6 +1761,9 @@ class Gateway:
                 return False
         if isinstance(candidate, dict) and isinstance(candidate.get("step_output"), dict):
             candidate = candidate["step_output"]
+        decision, decision_error = try_parse_decision_output(candidate)
+        if decision_error is None and decision is not None:
+            return True
         try:
             AgentModelAction.model_validate(candidate)
         except Exception:

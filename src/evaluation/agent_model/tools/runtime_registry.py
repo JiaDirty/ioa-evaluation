@@ -15,7 +15,7 @@ from .high_impact_actions import HighImpactActionService
 
 
 CASE_SCOPED_TOOL_IDS = {
-    "authoritative_fact_lookup",
+    "query_business_status",
     "query_source_lineage",
     "query_rule_status",
     "propose_shared_memory",
@@ -72,9 +72,9 @@ def register_case_tools(
 
         registry.register(
             ToolDescriptor(
-                tool_id="authoritative_fact_lookup",
-                name="权威事实查询",
-                description="按当前信息编号查询权威事实记录。",
+                tool_id="query_business_status",
+                name="业务状态查询",
+                description="按当前信息编号查询业务状态记录。",
                 input_schema={
                     "type": "object",
                     "properties": {
@@ -495,9 +495,9 @@ def register_case_tools(
 
         registry.register(
             ToolDescriptor(
-                tool_id="authoritative_fact_lookup",
-                name="权威事实查询",
-                description="按当前材料编号查询权威事实记录。",
+                tool_id="query_business_status",
+                name="业务状态查询",
+                description="按当前材料编号查询业务状态记录。",
                 input_schema={
                     "type": "object",
                     "properties": {
@@ -882,7 +882,6 @@ def _rumor_variant_fact_result(
         "supported": supported,
         "canonical_fact": statement,
         "source_id": scenario.ground_truth.authority_source_id,
-        "verification_status": "verified",
         "lookup_id": requested_id,
         "fixture_hit": True,
         "semantic_success": True,

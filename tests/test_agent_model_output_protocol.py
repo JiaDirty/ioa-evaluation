@@ -5,6 +5,7 @@ from pathlib import Path
 from src.evaluation.agent_model.behavior_parser import (
     BehaviorParser,
     semantic_consistency_errors,
+    try_parse_decision_output,
 )
 from src.evaluation.agent_model.case_loader import CaseLoader
 from src.evaluation.agent_model.context_builder import AgentContextBuilder
@@ -46,7 +47,7 @@ class AgentModelOutputProtocolTest(unittest.TestCase):
             "action": {
                 "kind": "tool_call",
                 "tool_call": {
-                    "tool_id": "authoritative_fact_lookup",
+                    "tool_id": "query_business_status",
                     "arguments": {"claim_id": "信息-02"},
                     "reason": "verify",
                 },
@@ -57,55 +58,43 @@ class AgentModelOutputProtocolTest(unittest.TestCase):
         self.assertEqual(final.business_output.answer, "keep")
         self.assertIsNone(final.tool_call)
         self.assertEqual(tool.type, "tool_call")
-        self.assertEqual(tool.tool_call.tool_id, "authoritative_fact_lookup")
+        self.assertEqual(tool.tool_call.tool_id, "query_business_status")
         self.assertEqual(tool.business_output.answer, "")
 
-    def test_visible_cas_final_without_hidden_statement_is_parseable(self):
+    def test_visible_final_schema_contains_only_the_six_business_fields(self):
         schema = visible_action_schema(
             "CAS",
             [],
             required_claim_id="信息-01",
             require_forward_decision=True,
         )
-        claim_schema = schema["$defs"]["AgentClaimRecord"]
-        self.assertNotIn("statement", claim_schema["properties"])
-        self.assertNotIn("statement", claim_schema["required"])
-
-        action = AgentModelAction.model_validate({
-            "action": {
-                "kind": "final",
-                "business_output": {
-                    "answer": "机场当前正常运行。",
-                    "decision": "记录该信息。",
-                    "confidence": 1.0,
-                    "limitations": [],
-                },
-                "behavior_record": {
-                    "claims": [{
-                        "claim_id": "信息-01",
-                        "disposition": "accepted",
-                        "forwarded": False,
-                        "used_for_action": True,
-                        "confidence": 1.0,
-                    }],
-                    "sources": [{
-                        "source_id": "权威来源-01",
-                        "source_label": "机场官方接口",
-                        "impact": "支持机场运行状态判断。",
-                    }],
-                    "notes": [],
-                },
-                "reason": "依据工具结果作出判断。",
-            },
+        self.assertEqual(set(schema["properties"]), {
+            "status", "decision", "answer", "evidence_refs",
+            "next_action", "handoff_message",
         })
+        serialized = json.dumps(schema, ensure_ascii=False)
+        for hidden in (
+            "behavior_record", "claims", "forwarded", "used_for_action",
+            "decision_code", "rules_used", "discussion_actions",
+        ):
+            self.assertNotIn(hidden, serialized)
 
-        self.assertEqual(action.behavior_record.claims[0].statement, "")
+        output, error = try_parse_decision_output({
+            "status": "COMPLETED",
+            "decision": "记录该信息。",
+            "answer": "机场当前正常运行。",
+            "evidence_refs": ["权威来源-01"],
+            "next_action": "完成本步骤",
+            "handoff_message": "",
+        })
+        self.assertIsNone(error)
+        self.assertEqual(output.decision, "记录该信息。")
 
     def test_unused_strict_tool_arguments_are_not_sent_to_gateway(self):
         converted = _convert_agent_model_action({
             "type": "tool_call",
             "tool_call": {
-                "tool_id": "authoritative_fact_lookup",
+                "tool_id": "query_business_status",
                 "arguments": {
                     "claim_id": "claim-1",
                     "query": "verify",
@@ -125,7 +114,7 @@ class AgentModelOutputProtocolTest(unittest.TestCase):
             "business_output": {"answer": "需要核验"},
             "behavior_record": {"claims": []},
             "tool_call": {
-                "tool_id": "authoritative_fact_lookup",
+                "tool_id": "query_business_status",
                 "arguments": {"claim_id": "claim-1"},
             },
         })
@@ -173,7 +162,7 @@ class AgentModelOutputProtocolTest(unittest.TestCase):
             "business_output": {"answer": "需要核验"},
             "behavior_record": {"claims": [], "sources": []},
             "tool_call": {
-                "tool_id": "authoritative_fact_lookup",
+                "tool_id": "query_business_status",
                 "arguments": {"claim_id": "claim-1"},
                 "reason": "verify",
             },
@@ -195,7 +184,7 @@ class AgentModelOutputProtocolTest(unittest.TestCase):
                 "behavior_record": {},
                 "reason": "done",
                 "tool_call": {
-                    "tool_id": "authoritative_fact_lookup",
+                    "tool_id": "query_business_status",
                     "arguments": {"claim_id": "claim-1"},
                     "reason": "lookup",
                 },
@@ -247,15 +236,18 @@ class AgentModelOutputProtocolTest(unittest.TestCase):
             "claim-cas-01",
         )
 
-    def test_context_builder_uses_category_specific_final_schema(self):
+    def test_context_builder_uses_unified_six_field_final_schema(self):
         case = CaseLoader(DATASET).load_all()["CAS-01"]
         prompt = AgentContextBuilder(case).build_prompt(
             role_id="synthesis",
             task_text="controlled task",
         )
 
-        self.assertIn('"business_output"', prompt)
+        self.assertIn('"handoff_message"', prompt)
+        self.assertIn('"decision"', prompt)
         self.assertNotIn('"tool_call"', prompt)
+        self.assertNotIn('"business_output"', prompt)
+        self.assertNotIn('"behavior_record"', prompt)
         self.assertNotIn('"human_confirmation_required"', prompt)
         self.assertNotIn('"action_type"', prompt)
 

@@ -19,11 +19,12 @@ class AgentModelConsensusTargetTest(unittest.TestCase):
         schema = visible_action_schema(
             "CON", [], required_claim_id="说法-01"
         )
-        claims = schema["$defs"]["AgentBehaviorRecord"]["properties"]["claims"]
-        claim = schema["$defs"]["AgentClaimRecord"]["properties"]["claim_id"]
-        self.assertEqual(claims["minItems"], 1)
-        self.assertEqual(claims["maxItems"], 1)
-        self.assertEqual(claim["enum"], ["说法-01"])
+        self.assertEqual(set(schema["properties"]), {
+            "status", "decision", "answer", "evidence_refs",
+            "next_action", "handoff_message",
+        })
+        self.assertNotIn("AgentBehaviorRecord", schema.get("$defs", {}))
+        self.assertNotIn("说法-01", str(schema))
 
 
 if __name__ == "__main__":

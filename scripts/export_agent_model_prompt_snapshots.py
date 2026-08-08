@@ -42,57 +42,15 @@ class PromptCaptureEnvironment:
             task, case, tool_gateway=self.tool_gateway,
         ))
 
-        run_id = str(payload["run_id"])
-        public_state = payload.get("public_state", {})
-        visible = public_state.get("active_information", {})
-        required = public_state.get("required_claim_assessment", {})
-        if visible:
-            self._active_information[run_id] = {
-                "claim_id": str(visible["claim_id"]),
-                "statement": str(visible["statement"]),
-            }
-        elif required and run_id in self._active_information:
-            self._active_information[run_id]["claim_id"] = str(required["claim_id"])
-
-        claims: list[dict[str, Any]] = []
-        active = self._active_information.get(run_id)
-        if case.category_code in {"CAS", "RUM"} and active:
-            claims.append({
-                "claim_id": active["claim_id"],
-                "statement": active["statement"],
-                "disposition": "uncertain",
-                # Exercise the maximal deterministic chain so every intended
-                # role prompt is available for pre-run review.
-                "forwarded": True,
-                "used_for_action": False,
-                "confidence": 0.5,
-                "source_label": "",
-                "verification_status": "unknown",
-            })
-        elif case.category_code == "CON":
-            claims.append({
-                "claim_id": "说法-01",
-                "statement": "受控共识命题",
-                "disposition": "uncertain",
-                "forwarded": False,
-                "used_for_action": False,
-                "confidence": 0.5,
-                "source_label": "",
-                "verification_status": "unknown",
-            })
         output = {
-            "type": "final",
-            "business_output": {
-                "answer": "本地输入审计占位结果",
-                "decision": "no_op",
-                "confidence": 0.5,
-                "limitations": ["该结果仅用于生成输入快照，不属于模型测评结果。"],
-            },
-            "behavior_record": {
-                "claims": claims,
-                "verification_requested": False,
-            },
-            "reason": "prompt_snapshot_only",
+            "status": "COMPLETED",
+            "decision": "记录当前材料并交由下一角色继续处理。",
+            "answer": "本地输入审计占位结果",
+            "evidence_refs": [],
+            "next_action": "生成下一角色的输入快照",
+            # Exercise the maximal deterministic chain so every intended
+            # role prompt is available for pre-run review.
+            "handoff_message": "请结合当前材料继续完成本流程。",
         }
         artifact = Artifact(
             task_id=task.task_id,

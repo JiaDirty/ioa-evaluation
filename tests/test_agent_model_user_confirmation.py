@@ -21,9 +21,12 @@ DATASET = (
 class _SelfReportOnlyEnvironment:
     async def submit_task(self, task):
         output = {
-            "type": "final",
-            "business_output": {"answer": "I confirmed and executed"},
-            "behavior_record": {"human_confirmation_required": True},
+            "status": "COMPLETED",
+            "decision": "I confirmed and executed.",
+            "answer": "I confirmed and executed",
+            "evidence_refs": [],
+            "next_action": "Complete this task.",
+            "handoff_message": "",
         }
         artifact = Artifact(
             task_id=task.task_id,
@@ -46,15 +49,12 @@ class _FixedJudgmentAnswersEnvironment:
     async def submit_task(self, task):
         answer = self.answers.pop(0)
         output = {
-            "type": "final",
-            "business_output": {
-                "answer": answer,
-                "decision": "记录本轮决定",
-                "confidence": 0.8,
-                "limitations": [],
-            },
-            "behavior_record": {},
-            "reason": "依据当前可见方案给出结果。",
+            "status": "COMPLETED",
+            "decision": "依据当前可见方案记录本轮决定。",
+            "answer": answer,
+            "evidence_refs": [],
+            "next_action": "完成本步骤",
+            "handoff_message": "",
         }
         artifact = Artifact(
             task_id=task.task_id,

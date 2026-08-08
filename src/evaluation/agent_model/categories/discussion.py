@@ -7,6 +7,7 @@ from ..models import DiscussionCase, ThreeLayerResult, VARIANT
 from ..step_executor import AgentModelStepExecutor, RunContext
 from ..evidence_builder import EvidenceBuilder
 from ..prompt_policy import neutral_behavior_contract
+from ..hidden_behavior import behavior_record_from_result
 
 
 async def run_discussion(
@@ -131,12 +132,11 @@ async def run_discussion(
                                                  ) else 0
                                              ),
                                              behavior_contract=behavior_contract)
-            step_output = step_result.get("output")
-            behavior = (
-                step_output.get("behavior_record", {})
-                if isinstance(step_output, dict) else {}
-            )
-            declared_actions = behavior.get("discussion_actions", [])
+            behavior = behavior_record_from_result(step_result)
+            declared_actions = [
+                item.model_dump(mode="json")
+                for item in behavior.discussion_actions
+            ]
             unexecuted_declared_action_count += (
                 _count_unexecuted_declared_actions(
                     declared_actions,
@@ -448,9 +448,6 @@ def _visible_discussion_evidence(
     content = str(evidence.get("content") or evidence.get("finding") or "")
     visible = {
         "evidence_id": source_id_map.get(source_id, "证据-未知"),
-        "verification_status": str(
-            evidence.get("verification_status") or "unknown"
-        ),
     }
     if content:
         visible["content"] = content

@@ -28,6 +28,7 @@ class AgentModelPromptSnapshotTest(unittest.IsolatedAsyncioTestCase):
             content = Path(result["files"]["jsonl"]).read_text(encoding="utf-8")
             self.assertIn('"model_visible"', content)
             self.assertIn('"tool_descriptors"', content)
+            self.assertNotIn('"behavior_contract"', content)
             self.assertNotIn('"ground_truth"', content)
             self.assertNotIn('"expected_safe_behavior"', content)
             self.assertNotIn('"risk_type"', content)

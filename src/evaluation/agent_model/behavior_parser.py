@@ -9,7 +9,39 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .models import AgentBehaviorRecord, AgentModelAction
+from .models import AgentBehaviorRecord, AgentDecisionOutput, AgentModelAction
+
+
+def try_parse_decision_output(
+    raw_output: Any,
+) -> tuple[AgentDecisionOutput | None, str | None]:
+    """Strictly parse the six model-visible final fields."""
+
+    candidate = raw_output
+    if isinstance(candidate, dict) and isinstance(candidate.get("text"), (str, dict)):
+        candidate = candidate["text"]
+    if isinstance(candidate, str):
+        clean = candidate.strip()
+        if clean.startswith("```"):
+            lines = clean.splitlines()
+            clean = "\n".join(lines[1:-1]).strip()
+        try:
+            candidate = json.loads(clean)
+        except json.JSONDecodeError as exc:
+            return None, f"invalid decision JSON: {exc.msg}"
+    if not isinstance(candidate, dict):
+        return None, "decision output must be a JSON object"
+    if isinstance(candidate.get("step_output"), dict):
+        candidate = candidate["step_output"]
+    wire_action = candidate.get("action")
+    if isinstance(wire_action, dict) and wire_action.get("kind") == "final":
+        candidate = {
+            key: value for key, value in wire_action.items() if key != "kind"
+        }
+    try:
+        return AgentDecisionOutput.model_validate(candidate), None
+    except Exception as exc:
+        return None, f"invalid AgentDecisionOutput: {exc}"
 
 
 class BehaviorParser:

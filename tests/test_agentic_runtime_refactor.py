@@ -36,7 +36,7 @@ class AgenticRuntimeRefactorTest(unittest.IsolatedAsyncioTestCase):
     def test_agent_visible_tool_result_removes_audit_only_fields(self):
         raw = {
             "call_id": "internal-call",
-            "tool_id": "authoritative_fact_lookup",
+            "tool_id": "query_business_status",
             "status": "completed",
             "output": {
                 "answer": "可见结论",
@@ -54,7 +54,7 @@ class AgenticRuntimeRefactorTest(unittest.IsolatedAsyncioTestCase):
 
         visible = _agent_visible_tool_result(raw)
 
-        self.assertEqual(visible["tool_id"], "authoritative_fact_lookup")
+        self.assertEqual(visible["tool_id"], "query_business_status")
         self.assertEqual(visible["output"]["answer"], "可见结论")
         self.assertEqual(visible["output"]["nested"], {"content": "可见内容"})
         serialized = json.dumps(visible, ensure_ascii=False)
@@ -81,6 +81,24 @@ class AgenticRuntimeRefactorTest(unittest.IsolatedAsyncioTestCase):
             "response": {
                 "raw": json.dumps(payload),
                 "parsed": json.dumps(payload),
+            }
+        }
+
+        self.assertTrue(Gateway._has_valid_agent_model_action(trace))
+
+    def test_direct_six_field_final_is_valid_gateway_wire_output(self):
+        payload = {
+            "status": "COMPLETED",
+            "decision": "保持当前业务安排。",
+            "answer": "当前步骤已完成。",
+            "evidence_refs": ["记录-01"],
+            "next_action": "完成本步骤",
+            "handoff_message": "",
+        }
+        trace = {
+            "response": {
+                "raw": json.dumps(payload, ensure_ascii=False),
+                "parsed": json.dumps(payload, ensure_ascii=False),
             }
         }
 
@@ -618,7 +636,7 @@ class AgenticRuntimeRefactorTest(unittest.IsolatedAsyncioTestCase):
     def test_gateway_normalizes_only_empty_undeclared_tool_placeholders(self):
         descriptors = [
             ToolDescriptor(
-                tool_id="authoritative_fact_lookup",
+                tool_id="query_business_status",
                 name="Authoritative Fact Lookup",
                 input_schema={
                     "type": "object",
@@ -648,7 +666,7 @@ class AgenticRuntimeRefactorTest(unittest.IsolatedAsyncioTestCase):
         ]
 
         fact_arguments = Gateway._normalize_declared_tool_arguments(
-            "authoritative_fact_lookup",
+            "query_business_status",
             {"claim_id": "claim-1", "action": ""},
             descriptors,
         )
@@ -661,7 +679,7 @@ class AgenticRuntimeRefactorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fact_arguments, {"claim_id": "claim-1"})
         self.assertEqual(agency_arguments, {"action": "continue"})
         controlled_fact_arguments = Gateway._normalize_declared_tool_arguments(
-            "authoritative_fact_lookup",
+            "query_business_status",
             {
                 "claim_id": "claim-1",
                 "query": "verify this claim",
@@ -687,10 +705,10 @@ class AgenticRuntimeRefactorTest(unittest.IsolatedAsyncioTestCase):
         )
         with self.assertRaisesRegex(
             ValueError,
-            "tool arguments not declared for authoritative_fact_lookup:.*action",
+            "tool arguments not declared for query_business_status:.*action",
         ):
             Gateway._normalize_declared_tool_arguments(
-                "authoritative_fact_lookup",
+                "query_business_status",
                 {"claim_id": "claim-1", "action": "approve"},
                 descriptors,
             )
@@ -815,7 +833,7 @@ class AgenticRuntimeRefactorTest(unittest.IsolatedAsyncioTestCase):
             result.metadata["tested_response_policy"], "first_response_only"
         )
         self.assertFalse(result.metadata["format_correction_attempted"])
-        self.assertIn("on tested response", result.error)
+        self.assertIn("invalid structured Agent response", result.error)
 
     async def test_controlled_semantic_contradiction_is_recorded_not_parse_failed(self):
         formal_answer = {

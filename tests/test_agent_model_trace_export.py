@@ -35,7 +35,7 @@ class AgentModelTraceExportTest(unittest.IsolatedAsyncioTestCase):
                         "upstream_artifacts": [{"from": "upstream-1"}],
                         "turn_history": [{"round": 0, "answer": "待核验"}],
                         "tool_descriptors": [{
-                            "tool_id": "authoritative_fact_lookup",
+                            "tool_id": "query_business_status",
                             "name": "权威事实查询",
                             "description": "查询受控事实。",
                             "input_schema": {
@@ -101,13 +101,13 @@ class AgentModelTraceExportTest(unittest.IsolatedAsyncioTestCase):
                     "model_responses": [{"raw": "tool_call"}],
                     "duplicate_tool_calls": [{
                         "turn": 2,
-                        "tool_id": "authoritative_fact_lookup",
+                        "tool_id": "query_business_status",
                         "arguments": {"claim_id": "claim-1"},
                         "executed_again": False,
                     }],
                 },
                 tool_calls_json=[{
-                    "tool_id": "authoritative_fact_lookup",
+                    "tool_id": "query_business_status",
                     "arguments": {"claim_id": "claim-1"},
                     "result": {"supported": True},
                 }],
@@ -151,7 +151,7 @@ class AgentModelTraceExportTest(unittest.IsolatedAsyncioTestCase):
                                         "content": (
                                             '{"action":{"kind":"tool_call",'
                                             '"tool_call":{"tool_id":'
-                                            '"authoritative_fact_lookup",'
+                                            '"query_business_status",'
                                             '"arguments":{"claim_id":'
                                             '"claim-1"}}}}'
                                         ),
@@ -169,14 +169,14 @@ class AgentModelTraceExportTest(unittest.IsolatedAsyncioTestCase):
                         "raw": (
                             '{"action":{"kind":"tool_call",'
                             '"tool_call":{"tool_id":'
-                            '"authoritative_fact_lookup",'
+                            '"query_business_status",'
                             '"arguments":{"claim_id":"claim-1"}}}}'
                         ),
                         "parsed": {
                             "action": {
                                 "kind": "tool_call",
                                 "tool_call": {
-                                    "tool_id": "authoritative_fact_lookup",
+                                    "tool_id": "query_business_status",
                                     "arguments": {"claim_id": "claim-1"},
                                 },
                             },
@@ -201,7 +201,7 @@ class AgentModelTraceExportTest(unittest.IsolatedAsyncioTestCase):
                 round_index=1,
                 event_type="tool_call",
                 payload={
-                    "tool_id": "authoritative_fact_lookup",
+                    "tool_id": "query_business_status",
                     "arguments": {"claim_id": "claim-1"},
                     "status": "completed",
                 },
@@ -215,7 +215,7 @@ class AgentModelTraceExportTest(unittest.IsolatedAsyncioTestCase):
                 round_index=1,
                 event_type="tool_result",
                 payload={
-                    "tool_id": "authoritative_fact_lookup",
+                    "tool_id": "query_business_status",
                     "output": {"supported": True},
                     "status": "completed",
                 },
@@ -343,7 +343,7 @@ class AgentModelTraceExportTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn("模型实际收到的输入", readable)
             self.assertIn("你是核验 Agent。", readable)
             self.assertIn("上游 Agent 产物", readable)
-            self.assertIn("authoritative_fact_lookup", readable)
+            self.assertIn("query_business_status", readable)
             self.assertIn("输出字段要求", readable)
             self.assertIn("provider_tool", readable)
             self.assertIn("供应商结束原因：`stop`", readable)

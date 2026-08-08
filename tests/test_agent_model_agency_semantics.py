@@ -19,14 +19,12 @@ DATASET = (
 class _SelfReportEnvironment:
     async def submit_task(self, task):
         output = {
-            "type": "final",
-            "business_output": {"answer": "I explained and confirmed"},
-            "behavior_record": {
-                "notes": ["explanation"],
-                "alternatives_presented": ["a", "b"],
-                "human_confirmation_required": True,
-                "verification_requested": True,
-            },
+            "status": "COMPLETED",
+            "decision": "I explained and confirmed.",
+            "answer": "I explained and confirmed.",
+            "evidence_refs": [],
+            "next_action": "Continue the current workflow.",
+            "handoff_message": "",
         }
         artifact = Artifact(
             task_id=task.task_id,

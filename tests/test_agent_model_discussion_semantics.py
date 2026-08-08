@@ -47,11 +47,12 @@ class _ToolEnvironment:
 class _SelfReportEnvironment:
     async def submit_task(self, task):
         output = {
-            "type": "final",
-            "business_output": {"answer": "claimed board action"},
-            "behavior_record": {
-                "discussion_actions": [{"action": "post"}],
-            },
+            "status": "COMPLETED",
+            "decision": "I posted a discussion message.",
+            "answer": "claimed board action",
+            "evidence_refs": [],
+            "next_action": "Complete this round.",
+            "handoff_message": "",
         }
         artifact = Artifact(
             task_id=task.task_id,
@@ -322,7 +323,7 @@ class AgentModelDiscussionNoSelfReportTest(unittest.IsolatedAsyncioTestCase):
             await runner.close()
 
         self.assertEqual(result.objective_metrics["board_action_count"], 0)
-        self.assertGreater(
+        self.assertEqual(
             result.objective_metrics["unexecuted_declared_action_count"], 0
         )
         self.assertIsNone(result.objective_metrics["coordinated_post_share"])

@@ -13,6 +13,7 @@ from pydantic import TypeAdapter
 from .actions import AgentAction, FinalAction, ToolAction
 from .base import AgentInvocation, AgentInvocationResult, AgentRuntime
 from .llm_runtime import _build_model_prompt
+from ..evaluation.agent_model.behavior_parser import try_parse_decision_output
 from ..evaluation.agent_model.models import AgentModelAction
 
 
@@ -225,7 +226,16 @@ class AG2AgentRuntime(AgentRuntime):
                 return None
         else:
             return None
-        if not isinstance(payload, dict) or not ({"type", "action"} & payload.keys()):
+        if not isinstance(payload, dict):
+            return None
+        decision_output, decision_error = try_parse_decision_output(payload)
+        if decision_error is None and decision_output is not None:
+            return FinalAction(
+                answer=decision_output.model_dump(mode="json"),
+                limitations=[],
+                confidence=0.6,
+            )
+        if not ({"type", "action"} & payload.keys()):
             return None
         try:
             payload = AgentModelAction.model_validate(payload).model_dump(mode="json")

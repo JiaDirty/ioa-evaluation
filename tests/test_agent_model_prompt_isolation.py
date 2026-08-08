@@ -102,7 +102,7 @@ class AgentModelPromptIsolationTest(unittest.TestCase):
             },
             available_tool_descriptors=[
                 {
-                    "tool_id": "authoritative_fact_lookup",
+                    "tool_id": "query_business_status",
                     "name": "lookup",
                     "description": "Return the controlled record for one claim.",
                     "input_schema": {
@@ -193,7 +193,7 @@ class AgentModelPromptIsolationTest(unittest.TestCase):
         prompt = runtime._build_prompt(self._invocation())
 
         self.assertIn("airport status report", prompt)
-        self.assertIn("authoritative_fact_lookup", prompt)
+        self.assertIn("query_business_status", prompt)
         self.assertNotIn("cascade_propagation", prompt)
         self.assertNotIn("variant", prompt)
         self.assertNotIn("risk_type", prompt)
@@ -223,7 +223,7 @@ class AgentModelPromptIsolationTest(unittest.TestCase):
         class _Gateway:
             def list_tools(self):
                 return [
-                    {"tool_id": "authoritative_fact_lookup"},
+                    {"tool_id": "query_business_status"},
                     {"tool_id": "secret_unallowed_tool"},
                 ]
 
@@ -236,7 +236,7 @@ class AgentModelPromptIsolationTest(unittest.TestCase):
 
         prompt = runtime._build_prompt(invocation)
 
-        self.assertIn("authoritative_fact_lookup", prompt)
+        self.assertIn("query_business_status", prompt)
         self.assertNotIn("secret_unallowed_tool", prompt)
 
     def test_both_runtimes_give_final_only_instructions_when_no_tool_is_available(self):
@@ -321,7 +321,7 @@ class AgentModelPromptIsolationTest(unittest.TestCase):
         for hidden in ("task-1", "trace-1", "gateway", "not rendered"):
             self.assertNotIn(hidden, ag2_prompt)
         self.assertIn("artifact-1", ag2_prompt)
-        self.assertIn("authoritative_fact_lookup", ag2_prompt)
+        self.assertIn("query_business_status", ag2_prompt)
         self.assertIn("Return the controlled record for one claim.", ag2_prompt)
         self.assertIn("`claim_id`（必填）", ag2_prompt)
         self.assertIn("Claim identifier.", ag2_prompt)
@@ -342,21 +342,21 @@ class AgentModelPromptIsolationTest(unittest.TestCase):
             "business_output": {},
             "behavior_record": {},
             "tool_call": {
-                "tool_id": "authoritative_fact_lookup",
+                "tool_id": "query_business_status",
                 "arguments": {"lookup_id": "claim-1"},
                 "reason": "verify fixture",
             },
         })
 
         self.assertEqual(action.type, "tool_call")
-        self.assertEqual(action.tool_id, "authoritative_fact_lookup")
+        self.assertEqual(action.tool_id, "query_business_status")
 
     def test_llm_runtime_accepts_nested_agent_model_action_tool_call(self):
         action = LLMAgentRuntime._parse_action({
             "action": {
                 "kind": "tool_call",
                 "tool_call": {
-                    "tool_id": "authoritative_fact_lookup",
+                    "tool_id": "query_business_status",
                     "arguments": {"claim_id": "claim-1"},
                     "reason": "use the available source",
                 },
@@ -364,7 +364,7 @@ class AgentModelPromptIsolationTest(unittest.TestCase):
         })
 
         self.assertEqual(action.type, "tool_call")
-        self.assertEqual(action.tool_id, "authoritative_fact_lookup")
+        self.assertEqual(action.tool_id, "query_business_status")
         self.assertEqual(action.arguments, {"claim_id": "claim-1"})
 
     def test_llm_runtime_accepts_nested_agent_model_action_final(self):

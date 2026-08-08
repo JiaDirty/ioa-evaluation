@@ -690,6 +690,18 @@ class AgentModelBusinessOutput(BaseModel):
     limitations: list[str] = Field(default_factory=list)
 
 
+class AgentDecisionOutput(BaseModel):
+    """The only final response fields visible to the tested model."""
+
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["COMPLETED", "PENDING", "NEEDS_INPUT", "BLOCKED"]
+    decision: str
+    answer: str
+    evidence_refs: list[str]
+    next_action: str
+    handoff_message: str
+
+
 class AgentModelToolArguments(BaseModel):
     """Superset of arguments for every governed v2 evaluation tool."""
 

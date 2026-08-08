@@ -25,10 +25,18 @@ class _FakeEnvironment:
 
     async def submit_task(self, task):
         self.tasks.append(task)
+        output = {
+            "status": "COMPLETED",
+            "decision": f"完成第 {len(self.tasks)} 个步骤。",
+            "answer": f"result-{len(self.tasks)}",
+            "evidence_refs": [],
+            "next_action": "交给下一角色继续处理",
+            "handoff_message": f"result-{len(self.tasks)}",
+        }
         artifact = Artifact(
             task_id=task.task_id,
             producer_agent_id="fake-agent",
-            content={"text": f"result-{len(self.tasks)}"},
+            content=output,
         )
         return TaskResult(
             task_id=task.task_id,
@@ -50,29 +58,18 @@ class _TextEnvironment(_FakeEnvironment):
 
 class _DirectBehaviorEnvironment(_FakeEnvironment):
     async def submit_task(self, task):
-        raw_behavior = {
-            "claims": [{
-                "claim_id": "claim-cas-01:baseline",
-                "statement": "正常运行",
-                "disposition": "accepted",
-                "forwarded": False,
-                "source_label": "authority-cas-01",
-                "verification_status": "verified",
-            }],
-            "sources": [],
-            "verification_requested": True,
-            "rules_used": [],
-            "exceptions_used": [],
-            "alternatives_presented": [],
-            "human_confirmation_required": False,
-            "permission_expansion_requested": False,
-            "discussion_actions": [],
-            "notes": [],
+        raw_output = {
+            "status": "COMPLETED",
+            "decision": "记录当前结果。",
+            "answer": "正常运行",
+            "evidence_refs": ["权威来源-01"],
+            "next_action": "完成本步骤",
+            "handoff_message": "",
         }
         trace = {
             "response": {
-                "raw": raw_behavior,
-                "parsed": raw_behavior,
+                "raw": raw_output,
+                "parsed": raw_output,
                 "error": None,
             }
         }
@@ -93,7 +90,7 @@ class _DirectBehaviorEnvironment(_FakeEnvironment):
 
 class _FakeToolCallStore:
     def list_by_task(self, task_id):
-        return [{"task_id": task_id, "tool_id": "authoritative_fact_lookup"}]
+        return [{"task_id": task_id, "tool_id": "query_business_status"}]
 
 
 class AgentModelStepExecutorTest(unittest.IsolatedAsyncioTestCase):
@@ -124,7 +121,7 @@ class AgentModelStepExecutorTest(unittest.IsolatedAsyncioTestCase):
                 self.tasks.append(task)
                 tool_result = {
                     "call_id": "call-1",
-                    "tool_id": "authoritative_fact_lookup",
+                    "tool_id": "query_business_status",
                     "status": "completed",
                     "output": {
                         "claim_id": "信息-01",
@@ -152,7 +149,7 @@ class AgentModelStepExecutorTest(unittest.IsolatedAsyncioTestCase):
                             "turn": 1,
                             "requested_action": {
                                 "type": "tool_call",
-                                "tool_id": "authoritative_fact_lookup",
+                                "tool_id": "query_business_status",
                                 "arguments": {"claim_id": "信息-01"},
                                 "reason": "核验信息",
                             },
@@ -160,7 +157,7 @@ class AgentModelStepExecutorTest(unittest.IsolatedAsyncioTestCase):
                         }],
                         "duplicate_tool_calls": [{
                             "turn": 2,
-                            "tool_id": "authoritative_fact_lookup",
+                            "tool_id": "query_business_status",
                             "arguments": {"claim_id": "信息-01"},
                             "executed_again": False,
                         }],
@@ -186,7 +183,7 @@ class AgentModelStepExecutorTest(unittest.IsolatedAsyncioTestCase):
                             "statement": "机场当前正常运行",
                         },
                     },
-                    allowed_tool_ids=["authoritative_fact_lookup"],
+                    allowed_tool_ids=["query_business_status"],
                     max_tool_calls=1,
                     required_claim_id="信息-01",
                 )
@@ -195,7 +192,7 @@ class AgentModelStepExecutorTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(observation["tool_calls"]), 1)
             self.assertEqual(
                 observation["tool_calls"][0]["tool_id"],
-                "authoritative_fact_lookup",
+                "query_business_status",
             )
             self.assertEqual(len(observation["duplicate_tool_calls"]), 1)
             self.assertEqual(executor.tool_call_count, 1)
@@ -232,7 +229,7 @@ class AgentModelStepExecutorTest(unittest.IsolatedAsyncioTestCase):
                     "action": {
                         "kind": "tool_call",
                         "tool_call": {
-                            "tool_id": "authoritative_fact_lookup",
+                            "tool_id": "query_business_status",
                             "arguments": {"claim_id": "信息-01"},
                             "reason": "查询当前信息",
                         },
@@ -272,7 +269,7 @@ class AgentModelStepExecutorTest(unittest.IsolatedAsyncioTestCase):
                             "turn": 1,
                             "requested_action": {
                                 "type": "tool_call",
-                                "tool_id": "authoritative_fact_lookup",
+                                "tool_id": "query_business_status",
                                 "arguments": {"claim_id": "信息-01"},
                                 "reason": "查询当前信息",
                             },
@@ -300,12 +297,12 @@ class AgentModelStepExecutorTest(unittest.IsolatedAsyncioTestCase):
                 "news",
                 "news_aggregation",
                 "判断当前信息",
-                allowed_tool_ids=["authoritative_fact_lookup"],
+                allowed_tool_ids=["query_business_status"],
             )
 
             self.assertEqual(result["duplicate_tool_calls"], [{
                 "turn": 2,
-                "tool_id": "authoritative_fact_lookup",
+                "tool_id": "query_business_status",
                 "arguments": {"claim_id": "信息-01"},
                 "executed_again": False,
             }])
@@ -330,7 +327,7 @@ class AgentModelStepExecutorTest(unittest.IsolatedAsyncioTestCase):
             },
             "output_json": {"step_output": {"answer": "已判断"}, "status": "completed"},
             "tool_calls_json": [{
-                "tool_id": "authoritative_fact_lookup",
+                "tool_id": "query_business_status",
                 "status": "completed",
                 "arguments": {"claim_id": "说法-01"},
                 "result": {
@@ -407,21 +404,19 @@ class AgentModelStepExecutorTest(unittest.IsolatedAsyncioTestCase):
             "msg-2",
         )
 
-    async def test_chain_rejects_missing_forwarding_decision(self):
+    async def test_chain_stops_when_free_text_output_has_no_handoff(self):
         case = CaseLoader(DATASET).load_all()["CAS-01"]
 
         class MissingForwardEnvironment(_FakeEnvironment):
             async def submit_task(self, task):
                 claim = task.payload["public_state"]["active_information"]
                 output = {
-                    "type": "final",
-                    "business_output": {"answer": "assessed"},
-                    "behavior_record": {"claims": [{
-                        "claim_id": claim["claim_id"],
-                        "statement": claim["statement"],
-                        "disposition": "uncertain",
-                        "forwarded": None,
-                    }]},
+                    "status": "NEEDS_INPUT",
+                    "decision": "当前信息尚未确认，暂不交接。",
+                    "answer": claim["statement"],
+                    "evidence_refs": [claim["claim_id"]],
+                    "next_action": "等待补充资料",
+                    "handoff_message": "",
                 }
                 artifact = Artifact(
                     task_id=task.task_id,
@@ -453,15 +448,12 @@ class AgentModelStepExecutorTest(unittest.IsolatedAsyncioTestCase):
             },
         ]
 
-        with self.assertRaisesRegex(
-            StepExecutionError, "omitted explicit forwarded"
-        ) as raised:
-            await executor.run_chain(context, chain)
-        self.assertEqual(
-            raised.exception.failure_code, "INVALID_EVIDENCE_INCOMPLETE"
-        )
+        results = await executor.run_chain(context, chain)
+        self.assertEqual(len(results), 1)
+        claim = results[0]["derived_behavior_record"]["claims"][0]
+        self.assertFalse(claim["forwarded"])
 
-    async def test_direct_behavior_record_is_wrapped_without_inventing_answer(self):
+    async def test_direct_six_field_response_is_preserved(self):
         case = CaseLoader(DATASET).load_all()["CAS-01"]
         executor = AgentModelStepExecutor(_DirectBehaviorEnvironment())
 
@@ -470,15 +462,11 @@ class AgentModelStepExecutorTest(unittest.IsolatedAsyncioTestCase):
             "upstream_intelligence", "news", "news_aggregation", "task",
         )
 
-        self.assertEqual(result["output"]["type"], "final")
-        self.assertEqual(result["output"]["business_output"]["answer"], "")
-        self.assertEqual(
-            result["output"]["behavior_record"]["claims"][0]["claim_id"],
-            "claim-cas-01:baseline",
-        )
+        self.assertEqual(result["output"]["answer"], "正常运行")
+        self.assertEqual(result["output"]["decision"], "记录当前结果。")
         self.assertNotIn("internal output", str(result["output"]))
         self.assertEqual(
-            result["model_call_traces"][0]["response"]["raw"]["claims"][0]["statement"],
+            result["model_call_traces"][0]["response"]["raw"]["answer"],
             "正常运行",
         )
         self.assertIsNone(result["behavior_parse_error"])
@@ -488,7 +476,7 @@ class AgentModelStepExecutorTest(unittest.IsolatedAsyncioTestCase):
             "action": {
                 "kind": "tool_call",
                 "tool_call": {
-                    "tool_id": "authoritative_fact_lookup",
+                    "tool_id": "query_business_status",
                     "arguments": {"claim_id": "claim-cas-01"},
                     "reason": "check the claim",
                 },
@@ -516,7 +504,7 @@ class AgentModelStepExecutorTest(unittest.IsolatedAsyncioTestCase):
             "news",
             "news_aggregation",
             "first task",
-            allowed_tool_ids=["authoritative_fact_lookup"],
+            allowed_tool_ids=["query_business_status"],
             max_tool_calls=1,
         )
         second = await executor.run_step(
@@ -529,15 +517,15 @@ class AgentModelStepExecutorTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(len(env.tasks), 2)
-        self.assertEqual(first["output"], {"text": "result-1"})
-        self.assertEqual(second["output"], {"text": "result-2"})
+        self.assertEqual(first["output"]["answer"], "result-1")
+        self.assertEqual(second["output"]["answer"], "result-2")
         self.assertEqual(
             env.tasks[1].payload["upstream_artifacts"][0]["content"],
-            {"text": "result-1"},
+            first["output"],
         )
         self.assertEqual(
             env.tasks[0].payload["allowed_tool_ids"],
-            ["authoritative_fact_lookup"],
+            ["query_business_status"],
         )
         expected_turns = min(
             2,
@@ -554,14 +542,12 @@ class AgentModelStepExecutorTest(unittest.IsolatedAsyncioTestCase):
         normal_action = env.tasks[0].payload["visible_action_schema"][
             "properties"
         ]["action"]
-        final_action = env.tasks[0].payload["final_action_schema"][
-            "properties"
-        ]["action"]
+        final_schema = env.tasks[0].payload["final_action_schema"]
         self.assertIn("anyOf", normal_action)
-        self.assertNotIn("anyOf", final_action)
-        self.assertEqual(
-            final_action["properties"]["kind"]["const"], "final"
-        )
+        self.assertEqual(set(final_schema["properties"]), {
+            "status", "decision", "answer", "evidence_refs",
+            "next_action", "handoff_message",
+        })
         self.assertTrue(
             env.tasks[0].payload["controlled_agent_model_evaluation_step"]
         )
@@ -602,12 +588,12 @@ class AgentModelStepExecutorTest(unittest.IsolatedAsyncioTestCase):
             "news",
             "news_aggregation",
             "first task",
-            allowed_tool_ids=["authoritative_fact_lookup"],
+            allowed_tool_ids=["query_business_status"],
         )
 
         self.assertEqual(
             result["tool_calls"][0]["tool_id"],
-            "authoritative_fact_lookup",
+            "query_business_status",
         )
 
     async def test_records_formal_parse_failure_without_discarding_raw_output(self):
@@ -617,7 +603,7 @@ class AgentModelStepExecutorTest(unittest.IsolatedAsyncioTestCase):
             RunContext("run-parse", case, "risk"),
             "upstream_intelligence", "news", "news_aggregation", "task",
         )
-        self.assertIn("invalid behavior JSON", result["behavior_parse_error"])
+        self.assertIn("invalid decision JSON", result["behavior_parse_error"])
         self.assertEqual(result["output"]["text"], "plain unstructured answer")
         self.assertEqual(len(executor.parse_failures), 1)
 
@@ -718,7 +704,7 @@ class AgentModelStepExecutorTest(unittest.IsolatedAsyncioTestCase):
             "news",
             "news_aggregation",
             "task",
-            allowed_tool_ids=["authoritative_fact_lookup"],
+            allowed_tool_ids=["query_business_status"],
         )
         self.assertTrue(result["tool_calls"])
         self.assertEqual(
@@ -727,12 +713,12 @@ class AgentModelStepExecutorTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["format_correction_attempted"])
 
     async def test_claim_missing_step_records_first_response_policy_fields(self):
-        """Steps whose post-processing fails (missing claim) keep the policy fields."""
+        """Claim evidence is derived without requiring model self-report fields."""
         case = CaseLoader(DATASET).load_all()["CAS-01"]
         env = _FakeEnvironment()
         executor = AgentModelStepExecutor(env)
-        with self.assertRaises(StepExecutionError):
-            await executor.run_chain(RunContext("run-policy-chain", case, "baseline"), [{
+        results = await executor.run_chain(
+            RunContext("run-policy-chain", case, "baseline"), [{
                 "role_id": "upstream_intelligence",
                 "sub_ioa_id": "news",
                 "capability": "information_collection",
@@ -745,7 +731,7 @@ class AgentModelStepExecutorTest(unittest.IsolatedAsyncioTestCase):
                     }
                 },
                 "role_state": {},
-                "allowed_tool_ids": ["authoritative_fact_lookup"],
+                "allowed_tool_ids": ["query_business_status"],
                 "forward_claim_id": "信息-01",
             }, {
                 "role_id": "risk_analysis",
@@ -762,13 +748,18 @@ class AgentModelStepExecutorTest(unittest.IsolatedAsyncioTestCase):
                 "role_state": {},
                 "allowed_tool_ids": [],
                 "forward_claim_id": "信息-01",
-            }])
+            }],
+        )
+
+        self.assertEqual(len(results), 2)
         observations = executor.observations
         self.assertTrue(observations)
         self.assertEqual(
             observations[0].get("tested_response_policy"), "first_response_only"
         )
         self.assertFalse(observations[0].get("format_correction_attempted"))
+        claims = observations[0]["derived_behavior_record"]["claims"]
+        self.assertEqual(claims[0]["claim_id"], "信息-01")
 
     async def test_model_call_budget_is_enforced_across_steps(self):
         case = CaseLoader(DATASET).load_all()["CAS-01"]

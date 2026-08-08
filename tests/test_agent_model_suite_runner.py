@@ -34,37 +34,21 @@ class _FakeEnvironment:
             }
         elif required and self.active_claim:
             self.active_claim["claim_id"] = required["claim_id"]
-        claims = []
-        if str(task.payload.get("case_id", "")).startswith("CON-"):
-            claims = [{
-                "claim_id": "说法-01",
-                "statement": "受控共识命题",
-                "disposition": "uncertain",
-                "forwarded": False,
-                "used_for_action": False,
-            }]
-        elif self.active_claim:
-            claims = [{
-                "claim_id": self.active_claim["claim_id"],
-                "statement": self.active_claim["statement"],
-                "disposition": "accepted",
-                "forwarded": True,
-                "used_for_action": True,
-            }]
+        is_consensus = str(task.payload.get("case_id", "")).startswith("CON-")
+        decision = (
+            "当前材料不足以形成确定结论，需要补充来源关系。"
+            if is_consensus else "采用当前信息并交给下一角色继续处理。"
+        )
         artifact = Artifact(
             task_id=task.task_id,
             producer_agent_id="fake-agent",
             content={
-                "business_output": {
-                    "answer": task.description,
-                    "decision": "complete",
-                    "confidence": 0.8,
-                    "limitations": [],
-                },
-                "behavior_record": {
-                    "claims": claims,
-                    "verification_requested": True,
-                },
+                "status": "NEEDS_INPUT" if is_consensus else "COMPLETED",
+                "decision": decision,
+                "answer": task.description,
+                "evidence_refs": [],
+                "next_action": "补充资料" if is_consensus else "交给下一角色",
+                "handoff_message": "" if is_consensus else task.description,
             },
         )
         return TaskResult(
@@ -246,7 +230,7 @@ class AgentModelSuiteRunnerTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(recovery_tasks)
         self.assertTrue(recovery_tasks[0].payload["turn_history"])
         self.assertIn(
-            "business_output",
+            "handoff_message",
             str(recovery_tasks[0].payload["turn_history"][0]["output_json"]),
         )
 
@@ -308,13 +292,28 @@ class AgentModelSuiteRunnerTest(unittest.IsolatedAsyncioTestCase):
     async def test_judge_callback_controls_final_status(self):
         case = CaseLoader(DATASET).load_all()["CAS-01"]
 
+        class RiskPropagationEnvironment(_FakeEnvironment):
+            async def submit_task(self, task):
+                result = await super().submit_task(task)
+                output = {
+                    **result.output,
+                    "decision": "采用当前信息并据此变更业务安排。",
+                    "answer": "已根据当前信息变更业务安排。",
+                }
+                artifact = result.artifacts[0].model_copy(
+                    update={"content": output}
+                )
+                return result.model_copy(
+                    update={"output": output, "artifacts": [artifact]}
+                )
+
         def judge(_case, _result, bundle):
             self.assertGreater(bundle["evidence_count"], 0)
             return {"status": "RISK_PROPAGATED", "reason": "fixture verdict"}
 
         runner = AgentModelSuiteRunner(
             db_path=":memory:",
-            environment=_FakeEnvironment(),
+            environment=RiskPropagationEnvironment(),
             fake_model=True,
             judge_callback=judge,
         )
@@ -347,11 +346,12 @@ class AgentModelSuiteRunnerTest(unittest.IsolatedAsyncioTestCase):
 
         agent_calls = [item for item in captured["evidence"] if item["type"] == "agent_call"]
         self.assertTrue(agent_calls)
-        self.assertIn("behavior_record", agent_calls[0]["raw_output"])
+        self.assertIn("decision", agent_calls[0]["raw_output"])
+        self.assertNotIn("behavior_record", agent_calls[0]["raw_output"])
         self.assertTrue(agent_calls[0]["artifact_ids"])
         self.assertIn("public_state", agent_calls[0]["raw_input"])
 
-    async def test_judge_bundle_contains_each_model_call_response(self):
+    async def test_judge_bundle_deduplicates_model_response_into_agent_call(self):
         case = CaseLoader(DATASET).load_all()["CAS-01"]
         captured = {}
 
@@ -369,13 +369,21 @@ class AgentModelSuiteRunnerTest(unittest.IsolatedAsyncioTestCase):
         finally:
             await runner.close()
 
-        model_calls = [
+        agent_calls = [
+            item for item in captured["evidence"]
+            if item["type"] == "agent_call"
+        ]
+        self.assertTrue(agent_calls)
+        for call in agent_calls:
+            self.assertIn("decision", call["raw_output"])
+            self.assertNotIn("behavior_record", call["raw_output"])
+
+        duplicate_model_calls = [
             item for item in captured["evidence"]
             if item["type"] == "runtime_event"
             and item["event_type"] == "model_call"
         ]
-        self.assertTrue(model_calls)
-        self.assertIn("response", model_calls[0]["payload"])
+        self.assertEqual(duplicate_model_calls, [])
 
     async def test_resume_restores_saved_result_without_reexecuting(self):
         case = CaseLoader(DATASET).load_all()["CAS-01"]

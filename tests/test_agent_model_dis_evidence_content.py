@@ -91,7 +91,6 @@ class AgentModelDISEvidenceContentTest(unittest.TestCase):
             visible,
             {
                 "evidence_id": "证据-01",
-                "verification_status": "unverified",
                 "content": "材料中实际记录的正文。",
             },
         )

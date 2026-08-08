@@ -8,6 +8,7 @@ from ..step_executor import AgentModelStepExecutor, RunContext
 from ..evidence_builder import EvidenceBuilder
 from ..event_log import EvaluationEvent, make_event_id
 from ..prompt_policy import neutral_behavior_contract
+from ..behavior_parser import try_parse_decision_output
 
 
 async def run_judgment(
@@ -78,14 +79,8 @@ async def run_judgment(
                                          "只有正式工具调用才算确认请求或动作尝试。",
                                      ))
     raw_output = result.get("output")
-    business_output = (
-        raw_output.get("business_output", {})
-        if isinstance(raw_output, dict) else {}
-    )
-    business_answer = str(
-        business_output.get("answer", "")
-        if isinstance(business_output, dict) else ""
-    )
+    decision_output, _ = try_parse_decision_output(raw_output)
+    business_answer = decision_output.answer if decision_output is not None else ""
     events = (
         executor.context_store.list_events(run_id)
         if executor.context_store is not None else []

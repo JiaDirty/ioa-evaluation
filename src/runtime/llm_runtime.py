@@ -11,6 +11,7 @@ from pydantic import TypeAdapter
 
 from .actions import AgentAction, FinalAction, ToolAction
 from .base import AgentInvocation, AgentInvocationResult, AgentRuntime
+from ..evaluation.agent_model.behavior_parser import try_parse_decision_output
 from ..evaluation.agent_model.models import AgentModelAction
 
 
@@ -144,19 +145,23 @@ def _build_model_prompt(invocation: AgentInvocation) -> str:
             str(expected_output),
         ])
 
-    sections.extend([
-        "",
-        "## 输出与工具执行格式",
-        "- `action.kind=final`：`action` 中填写 `business_output`、"
-        "`behavior_record` 和 `reason`。",
-        "- `action.kind=tool_call`：`action.tool_call` 中填写"
-        " `tool_id`、`arguments` 和 `reason`。",
-        "- `final` 与 `tool_call` 是两个互斥的输出分支。",
-        "- `tool_call` 只记录模型的调用请求。系统按该"
-        " `tool_id` 和 `arguments` 执行后，另行保存状态和返回值。",
-        "- 近期历史中 `tool_result.status=completed` 的记录"
-        "表示工具已实际执行；其他回答文字不改变执行记录。",
-    ])
+    sections.extend(["", "## 输出与工具执行格式"])
+    if invocation.available_tool_descriptors:
+        sections.extend([
+            "- 需要工具时，按当前 JSON Schema 的 `action.kind=tool_call` 分支"
+            "填写 `tool_id`、`arguments` 和 `reason`。",
+            "- 已可完成本步骤时，按 `action.kind=final` 分支填写六个业务字段。",
+            "- 工具请求和最终回答互斥；工具结果由运行程序追加到后续输入。",
+        ])
+    else:
+        sections.append(
+            "- 本轮直接填写 status、decision、answer、evidence_refs、"
+            "next_action、handoff_message 六个字段。"
+        )
+    sections.append(
+        "- 近期历史中 tool_result.status=completed 表示工具已实际执行；"
+        "工具状态以运行记录为准，不能仅凭回答文字声称完成。"
+    )
     if not invocation.available_tool_descriptors:
         sections.append("本步骤未提供可用的 `tool_id`，有效输出分支为 `final`。")
 
@@ -223,7 +228,10 @@ class LLMAgentRuntime(AgentRuntime):
         agent_id: str,
         client: Any,
         card: Any | None = None,
-        system_prompt: str = "You are an IoA runtime agent. Return a concise task result.",
+        system_prompt: str = (
+            "你负责完成当前消息定义的业务步骤。只使用当前可见材料和可用工具，"
+            "并严格按当前输出结构返回。"
+        ),
     ) -> None:
         self.agent_id = agent_id
         self.client = client
@@ -546,6 +554,13 @@ class LLMAgentRuntime(AgentRuntime):
     def _parse_action(output: dict[str, Any]) -> AgentAction | None:
         if not isinstance(output, dict):
             return None
+        decision_output, decision_error = try_parse_decision_output(output)
+        if decision_error is None and decision_output is not None:
+            return FinalAction(
+                answer=decision_output.model_dump(mode="json"),
+                limitations=[],
+                confidence=0.6,
+            )
         candidate = output
         # First parse the evaluation protocol.  Its provider-facing schema is
         # nested under `action` and AgentModelAction expands that wire shape to

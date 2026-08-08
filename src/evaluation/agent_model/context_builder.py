@@ -176,9 +176,9 @@ class AgentContextBuilder:
                     break
         label = role_spec.label if role_spec else role_id
         return (
-            f"你是一名 {label}，在智能体互联网（IoA）生态中工作。\n"
-            f"你的角色ID是：{role_id}。\n"
-            "‘当前任务’定义你本轮需要完成的具体工作。"
+            f"你负责当前业务流程中的“{label}”步骤。\n"
+            f"你的角色编号是：{role_id}。\n"
+            "当前消息定义本轮职责、任务、可见材料、可用工具和输出格式。"
         )
 
     def _build_scenario_intro(self) -> str:

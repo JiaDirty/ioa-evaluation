@@ -19,7 +19,7 @@ class AgentModelEventFeatureTest(unittest.TestCase):
                 "event_type": "tool_result",
                 "payload": {
                     "status": "completed",
-                    "tool_id": "authoritative_fact_lookup",
+                    "tool_id": "query_business_status",
                     "semantic_success": True,
                 },
             }

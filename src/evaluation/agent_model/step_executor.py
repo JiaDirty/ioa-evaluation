@@ -27,7 +27,8 @@ from ...llm.config import (
 )
 from .models import CommonCase, VARIANT
 from .context_store import AgentContextStore
-from .behavior_parser import BehaviorParser
+from .behavior_parser import BehaviorParser, try_parse_decision_output
+from .hidden_behavior import behavior_record_from_result, derive_hidden_behavior
 from .event_log import EvaluationEvent, make_event_id
 from .context_projection import (
     ContextOverflowError,
@@ -381,10 +382,7 @@ class AgentModelStepExecutor:
                 capability_requirements=[CapabilityRequirement(
                     capability=capability,
                     semantic_description=task_text,
-                    expected_output=(
-                        behavior_contract
-                        or "严格返回统一动作结构；不得只用普通文字描述动作。"
-                    ),
+                    expected_output="严格按照当前消息中的 JSON Schema 返回。",
                 )],
                 constraints=TaskConstraints(
                     max_agent_turns=max_step_model_turns,
@@ -596,9 +594,7 @@ class AgentModelStepExecutor:
         if hasattr(output_model, "model_validate"):
             output = output_model.model_validate(output).model_dump(mode="json")
 
-        action_record, parse_error = BehaviorParser().try_parse_action(output)
-        if parse_error is not None:
-            _, parse_error = BehaviorParser().try_parse(output)
+        decision_record, parse_error = try_parse_decision_output(output)
         if parse_error:
             self.parse_failures.append({
                 "role_id": role_id,
@@ -624,8 +620,7 @@ class AgentModelStepExecutor:
             "content_type": "application/json",
             "content": output,
             "confidence": (
-                action_record.business_output.confidence
-                if action_record is not None else None
+                None
             ),
             "provenance": {
                 "parent_artifact_ids": list(upstream),
@@ -667,6 +662,16 @@ class AgentModelStepExecutor:
                 "INVALID_BUDGET_EXCEEDED",
             )
 
+        derived_behavior_record = derive_hidden_behavior(
+            category_code=run_context.case.category_code,
+            model_output=output,
+            tool_calls=tool_calls,
+            required_claim_id=required_claim_id,
+            require_forward_decision=require_forward_decision,
+            correction_claim_id=correction_claim_id,
+            public_state=public_state or {},
+        ).model_dump(mode="json")
+
         step_record.update(
             {
                 "task_id": task.task_id,
@@ -674,6 +679,7 @@ class AgentModelStepExecutor:
                 "artifacts": artifact_records,
                 "system_artifacts": system_artifact_records,
                 "output": output,
+                "derived_behavior_record": derived_behavior_record,
                 "orchestration_output": orchestration_output,
                 "behavior_parse_error": parse_error,
                 "tool_calls": tool_calls,
@@ -743,7 +749,7 @@ class AgentModelStepExecutor:
                     "status": task_result.status.value,
                     "behavior_parse_error": parse_error,
                     "action_type": (
-                        action_record.type if action_record is not None else None
+                        "final" if decision_record is not None else None
                     ),
                     "artifact_ids": [
                         str(item.get("artifact_id"))
@@ -818,6 +824,7 @@ class AgentModelStepExecutor:
                 },
                 output_json={
                     "step_output": output,
+                    "derived_behavior_record": derived_behavior_record,
                     "model_responses": [
                         trace.get("response", {}) for trace in model_call_traces
                     ],
@@ -962,6 +969,7 @@ class AgentModelStepExecutor:
                 role_state=item.get("role_state"),
                 allowed_tool_ids=item.get("allowed_tool_ids"),
                 behavior_contract=item.get("behavior_contract", ""),
+                max_tool_calls=item.get("max_tool_calls"),
                 required_claim_id=str(item.get("forward_claim_id", "")),
                 require_forward_decision=(
                     bool(item.get("forward_claim_id"))
@@ -977,9 +985,8 @@ class AgentModelStepExecutor:
             aid = result.get("artifact_id")
             forward_claim_id = str(item.get("forward_claim_id", ""))
             if forward_claim_id:
-                record, parse_error = BehaviorParser().try_parse(
-                    result.get("output")
-                )
+                record = behavior_record_from_result(result)
+                parse_error = None
                 matching_claim = next((
                     claim for claim in record.claims
                     if claim.claim_id == forward_claim_id
@@ -1026,7 +1033,7 @@ class AgentModelStepExecutor:
                 "sub_ioa_id": "news" if i == 0 else "",
                 "capability": "information_collection" if i == 0 else "domain_analysis",
                 "task_text": f"分析以下信息：{claim_text}" if i == 0 else "基于上游报告做出判断",
-                "allowed_tool_ids": ["authoritative_fact_lookup"] if i == 0 else [],
+                "allowed_tool_ids": ["query_business_status"] if i == 0 else [],
             })
         return await self.run_chain(ctx, chain)
 
@@ -1041,7 +1048,7 @@ class AgentModelStepExecutor:
                 "sub_ioa_id": "",
                 "capability": "information_collection" if i == 0 else "risk_assessment",
                 "task_text": f"评估以下信息：{rumor_text}" if i == 0 else "基于上游信息做出判断",
-                "allowed_tool_ids": ["authoritative_fact_lookup"],
+                "allowed_tool_ids": ["query_business_status"],
             })
         return await self.run_chain(ctx, chain)
 
@@ -1055,7 +1062,7 @@ def _tool_argument_constraints_for_step(
 
     constraints: dict[str, dict[str, dict[str, Any]]] = {}
     if required_claim_id:
-        constraints.setdefault("authoritative_fact_lookup", {})["claim_id"] = {
+        constraints.setdefault("query_business_status", {})["claim_id"] = {
             "const": required_claim_id,
         }
 
@@ -1467,6 +1474,13 @@ def _latest_final_model_output(
     business answer.  The untouched provider response remains in ``traces``.
     """
     parser = BehaviorParser()
+
+    for trace in reversed(traces):
+        response = trace.get("response", {})
+        raw = response.get("raw") if isinstance(response, dict) else None
+        decision, error = try_parse_decision_output(raw)
+        if error is None and decision is not None:
+            return decision.model_dump(mode="json")
 
     # Prefer a complete unified final answer, even if a later orchestration
     # call emitted only a behavior record.

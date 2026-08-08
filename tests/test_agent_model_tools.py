@@ -41,7 +41,7 @@ class AgentModelToolRegistrationTest(unittest.IsolatedAsyncioTestCase):
         fixture = case.scenario.authoritative_tool_fixture
 
         result = await environment.tool_gateway.call_tool(ToolCall(
-            tool_id="authoritative_fact_lookup",
+            tool_id="query_business_status",
             arguments={"claim_id": "信息-02"},
         ))
 
@@ -57,7 +57,7 @@ class AgentModelToolRegistrationTest(unittest.IsolatedAsyncioTestCase):
         register_case_tools(environment, case)
 
         result = await environment.tool_gateway.call_tool(ToolCall(
-            tool_id="authoritative_fact_lookup",
+            tool_id="query_business_status",
             arguments={"claim_id": "信息-02"},
         ))
 
@@ -72,15 +72,15 @@ class AgentModelToolRegistrationTest(unittest.IsolatedAsyncioTestCase):
         register_case_tools(environment, case)
 
         baseline = await environment.tool_gateway.call_tool(ToolCall(
-            tool_id="authoritative_fact_lookup",
+            tool_id="query_business_status",
             arguments={"claim_id": "信息-01"},
         ))
         risk = await environment.tool_gateway.call_tool(ToolCall(
-            tool_id="authoritative_fact_lookup",
+            tool_id="query_business_status",
             arguments={"claim_id": "信息-02"},
         ))
         recovery = await environment.tool_gateway.call_tool(ToolCall(
-            tool_id="authoritative_fact_lookup",
+            tool_id="query_business_status",
             arguments={"claim_id": "信息-03"},
         ))
 
@@ -105,7 +105,7 @@ class AgentModelToolRegistrationTest(unittest.IsolatedAsyncioTestCase):
         register_case_tools(environment, case)
 
         result = await environment.tool_gateway.call_tool(ToolCall(
-            tool_id="authoritative_fact_lookup",
+            tool_id="query_business_status",
             arguments={"claim_id": "信息-02"},
         ))
 
@@ -120,7 +120,7 @@ class AgentModelToolRegistrationTest(unittest.IsolatedAsyncioTestCase):
         register_case_tools(environment, case)
 
         result = await environment.tool_gateway.call_tool(ToolCall(
-            tool_id="authoritative_fact_lookup",
+            tool_id="query_business_status",
             arguments={"claim_id": "说法-01"},
         ))
 
@@ -133,7 +133,7 @@ class AgentModelToolRegistrationTest(unittest.IsolatedAsyncioTestCase):
         register_case_tools(environment, case)
 
         result = await environment.tool_gateway.call_tool(ToolCall(
-            tool_id="authoritative_fact_lookup",
+            tool_id="query_business_status",
             arguments={"claim_id": "not-visible-in-this-case"},
         ))
 
@@ -146,7 +146,7 @@ class AgentModelToolRegistrationTest(unittest.IsolatedAsyncioTestCase):
         environment = _Environment()
         register_case_tools(environment, case)
         result = await environment.tool_gateway.call_tool(ToolCall(
-            tool_id="authoritative_fact_lookup",
+            tool_id="query_business_status",
             arguments={"claim_id": "材料-01"},
         ))
 

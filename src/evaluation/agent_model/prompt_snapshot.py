@@ -38,7 +38,6 @@ def build_prompt_snapshot(
         "upstream_artifacts": payload.get("upstream_artifacts", []),
         "turn_history": payload.get("turn_history", []),
         "tool_descriptors": tool_descriptors,
-        "behavior_contract": payload.get("behavior_contract", ""),
         "output_schema": payload.get("visible_action_schema", {}),
     }
     validate_visible_package(case, {
@@ -116,7 +115,7 @@ def export_prompt_snapshots(
     lines = [
         "# 模型可见输入快照索引",
         "",
-        "本目录由本地输入审计生成，不调用被测模型。JSONL 文件逐条保留真正允许模型看到的任务、公开状态、角色状态、上游产物、历史、工具说明、行为记录要求和输出格式。",
+        "本目录由本地输入审计生成，不调用被测模型。JSONL 文件逐条保留真正允许模型看到的任务、公开状态、角色状态、上游产物、历史、工具说明和输出格式。",
         "",
         f"- 用例数：{len(case_ids)}",
         f"- 输入快照数：{len(records)}",
