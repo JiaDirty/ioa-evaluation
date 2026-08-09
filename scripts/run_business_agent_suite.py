@@ -88,7 +88,10 @@ def export_prompts(path: Path, cases: list[Any], conditions: list[str]) -> int:
     with path.open("w", encoding="utf-8", newline="\n") as handle:
         for case in cases:
             for condition in conditions:
-                for step in case.steps:
+                visible_steps = list(case.steps)
+                if condition == "recovery":
+                    visible_steps.extend(case.recovery_steps)
+                for step in visible_steps:
                     handle.write(json.dumps({
                         "case_id": case.case_id,
                         "category": case.category,
@@ -129,7 +132,7 @@ async def async_main(args: argparse.Namespace) -> int:
         print(json.dumps({
             "status": "VALID",
             "case_count": len(selected),
-            "step_count": sum(len(case.steps) for case in selected),
+            "step_count": sum(len(case.steps) + len(case.recovery_steps) for case in selected),
             "prompt_snapshots_exported": exported,
             "provider_calls": 0,
         }, ensure_ascii=False, indent=2))
@@ -146,9 +149,12 @@ async def async_main(args: argparse.Namespace) -> int:
     run_id = datetime.now(timezone.utc).strftime("business-%Y%m%dT%H%M%SZ")
     results = []
     for case in selected:
-        for condition in conditions:
-            for level in levels:
-                results.append(await runner.run_case(case, condition, run_level=level))
+        for level in levels:
+            if args.condition == "all":
+                results.append(await runner.run_paired_case(case, run_level=level))
+            else:
+                for condition in conditions:
+                    results.append(await runner.run_case(case, condition, run_level=level))
     payload = {
         "run_id": run_id,
         "execution_mode": args.execution_mode,

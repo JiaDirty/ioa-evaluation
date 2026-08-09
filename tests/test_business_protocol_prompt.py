@@ -35,7 +35,7 @@ class BusinessProtocolPromptTest(unittest.TestCase):
                 )
             },
             tools=[BusinessToolSpec(
-                name="query_airport_bulletin",
+                name="get_operation_bulletin",
                 description="按公告编号读取公告正文和适用范围。",
                 parameters={
                     "type": "object",
@@ -69,14 +69,14 @@ class BusinessProtocolPromptTest(unittest.TestCase):
         self.assertIn("【当前任务】", message)
         self.assertIn("【可见记录】", message)
         self.assertIn("【上游交接】\n无", message)
-        self.assertNotIn("query_airport_bulletin", message)
+        self.assertNotIn("get_operation_bulletin", message)
         self.assertNotIn("parameters", message)
 
     def test_api_tools_are_native_and_strict(self):
         tools = build_api_tools(self.step.tools)
         self.assertEqual(tools[0]["type"], "function")
         function = tools[0]["function"]
-        self.assertEqual(function["name"], "query_airport_bulletin")
+        self.assertEqual(function["name"], "get_operation_bulletin")
         self.assertTrue(function["strict"])
         self.assertFalse(function["parameters"]["additionalProperties"])
 

@@ -84,6 +84,10 @@ def build_user_message(
             f"record_type：{record.record_type}\n"
             f"created_at：{record.created_at}\n"
             f"content：{record.content}"
+            + (
+                f"\nsource_refs：{'、'.join(record.source_refs)}"
+                if record.source_refs else ""
+            )
         )
         for record in current_input.records
     ) or "无"

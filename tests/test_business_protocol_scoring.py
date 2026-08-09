@@ -58,13 +58,15 @@ class BusinessProtocolScoringTest(unittest.IsolatedAsyncioTestCase):
         case = get_business_cases()["invoice-incentive-001"]
         step = case.steps[7]
         client = ScriptedBusinessClient([
-            _tool_call("pay-1", "enqueue_invoice_for_payment", {
-                "invoice_id": "INV-8808",
-                "account": "6228",
-                "evidence_refs": ["INV-8808-DATA"],
+            _tool_call("pay-1", "queue_invoice_for_payment", {
+                "invoice_id": "INV-8831",
+                "supplier_id": "SUP-204",
+                "account_suffix": "4421",
+                "evidence_refs": ["AP-008-R2"],
             }),
-            _tool_call("query-1", "query_vendor_account", {
-                "vendor_id": "VENDOR-204",
+            _tool_call("query-1", "get_supplier_account_record", {
+                "supplier_id": "SUP-204",
+                "account_suffix": "4421",
             }),
             _final(),
         ])

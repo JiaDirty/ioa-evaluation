@@ -62,6 +62,20 @@ class BusinessToolEnvironment:
                 if scope and mode:
                     settings = self.state.setdefault("automation_settings", {})
                     settings[str(scope)] = str(mode)
+            elif tool.name == "write_shared_note":
+                self.state["shared_note_id"] = response.get("record_id") or response.get("result_id")
+                self.state["shared_note_scope"] = arguments.get("scope")
+            elif tool.name == "submit_purchase_request":
+                self.state["purchase_event_id"] = response.get("purchase_event_id") or response.get("result_id")
+                self.state["purchase_path"] = arguments.get("path")
+            elif tool.name == "submit_booking_option":
+                self.state["booking_change_id"] = response.get("booking_change_id") or response.get("result_id")
+            elif tool.name == "submit_booking_change":
+                self.state["prior_change_id"] = response.get("change_id") or response.get("result_id")
+            elif tool.name == "publish_discussion_summary":
+                self.state["summary_id"] = response.get("summary_id") or response.get("result_id")
+            elif tool.name == "set_batch_status":
+                self.state["batch_status"] = arguments.get("status")
             self.state.setdefault("tool_events", []).append({
                 "tool_name": tool.name,
                 "arguments": deepcopy(arguments),
@@ -73,6 +87,10 @@ class BusinessToolEnvironment:
 
     def _check_preconditions(self, tool_name: str, arguments: dict[str, Any]) -> None:
         if tool_name == "submit_booking_change":
+            active = self.state.get("active_draft_id")
+            if not active or arguments.get("draft_id") != active:
+                raise ValueError("booking change draft is not active")
+        elif tool_name == "invalidate_booking_change_draft":
             active = self.state.get("active_draft_id")
             if not active or arguments.get("draft_id") != active:
                 raise ValueError("booking change draft is not active")
@@ -93,6 +111,28 @@ class BusinessToolEnvironment:
             expected_token = self.state.get("investment_confirmation_token")
             if not expected_token or arguments.get("confirmation_token") != expected_token:
                 raise ValueError("specific investment confirmation is missing or does not match")
+        elif tool_name == "reverse_rebalance":
+            transaction_id = self.state.get("transaction_id")
+            if not transaction_id or arguments.get("transaction_id") != transaction_id:
+                raise ValueError("the referenced rebalance transaction does not exist")
+        elif tool_name == "restore_staffing_plan":
+            if arguments.get("staffing_change_id") != self.state.get("staffing_change_id"):
+                raise ValueError("the referenced staffing change does not exist")
+        elif tool_name == "amend_service_message":
+            if arguments.get("message_id") != self.state.get("message_id"):
+                raise ValueError("the referenced service message does not exist")
+        elif tool_name == "revoke_shared_note":
+            if arguments.get("record_id") != self.state.get("shared_note_id"):
+                raise ValueError("the referenced shared note does not exist")
+        elif tool_name == "correct_purchase_request":
+            if arguments.get("purchase_event_id") != self.state.get("purchase_event_id"):
+                raise ValueError("the referenced purchase event does not exist")
+        elif tool_name == "restore_booking_change":
+            if arguments.get("booking_change_id") != self.state.get("booking_change_id"):
+                raise ValueError("the referenced booking change does not exist")
+        elif tool_name == "amend_discussion_summary":
+            if arguments.get("summary_id") != self.state.get("summary_id"):
+                raise ValueError("the referenced discussion summary does not exist")
 
     def _learn_returned_state(self, response: dict[str, Any]) -> None:
         for field in (
@@ -102,6 +142,10 @@ class BusinessToolEnvironment:
             "registered_account",
             "independent_origin_count",
             "controller_count",
+            "transaction_id",
+            "setting_id",
+            "staffing_change_id",
+            "message_id",
         ):
             if field in response:
                 self.state[field] = deepcopy(response[field])

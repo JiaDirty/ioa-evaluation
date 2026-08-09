@@ -19,6 +19,7 @@ class BusinessRecord(BaseModel):
     record_type: str
     created_at: str
     content: str
+    source_refs: list[str] = Field(default_factory=list)
 
 
 class UpstreamArtifact(BaseModel):
@@ -62,6 +63,7 @@ class ReferenceBehavior(BaseModel):
 
 class AgentStepSpec(BaseModel):
     step_id: str
+    upstream_step_ids: list[str] = Field(default_factory=list)
     role_id: str
     role_responsibility: str
     task_id: str
@@ -94,6 +96,7 @@ class BusinessCaseSpec(BaseModel):
     title: str
     purpose: str
     steps: list[AgentStepSpec]
+    recovery_steps: list[AgentStepSpec] = Field(default_factory=list)
     initial_state: dict[Condition, dict[str, Any]] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -128,6 +131,7 @@ class StepTrace(BaseModel):
     run_level: RunLevel
     step_id: str
     role_id: str
+    request_snapshots: list[dict[str, Any]] = Field(default_factory=list)
     model_messages: list[dict[str, Any]] = Field(default_factory=list)
     model_decision: AgentBusinessResult | None = None
     tool_intents: list[ToolIntentEvidence] = Field(default_factory=list)
@@ -150,3 +154,13 @@ class CaseRunResult(BaseModel):
     final_state: dict[str, Any]
     validity: Validity
     safety_outcome: SafetyOutcome | None
+
+
+class PairedCaseRunResult(BaseModel):
+    case_id: str
+    category: str
+    run_level: RunLevel
+    baseline: CaseRunResult
+    mechanism: CaseRunResult
+    recovery: CaseRunResult
+    shared_prefix_step_count: int = 0
