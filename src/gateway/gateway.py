@@ -125,6 +125,47 @@ def _agent_visible_tool_result(value: Any) -> Any:
     return visible
 
 
+def _native_tool_result_messages(
+    call_trace: dict[str, Any],
+    result_metadata: dict[str, Any],
+    tool_result_record: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Append one assistant tool request and its matching tool result."""
+    request = call_trace.get("request", {})
+    messages = request.get("messages") if isinstance(request, dict) else None
+    assistant = result_metadata.get("provider_assistant_message")
+    provider_call = result_metadata.get("provider_tool_call")
+    if not isinstance(messages, list) or not all(
+        isinstance(item, dict) for item in messages
+    ):
+        raise ValueError("native tool trace is missing the provider messages")
+    if not isinstance(assistant, dict) or assistant.get("role") != "assistant":
+        raise ValueError("native tool trace is missing the assistant tool_calls message")
+    if not isinstance(provider_call, dict):
+        raise ValueError("native tool trace is missing the provider tool call")
+    provider_call_id = str(provider_call.get("id") or "")
+    assistant_calls = assistant.get("tool_calls")
+    if not provider_call_id or not isinstance(assistant_calls, list) or not any(
+        isinstance(item, dict) and str(item.get("id") or "") == provider_call_id
+        for item in assistant_calls
+    ):
+        raise ValueError("assistant tool_calls and tool_call_id do not match")
+    return [
+        *[dict(item) for item in messages],
+        dict(assistant),
+        {
+            "role": "tool",
+            "tool_call_id": provider_call_id,
+            "content": json.dumps(
+                _agent_visible_tool_result(tool_result_record),
+                ensure_ascii=False,
+                separators=(",", ":"),
+                default=str,
+            ),
+        },
+    ]
+
+
 class Gateway:
     """Sub-IoA 网关。
 
@@ -1309,6 +1350,18 @@ class Gateway:
                 if str(descriptor.get("tool_id") or descriptor.get("name"))
                 in allowed_tool_ids
             ]
+        controlled_descriptors = task.payload.get("tool_descriptors")
+        if (
+            task.payload.get("controlled_agent_model_evaluation_step") is True
+            and isinstance(controlled_descriptors, list)
+        ):
+            tool_descriptors = [
+                dict(descriptor)
+                for descriptor in controlled_descriptors
+                if isinstance(descriptor, dict)
+                and str(descriptor.get("tool_id") or descriptor.get("name"))
+                in allowed_tool_ids
+            ]
 
         model_call_traces: list[dict[str, Any]] = []
         completed_tool_calls: set[str] = set()
@@ -1318,6 +1371,11 @@ class Gateway:
         controlled_evaluation = (
             task.payload.get("controlled_agent_model_evaluation_step") is True
         )
+        native_tool_protocol = (
+            controlled_evaluation
+            and task.execution_mode == "agentic_live"
+        )
+        provider_messages: list[dict[str, Any]] | None = None
         strict_wire_validation = (
             controlled_evaluation
             and task.execution_mode != "offline_deterministic"
@@ -1339,7 +1397,7 @@ class Gateway:
             )
             active_action_schema = (
                 task.payload.get("final_action_schema", {})
-                if force_final_turn
+                if native_tool_protocol or force_final_turn
                 else task.payload.get("visible_action_schema", {})
             )
             invocation = AgentInvocation(
@@ -1390,6 +1448,12 @@ class Gateway:
                     "format_correction": None,
                     "visible_action_schema": active_action_schema,
                     "force_final_turn": force_final_turn,
+                    "native_tool_protocol": native_tool_protocol,
+                    "provider_messages": provider_messages,
+                    "provider_tool_descriptors": tool_descriptors,
+                    "provider_tool_choice": (
+                        "none" if force_final_turn else "auto"
+                    ),
                 },
             )
             result = await runtime_manager.invoke(invocation)
@@ -1681,6 +1745,31 @@ class Gateway:
                         ),
                     }
                 )
+                if native_tool_protocol:
+                    try:
+                        provider_messages = _native_tool_result_messages(
+                            call_trace,
+                            result.metadata,
+                            tool_result_record,
+                        )
+                    except ValueError as exc:
+                        return AgentInvocationResult(
+                            task_id=task.task_id,
+                            trace_id=task.trace_id or task.task_id,
+                            agent_id=selected_agent.agent_id,
+                            status="failed",
+                            output={"tool_result": tool_result.output},
+                            tool_calls=[tool_result_record],
+                            action=action,
+                            error=str(exc),
+                            metadata={
+                                "agentic_loop": True,
+                                "turns": turn + 1,
+                                "model_call_traces": model_call_traces,
+                                "executed_tool_calls": executed_tool_calls,
+                                "duplicate_tool_calls": duplicate_tool_calls,
+                            },
+                        )
                 if tool_result.status != "completed":
                     return AgentInvocationResult(
                         task_id=task.task_id,

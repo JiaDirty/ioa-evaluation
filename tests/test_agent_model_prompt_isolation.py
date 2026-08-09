@@ -45,8 +45,9 @@ class AgentModelPromptIsolationTest(unittest.TestCase):
 
         self.assertIn("当前任务、角色、可见材料、可用工具和输出结构", prompt)
         self.assertNotIn("通用领域能力背景（金融）", prompt)
-        self.assertIn("action.kind=tool_call", prompt)
-        self.assertIn("action.kind=final", prompt)
+        self.assertIn("调用 API 提供的对应函数工具", prompt)
+        self.assertIn("通过 tool 消息提供", prompt)
+        self.assertNotIn("action.kind=tool_call", prompt)
         for hidden in (
             "本次所选 Agent",
             "actual_analysis",

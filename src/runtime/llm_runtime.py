@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
 import time
+from copy import deepcopy
 from typing import Any
 
 from pydantic import TypeAdapter
@@ -57,7 +59,13 @@ def _build_model_prompt(invocation: AgentInvocation) -> str:
     if not isinstance(payload, dict):
         payload = {}
     format_correction = invocation.metadata.get("format_correction")
-    visible_turn_history = invocation.turn_history
+    native_tool_protocol = bool(
+        invocation.metadata.get("native_tool_protocol")
+    )
+    visible_turn_history = (
+        [] if native_tool_protocol and invocation.metadata.get("provider_messages")
+        else invocation.turn_history
+    )
     if isinstance(format_correction, dict):
         # Gateway keeps the correction request in turn_history for auditing.
         # The same request is also supplied in metadata so it can be rendered
@@ -133,8 +141,11 @@ def _build_model_prompt(invocation: AgentInvocation) -> str:
         ])
     sections.extend(["", "## 可用工具"])
     if invocation.available_tool_descriptors:
-        for descriptor in invocation.available_tool_descriptors:
-            sections.extend(_tool_descriptor_lines(descriptor))
+        if native_tool_protocol:
+            sections.append("本步骤可用工具及参数由 API 的 tools 字段提供。")
+        else:
+            for descriptor in invocation.available_tool_descriptors:
+                sections.extend(_tool_descriptor_lines(descriptor))
     else:
         sections.append("无")
 
@@ -147,12 +158,19 @@ def _build_model_prompt(invocation: AgentInvocation) -> str:
 
     sections.extend(["", "## 输出与工具执行格式"])
     if invocation.available_tool_descriptors:
-        sections.extend([
-            "- 需要工具时，按当前 JSON Schema 的 `action.kind=tool_call` 分支"
-            "填写 `tool_id`、`arguments` 和 `reason`。",
-            "- 已可完成本步骤时，按 `action.kind=final` 分支填写六个业务字段。",
-            "- 工具请求和最终回答互斥；工具结果由运行程序追加到后续输入。",
-        ])
+        if native_tool_protocol:
+            sections.extend([
+                "- 需要工具时，调用 API 提供的函数工具。",
+                "- 已可完成本步骤时，直接填写六个业务字段。",
+                "- 工具请求和最终回答互斥；工具结果由运行程序返回。",
+            ])
+        else:
+            sections.extend([
+                "- 需要工具时，按当前 JSON Schema 的 `action.kind=tool_call` 分支"
+                "填写 `tool_id`、`arguments` 和 `reason`。",
+                "- 已可完成本步骤时，按 `action.kind=final` 分支填写六个业务字段。",
+                "- 工具请求和最终回答互斥；工具结果由运行程序追加到后续输入。",
+            ])
     else:
         sections.append(
             "- 本轮直接填写 status、decision、answer、evidence_refs、"
@@ -220,6 +238,105 @@ def _json_text(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2, default=str)
 
 
+def _provider_tools_from_descriptors(
+    descriptors: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Convert governed ToolDescriptors into strict Chat Completions tools."""
+    tools: list[dict[str, Any]] = []
+    for descriptor in descriptors:
+        tool_id = str(descriptor.get("tool_id") or descriptor.get("name") or "")
+        if not tool_id or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", tool_id):
+            raise ValueError(f"invalid provider function name: {tool_id!r}")
+        parameters = deepcopy(descriptor.get("input_schema") or {})
+        if not isinstance(parameters, dict):
+            parameters = {}
+        parameters["type"] = "object"
+        properties = parameters.get("properties")
+        if not isinstance(properties, dict):
+            properties = {}
+            parameters["properties"] = properties
+        originally_required = {
+            str(item) for item in parameters.get("required", [])
+        }
+        for name, schema in list(properties.items()):
+            if name not in originally_required and isinstance(schema, dict):
+                properties[name] = _nullable_provider_schema(schema)
+        parameters["required"] = list(properties)
+        parameters["additionalProperties"] = False
+        tools.append({
+            "type": "function",
+            "function": {
+                "name": tool_id,
+                "description": str(
+                    descriptor.get("description")
+                    or descriptor.get("name")
+                    or tool_id
+                ),
+                "parameters": parameters,
+                "strict": True,
+            },
+        })
+    return tools
+
+
+def _nullable_provider_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    normalized = deepcopy(schema)
+    schema_type = normalized.get("type")
+    if isinstance(schema_type, str):
+        normalized["type"] = [schema_type, "null"]
+        return normalized
+    any_of = normalized.get("anyOf")
+    if isinstance(any_of, list):
+        if {"type": "null"} not in any_of:
+            normalized["anyOf"] = [*any_of, {"type": "null"}]
+        return normalized
+    return {"anyOf": [normalized, {"type": "null"}]}
+
+
+def _native_tool_action(
+    turn: dict[str, Any],
+) -> tuple[ToolAction | None, dict[str, Any] | None, str | None]:
+    calls = turn.get("tool_calls", [])
+    if not isinstance(calls, list) or not calls:
+        return None, None, None
+    if len(calls) != 1:
+        return None, None, "parallel tool calls are disabled; expected exactly one call"
+    call = calls[0]
+    if not isinstance(call, dict) or call.get("type") != "function":
+        return None, None, "provider returned an unsupported tool call type"
+    call_id = str(call.get("id") or "")
+    function = call.get("function")
+    if not call_id or not isinstance(function, dict):
+        return None, None, "provider tool call is missing id or function"
+    tool_id = str(function.get("name") or "")
+    arguments_text = function.get("arguments", "")
+    if not tool_id or not isinstance(arguments_text, str):
+        return None, None, "provider tool call is missing name or JSON arguments"
+    try:
+        arguments = json.loads(arguments_text)
+    except json.JSONDecodeError as exc:
+        return None, None, f"provider tool arguments are not valid JSON: {exc}"
+    if not isinstance(arguments, dict):
+        return None, None, "provider tool arguments must decode to a JSON object"
+    return ToolAction(tool_id=tool_id, arguments=arguments), call, None
+
+
+def _provider_messages(
+    invocation: AgentInvocation,
+    system_prompt: str,
+    user_prompt: str,
+) -> list[dict[str, Any]]:
+    existing = invocation.metadata.get("provider_messages")
+    if isinstance(existing, list) and existing:
+        return deepcopy([
+            item for item in existing if isinstance(item, dict)
+        ])
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
 class LLMAgentRuntime(AgentRuntime):
     runtime_type = "llm"
 
@@ -244,6 +361,9 @@ class LLMAgentRuntime(AgentRuntime):
 
     async def invoke(self, invocation: AgentInvocation) -> AgentInvocationResult:
         request_config = invocation.metadata.get("model_request_config", {})
+        native_tool_protocol = bool(
+            invocation.metadata.get("native_tool_protocol")
+        )
         generation_kwargs = {
             key: request_config[key]
             for key in (
@@ -257,9 +377,13 @@ class LLMAgentRuntime(AgentRuntime):
             if key in request_config
         }
         generation_method = (
-            self.client.generate_with_system
-            if hasattr(self.client, "generate_with_system")
-            else getattr(self.client, "generate_json", None)
+            getattr(self.client, "generate_chat_turn", None)
+            if native_tool_protocol
+            else (
+                self.client.generate_with_system
+                if hasattr(self.client, "generate_with_system")
+                else getattr(self.client, "generate_json", None)
+            )
         )
         visible_schema = invocation.metadata.get("visible_action_schema")
         structured_output_enforced = False
@@ -303,7 +427,62 @@ class LLMAgentRuntime(AgentRuntime):
             )
         try:
             raw_response: Any = None
-            if hasattr(self.client, "generate_with_system"):
+            provider_assistant_message = None
+            provider_tool_call = None
+            if native_tool_protocol:
+                if generation_method is None:
+                    raise ValueError(
+                        "native tool protocol requires generate_chat_turn"
+                    )
+                provider_descriptors = invocation.metadata.get(
+                    "provider_tool_descriptors",
+                    invocation.available_tool_descriptors,
+                )
+                if not isinstance(provider_descriptors, list):
+                    provider_descriptors = []
+                provider_tools = _provider_tools_from_descriptors(
+                    provider_descriptors
+                )
+                turn = generation_method(
+                    _provider_messages(
+                        invocation, self.system_prompt, prompt
+                    ),
+                    tools=provider_tools,
+                    tool_choice=invocation.metadata.get(
+                        "provider_tool_choice", "auto"
+                    ),
+                    parallel_tool_calls=False,
+                    **generation_kwargs,
+                )
+                if not isinstance(turn, dict):
+                    raise ValueError("generate_chat_turn must return a mapping")
+                raw_response = turn
+                provider_assistant_message = turn.get("assistant_message")
+                native_action, provider_tool_call, native_error = (
+                    _native_tool_action(turn)
+                )
+                if native_error:
+                    raise ValueError(native_error)
+                if native_action is not None:
+                    action = native_action
+                    output = {
+                        "type": "tool_call",
+                        "tool_call": {
+                            "tool_id": action.tool_id,
+                            "arguments": action.arguments,
+                            "reason": action.reason,
+                        },
+                    }
+                else:
+                    text = turn.get("content")
+                    if not isinstance(text, str):
+                        raise ValueError(
+                            "provider returned neither a tool call nor final text"
+                        )
+                    parsed = self._parse_possible_json(text)
+                    output = parsed if isinstance(parsed, dict) else {"text": text}
+                    action = self._parse_action(output)
+            elif hasattr(self.client, "generate_with_system"):
                 text = self.client.generate_with_system(
                     self.system_prompt, prompt, **generation_kwargs
                 )
@@ -319,7 +498,8 @@ class LLMAgentRuntime(AgentRuntime):
                     output = {"text": output}
             else:
                 raise ValueError("LLM runtime client must implement generate_with_system or generate_json")
-            action = self._parse_action(output)
+            if not native_tool_protocol:
+                action = self._parse_action(output)
             self._finish_llm_span(invocation, span, started, raw_response, output, action)
             call_trace = self._build_call_trace(
                 prompt=prompt,
@@ -340,6 +520,8 @@ class LLMAgentRuntime(AgentRuntime):
                             "runtime_type": self.runtime_type,
                             "applied_model_request_config": request_config,
                             "model_call_trace": call_trace,
+                            "provider_assistant_message": provider_assistant_message,
+                            "provider_tool_call": provider_tool_call,
                         },
                     )
                 if action.type == "tool_call":

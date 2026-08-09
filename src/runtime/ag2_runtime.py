@@ -12,7 +12,12 @@ from pydantic import TypeAdapter
 
 from .actions import AgentAction, FinalAction, ToolAction
 from .base import AgentInvocation, AgentInvocationResult, AgentRuntime
-from .llm_runtime import _build_model_prompt
+from .llm_runtime import (
+    _build_model_prompt,
+    _native_tool_action,
+    _provider_messages,
+    _provider_tools_from_descriptors,
+)
 from ..evaluation.agent_model.behavior_parser import try_parse_decision_output
 from ..evaluation.agent_model.models import AgentModelAction
 
@@ -37,6 +42,9 @@ class AG2AgentRuntime(AgentRuntime):
 
     async def invoke(self, invocation: AgentInvocation) -> AgentInvocationResult:
         run_task = self.ioa_agent.run_task
+        native_tool_protocol = bool(
+            invocation.metadata.get("native_tool_protocol")
+        )
         run_task_parameters = inspect.signature(run_task).parameters.values()
         supports_request_config = any(
             parameter.name == "model_request_config"
@@ -70,7 +78,67 @@ class AG2AgentRuntime(AgentRuntime):
         applied_request_config = request_config if supports_request_config else {}
         started = time.perf_counter()
         try:
-            if supports_request_config:
+            provider_assistant_message = None
+            provider_tool_call = None
+            parsed_response: Any = None
+            if native_tool_protocol:
+                run_provider_turn = getattr(
+                    self.ioa_agent, "run_provider_turn", None
+                )
+                if not callable(run_provider_turn):
+                    raise ValueError(
+                        "native tool protocol requires run_provider_turn"
+                    )
+                provider_descriptors = invocation.metadata.get(
+                    "provider_tool_descriptors",
+                    invocation.available_tool_descriptors,
+                )
+                if not isinstance(provider_descriptors, list):
+                    provider_descriptors = []
+                turn = run_provider_turn(
+                    _provider_messages(
+                        invocation,
+                        str(getattr(self.ioa_agent, "system_message", "")),
+                        prompt,
+                    ),
+                    tools=_provider_tools_from_descriptors(
+                        provider_descriptors
+                    ),
+                    tool_choice=invocation.metadata.get(
+                        "provider_tool_choice", "auto"
+                    ),
+                    parallel_tool_calls=False,
+                    response_format=visible_schema,
+                    model_request_config=request_config,
+                )
+                if not isinstance(turn, dict):
+                    raise ValueError("run_provider_turn must return a mapping")
+                provider_assistant_message = turn.get("assistant_message")
+                action, provider_tool_call, native_error = _native_tool_action(
+                    turn
+                )
+                if native_error:
+                    raise ValueError(native_error)
+                if action is not None:
+                    parsed_response = {
+                        "type": "tool_call",
+                        "tool_call": {
+                            "tool_id": action.tool_id,
+                            "arguments": action.arguments,
+                            "reason": action.reason,
+                        },
+                    }
+                    result = parsed_response
+                else:
+                    content = turn.get("content")
+                    if not isinstance(content, str):
+                        raise ValueError(
+                            "provider returned neither a tool call nor final text"
+                        )
+                    result = content
+                    parsed_response = self._parse_json_value(content)
+                    action = self._parse_action(parsed_response)
+            elif supports_request_config:
                 result = run_task(
                     prompt,
                     max_turns=max_turns,
@@ -80,7 +148,9 @@ class AG2AgentRuntime(AgentRuntime):
                 result = run_task(prompt, max_turns=max_turns)
             if inspect.isawaitable(result):
                 result = await result
-            action = self._parse_action(result)
+            if not native_tool_protocol:
+                action = self._parse_action(result)
+                parsed_response = result
             if action is None and invocation.metadata.get("agentic_loop"):
                 action = FinalAction(
                     answer=result,
@@ -93,7 +163,7 @@ class AG2AgentRuntime(AgentRuntime):
                 response_schema=visible_schema,
                 response_schema_hash=response_schema_hash,
                 raw_response=result,
-                parsed_response=result,
+                parsed_response=parsed_response,
                 error=None,
                 started=started,
             )
@@ -111,6 +181,8 @@ class AG2AgentRuntime(AgentRuntime):
                     "agentic_loop": bool(invocation.metadata.get("agentic_loop")),
                     "applied_model_request_config": applied_request_config,
                     "model_call_trace": call_trace,
+                    "provider_assistant_message": provider_assistant_message,
+                    "provider_tool_call": provider_tool_call,
                 },
             )
         except Exception as exc:
@@ -248,6 +320,13 @@ class AG2AgentRuntime(AgentRuntime):
             return _ACTION_ADAPTER.validate_python(payload)
         except Exception:
             return None
+
+    @staticmethod
+    def _parse_json_value(value: str) -> Any:
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
 
 
 def _convert_agent_model_action(output: dict[str, Any]) -> dict[str, Any] | None:

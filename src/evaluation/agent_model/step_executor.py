@@ -341,6 +341,7 @@ class AgentModelStepExecutor:
                 "public_state": public_state or {},
                 "role_state": role_state or {},
                 "allowed_tool_ids": allowed_tool_ids or [],
+                "tool_descriptors": tool_descriptors,
                 "behavior_contract": behavior_contract,
                 "visible_action_schema": action_schema,
                 "final_action_schema": final_action_schema,

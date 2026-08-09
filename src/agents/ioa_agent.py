@@ -31,9 +31,11 @@ from ..llm.client import (
     LLMResponseError,
     LLMTruncatedResponseError,
     OpenAIClient,
+    _chat_completion_turn,
     _checked_response_text,
     _json_completion_after_length,
     _merge_token_usage,
+    _response_format_payload,
     _safe_payload_snapshot,
     estimate_serialized_request_tokens,
 )
@@ -128,13 +130,11 @@ def _runtime_interaction_message(
         return (
             "\n\n交互格式：\n"
             "- 当前步骤会列出本步可用的工具及参数；没有列出的工具不可调用。\n"
-            "- 请求工具时，返回 action.kind=tool_call，并填写 "
-            "action.tool_call.tool_id 和 action.tool_call.arguments。\n"
-            "- 给出最终回答时，使用 action.kind=final（若当前 Schema 含该分支），"
-            "并严格填写六个业务字段；"
+            "- 需要工具时，调用 API 提供的对应函数工具。\n"
+            "- 给出最终回答时，严格填写 API 结构化输出要求的六个业务字段；"
             "这些字段不提供业务决定候选项。\n"
-            "- 一次输出只能选择工具请求或最终回答之一；工具执行结果由"
-            "运行程序在后续输入中提供。"
+            "- 一轮只能选择工具请求或最终回答之一；工具执行结果由运行程序"
+            "通过 tool 消息提供。"
         )
     if enable_legacy_tools:
         return (
@@ -245,6 +245,7 @@ class IoAAgent:
     config: dict
     structured_output_schema: str | None = None
     llm_config: dict | None = None
+    system_message: str = ""
     allow_provider_tool_calls: bool = False
     last_usage: dict[str, int] | None = None
     last_retry_count: int = 0
@@ -303,6 +304,54 @@ class IoAAgent:
             self.last_response_metadata = client.last_response_metadata
             self.last_provider_calls = deepcopy(client.provider_call_records)
             self.agent.client = original_client
+
+    def run_provider_turn(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: Any = "auto",
+        parallel_tool_calls: bool = False,
+        response_format: Any = None,
+        model_request_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Run one native Chat Completions turn without executing its tools."""
+        request_config = dict(model_request_config or {})
+        if response_format is not None:
+            request_config["response_format"] = response_format
+        client = _checked_ag2_client(
+            self.llm_config or {},
+            request_config,
+            allow_tool_calls=bool(tools),
+        )
+        provider_kwargs = {
+            key: request_config[key]
+            for key in (
+                "temperature",
+                "top_p",
+                "max_completion_tokens",
+                "timeout",
+            )
+            if key in request_config
+        }
+        if response_format is not None:
+            provider_kwargs["response_format"] = _response_format_payload(
+                response_format
+            )
+        if tools:
+            provider_kwargs.update({
+                "tools": tools,
+                "tool_choice": tool_choice,
+                "parallel_tool_calls": bool(parallel_tool_calls),
+            })
+        try:
+            response = client.create(messages=messages, **provider_kwargs)
+            return _chat_completion_turn(response)
+        finally:
+            self.last_usage = client.last_usage
+            self.last_retry_count = client.last_retry_count
+            self.last_response_metadata = client.last_response_metadata
+            self.last_provider_calls = deepcopy(client.provider_call_records)
 
     def get_capabilities(self) -> list[str]:
         return self.config.get("capabilities", [])
@@ -386,6 +435,7 @@ def create_sub_ioa_agent(
             "AgentModelAction" if structured_agent_model_output else None
         ),
         llm_config=deepcopy(llm_config),
+        system_message=system_message,
         allow_provider_tool_calls=enable_legacy_tools,
     )
 
@@ -466,6 +516,7 @@ def create_agent_from_card(
             "AgentModelAction" if structured_agent_model_output else None
         ),
         llm_config=deepcopy(llm_config),
+        system_message=system_message,
         allow_provider_tool_calls=enable_legacy_tools,
     )
 

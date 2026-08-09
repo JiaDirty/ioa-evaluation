@@ -226,7 +226,7 @@ class OpenAIClient(BaseLLMClient):
         *,
         retry_count: int | None = None,
         retry_delay: float | None = None,
-    ) -> str:
+    ) -> Any:
         last_err = None
         started = time.perf_counter()
         self.last_attempts = []
@@ -350,6 +350,53 @@ class OpenAIClient(BaseLLMClient):
             retry_delay=kwargs.get("retry_delay"),
         )
 
+    def generate_chat_turn(
+        self,
+        messages: list[dict[str, Any]],
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Generate one provider-native chat turn, including function calls."""
+        self._reset_provider_records()
+        response_format = kwargs.get("response_format")
+        json_validator = _response_format_validator(response_format)
+        tools = kwargs.get("tools")
+        request_kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": kwargs.get("temperature", self.temperature),
+            "top_p": kwargs.get("top_p", 1.0),
+            "max_completion_tokens": self._requested_completion_tokens(kwargs),
+        }
+        if response_format is not None:
+            request_kwargs["response_format"] = _response_format_payload(
+                response_format
+            )
+        if tools:
+            request_kwargs["tools"] = tools
+            request_kwargs["tool_choice"] = kwargs.get("tool_choice", "auto")
+            request_kwargs["parallel_tool_calls"] = bool(
+                kwargs.get("parallel_tool_calls", False)
+            )
+        if kwargs.get("timeout") is not None:
+            request_kwargs["timeout"] = kwargs["timeout"]
+        self._check_request_budget(request_kwargs)
+
+        def _do() -> dict[str, Any]:
+            response = self._create_chat_completion(request_kwargs)
+            _checked_response_text(
+                response,
+                allow_tool_calls=bool(tools),
+                accept_complete_json_on_length=response_format is not None,
+                json_validator=json_validator,
+            )
+            return _chat_completion_turn(response)
+
+        return self._with_retry(
+            _do,
+            retry_count=kwargs.get("retry_count"),
+            retry_delay=kwargs.get("retry_delay"),
+        )
+
     def _requested_completion_tokens(self, kwargs: dict[str, Any]) -> int:
         requested = kwargs.get("max_completion_tokens", self.max_completion_tokens)
         try:
@@ -369,7 +416,12 @@ class OpenAIClient(BaseLLMClient):
         """Fail before the provider call when input plus output is too large."""
         messages = request_kwargs.get("messages", [])
         serialized = json.dumps(
-            {"messages": messages, "response_format": request_kwargs.get("response_format")},
+            {
+                "messages": messages,
+                "response_format": request_kwargs.get("response_format"),
+                "tools": request_kwargs.get("tools"),
+                "tool_choice": request_kwargs.get("tool_choice"),
+            },
             ensure_ascii=False,
             separators=(",", ":"),
             default=str,
@@ -549,6 +601,52 @@ def _checked_response_text(
             f"Model response stopped for an unsupported reason: {finish_reason}"
         )
     return getattr(message, "content", None) or ""
+
+
+def _chat_completion_turn(response: Any) -> dict[str, Any]:
+    """Normalize one Chat Completions assistant message for replay and audit."""
+    choices = _value(response, "choices", []) or []
+    if not choices:
+        raise LLMResponseError("Model response contained no choices")
+    choice = choices[0]
+    message = _value(choice, "message")
+    if message is None:
+        raise LLMResponseError("Model response contained no message")
+
+    content = _value(message, "content")
+    normalized_calls: list[dict[str, Any]] = []
+    for call in _value(message, "tool_calls", []) or []:
+        function = _value(call, "function")
+        arguments = _value(function, "arguments", "") if function is not None else ""
+        if not isinstance(arguments, str):
+            arguments = json.dumps(arguments, ensure_ascii=False, default=str)
+        normalized_calls.append({
+            "id": str(_value(call, "id", "") or ""),
+            "type": str(_value(call, "type", "function") or "function"),
+            "function": {
+                "name": str(_value(function, "name", "") or ""),
+                "arguments": arguments,
+            },
+        })
+
+    assistant_message: dict[str, Any] = {
+        "role": "assistant",
+        "content": content,
+    }
+    if normalized_calls:
+        assistant_message["tool_calls"] = normalized_calls
+    return {
+        "content": content,
+        "tool_calls": normalized_calls,
+        "finish_reason": _value(choice, "finish_reason"),
+        "assistant_message": assistant_message,
+    }
+
+
+def _value(value: Any, key: str, default: Any = None) -> Any:
+    if isinstance(value, Mapping):
+        return value.get(key, default)
+    return getattr(value, key, default)
 
 
 def _finish_reason_explanation(finish_reason: Any) -> str:
