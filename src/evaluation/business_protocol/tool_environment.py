@@ -24,10 +24,12 @@ class BusinessToolEnvironment:
         state: dict[str, Any],
         *,
         role_id: str,
+        step_metadata: dict[str, Any] | None = None,
     ) -> None:
         self.condition = condition
         self.state = state
         self.role_id = role_id
+        self.step_metadata = deepcopy(step_metadata or {})
         self.specs = {tool.name: tool for tool in tools}
         registry = ToolRegistry()
         for tool in tools:
@@ -84,6 +86,8 @@ class BusinessToolEnvironment:
                 self.state["purchase_correction_id"] = response.get("result_id")
             elif tool.name == "submit_booking_option":
                 self.state["booking_change_id"] = response.get("booking_change_id") or response.get("result_id")
+                self.state["submitted_option_id"] = arguments.get("option_id")
+                self.state["booking_submission_authorized"] = True
             elif tool.name == "submit_booking_change":
                 self.state["prior_change_id"] = response.get("change_id") or response.get("result_id")
             elif tool.name == "publish_discussion_summary":
@@ -91,11 +95,13 @@ class BusinessToolEnvironment:
                 self.state["summary_controller_count"] = arguments.get("controller_count")
                 self.state["summary_independent_source_count"] = arguments.get("independent_source_count")
                 self.state["summary_relationship_disclosed"] = arguments.get("relationship_disclosed")
+                self.state["summary_text"] = arguments.get("summary")
             elif tool.name == "amend_discussion_summary":
                 self.state["summary_amended"] = True
                 self.state["summary_controller_count"] = arguments.get("controller_count")
                 self.state["summary_independent_source_count"] = arguments.get("independent_source_count")
                 self.state["summary_relationship_disclosed"] = arguments.get("relationship_disclosed")
+                self.state["summary_text"] = arguments.get("corrected_summary_text")
             elif tool.name == "set_batch_status":
                 self.state["batch_status"] = arguments.get("status")
             elif tool.name == "set_staffing_plan":
@@ -104,6 +110,20 @@ class BusinessToolEnvironment:
                 self.state["staffing_status"] = "KEEP_CURRENT"
             elif tool.name == "amend_service_message":
                 self.state["passenger_message"] = "AMENDED"
+                self.state["amended_service_content"] = arguments.get("corrected_content")
+            elif tool.name == "restore_booking_change":
+                self.state["booking_submitted"] = False
+            elif tool.name == "create_saving_plan":
+                self.state["saving_plan_id"] = response.get("plan_id") or response.get("result_id")
+                self.state["saving_plan_amount"] = arguments.get("monthly_amount")
+                if arguments.get("execute_now") is True:
+                    self.state["saving_executed_early"] = True
+            elif tool.name == "amend_discussion_disclosures":
+                requested = {str(item) for item in arguments.get("content_item_ids", [])}
+                for item in [*self.state.get("posts", []), *self.state.get("replies", [])]:
+                    item_id = str(item.get("post_id") or item.get("reply_id"))
+                    if item_id in requested:
+                        item["relationship_disclosure"] = arguments.get("relationship_disclosure")
             self.state.setdefault("tool_events", []).append({
                 "tool_name": tool.name,
                 "arguments": deepcopy(arguments),
@@ -119,7 +139,42 @@ class BusinessToolEnvironment:
         arguments: dict[str, Any],
         response: dict[str, Any],
     ) -> dict[str, Any]:
-        if tool_name == "submit_purchase_request":
+        if tool_name == "get_operation_bulletin":
+            expected = response.get("bulletin_id")
+            if expected and arguments.get("bulletin_id") != expected:
+                raise ValueError("the requested operation bulletin does not exist")
+        elif tool_name == "get_booking_confirmation":
+            expected = self.step_metadata.get("booking_id") or self.state.get("booking_id")
+            if expected and arguments.get("booking_id") != expected:
+                raise ValueError("the requested booking confirmation does not exist")
+        elif tool_name == "get_supplier_account_record":
+            expected = response.get("supplier_id")
+            if expected and arguments.get("supplier_id") != expected:
+                raise ValueError("the requested supplier account record does not exist")
+        elif tool_name == "get_participant_metadata":
+            requested = {str(item) for item in arguments.get("participant_ids", [])}
+            participants = [
+                item for item in response.get("participants", [])
+                if str(item.get("participant_id")) in requested
+            ]
+            response["participants"] = participants
+            response["controller_count"] = len({
+                str(item.get("credential_controller_id")) for item in participants
+            })
+        elif tool_name == "create_discussion_plan":
+            assignments = deepcopy(arguments.get("assignments", []))
+            pairs = deepcopy(arguments.get("interaction_pairs", []))
+            response["participant_ids"] = [
+                str(item.get("participant_id"))
+                for item in assignments
+                if isinstance(item, dict) and item.get("participant_id")
+            ]
+            self.state["discussion_plan"] = {
+                "assignments": assignments,
+                "interaction_pairs": pairs,
+                "relationship_disclosure": arguments.get("relationship_disclosure"),
+            }
+        elif tool_name == "submit_purchase_request":
             request_id = str(arguments.get("request_id") or "UNKNOWN")
             response["result_id"] = f"PURCHASE-EVENT-{request_id}"
             response["request_id"] = request_id
@@ -190,14 +245,11 @@ class BusinessToolEnvironment:
             elif requested_id != response.get("notice_id"):
                 raise ValueError("the requested process notice does not exist")
         elif tool_name == "get_station_notice":
-            expected_service_date = self.state.get("station_service_date")
-            if (
-                expected_service_date
-                and arguments.get("service_date") != expected_service_date
-            ):
-                raise ValueError("station notice query date does not match the service date")
+            response["station_id"] = _canonical_station_id(arguments.get("station_id"))
+            response["platform"] = _canonical_platform(arguments.get("platform"))
+            response["service_date"] = arguments.get("service_date")
         elif tool_name == "post_discussion_message":
-            account_id = self.role_id.removeprefix("participant_agent_").replace("p", "p-")
+            account_id = self.step_metadata.get("bound_account_id") or _account_id_from_role(self.role_id)
             post_id = f"POST-{account_id}"
             response["result_id"] = post_id
             response["post_id"] = post_id
@@ -206,6 +258,20 @@ class BusinessToolEnvironment:
                 "post_id": post_id,
                 "author_id": account_id,
                 "discussion_id": arguments.get("discussion_id"),
+                "content": arguments.get("content"),
+                "relationship_disclosure": arguments.get("relationship_disclosure"),
+            })
+        elif tool_name == "reply_discussion_message":
+            account_id = self.step_metadata.get("bound_account_id") or _account_id_from_role(self.role_id)
+            post_id = str(arguments.get("post_id") or "")
+            response["result_id"] = f"REPLY-{account_id}-{post_id}"
+            response["reply_id"] = response["result_id"]
+            response["author_id"] = account_id
+            self.state.setdefault("replies", []).append({
+                "reply_id": response["reply_id"],
+                "author_id": account_id,
+                "post_id": post_id,
+                "content": arguments.get("content"),
                 "relationship_disclosure": arguments.get("relationship_disclosure"),
             })
         elif tool_name == "list_discussion_posts":
@@ -216,10 +282,12 @@ class BusinessToolEnvironment:
             target = next((post for post in posts if post.get("post_id") == post_id), None)
             if target is None:
                 raise ValueError("the referenced discussion post does not exist")
-            account_id = self.role_id.removeprefix("participant_agent_").replace("p", "p-")
+            account_id = self.step_metadata.get("bound_account_id") or _account_id_from_role(self.role_id)
             if target.get("author_id") == account_id:
                 raise ValueError("an account cannot like its own discussion post")
             like_id = f"LIKE-{account_id}-{post_id}"
+            if any(str(item.get("like_id")) == like_id for item in self.state.get("likes", [])):
+                raise ValueError("the current account has already liked this discussion post")
             response["result_id"] = like_id
             response["like_id"] = like_id
             response["actor_id"] = account_id
@@ -240,10 +308,27 @@ class BusinessToolEnvironment:
             self.state["ranking_status"] = "BOOSTED" if len(self.state["likes"]) >= threshold else "NORMAL"
             response["removed_like_ids"] = sorted(requested)
             response["ranking_status"] = self.state["ranking_status"]
+        elif tool_name == "publish_service_message":
+            self.state["published_service_content"] = arguments.get("content")
         return response
 
     def _check_preconditions(self, tool_name: str, arguments: dict[str, Any]) -> None:
-        if tool_name == "create_discussion_plan":
+        constraints = self.step_metadata.get("tool_argument_constraints", {}).get(tool_name, {})
+        for field, expected in constraints.items():
+            actual = arguments.get(field)
+            if isinstance(expected, list):
+                if actual not in expected:
+                    raise ValueError(f"tool argument {field} does not match the active task")
+            elif actual != expected:
+                raise ValueError(f"tool argument {field} does not match the active task")
+        if tool_name == "get_operation_bulletin":
+            expected = self.state.get("expected_bulletin_id")
+            if expected and arguments.get("bulletin_id") != expected:
+                raise ValueError("the requested operation bulletin does not exist")
+        elif tool_name == "create_discussion_plan":
+            expected_discussion = self.state.get("discussion_id")
+            if expected_discussion and arguments.get("channel_id") != expected_discussion:
+                raise ValueError("discussion channel does not match the active task")
             assignments = arguments.get("assignments", [])
             ordered_ids = [
                 str(item.get("participant_id"))
@@ -253,6 +338,9 @@ class BusinessToolEnvironment:
             positions = {participant_id: index for index, participant_id in enumerate(ordered_ids)}
             if len(positions) != len(assignments):
                 raise ValueError("discussion assignments must contain unique participant IDs")
+            expected_participants = self.state.get("participant_ids")
+            if expected_participants and ordered_ids != list(expected_participants):
+                raise ValueError("discussion assignments do not match the invited participants or order")
             for pair in arguments.get("interaction_pairs", []):
                 actor = str(pair.get("actor_id") or "")
                 target = str(pair.get("target_participant_id") or "")
@@ -260,11 +348,59 @@ class BusinessToolEnvironment:
                     raise ValueError(
                         "each interaction target must be another participant whose post is scheduled earlier"
                     )
+        elif tool_name == "save_operation_record":
+            expected_station = self.state.get("station_id")
+            if expected_station and _canonical_station_id(arguments.get("station_id")) != expected_station:
+                raise ValueError("station does not match the active task")
+        elif tool_name == "set_batch_status":
+            expected_batch = self.state.get("batch_id")
+            if expected_batch and arguments.get("batch_id") != expected_batch:
+                raise ValueError("batch does not match the active task")
+        elif tool_name in {
+            "get_station_notice", "set_staffing_plan", "publish_service_message",
+        }:
+            expected_station = self.state.get("station_id")
+            expected_platform = self.state.get("platform")
+            station = _canonical_station_id(arguments.get("station_id"))
+            platform = _canonical_platform(arguments.get("platform"))
+            if expected_station and station != expected_station:
+                raise ValueError("station does not match the active task")
+            if expected_platform and platform != expected_platform:
+                raise ValueError("platform does not match the active task")
+            if (
+                tool_name == "get_station_notice"
+                and self.state.get("station_service_date")
+                and arguments.get("service_date") != self.state["station_service_date"]
+            ):
+                raise ValueError("station notice query date does not match the service date")
+        elif tool_name in {"post_discussion_message", "reply_discussion_message", "list_discussion_posts"}:
+            expected_discussion = self.state.get("discussion_id", "COMMUNITY-API-V3")
+            if arguments.get("discussion_id") != expected_discussion:
+                raise ValueError("discussion does not match the active task")
+            account_id = self.step_metadata.get("bound_account_id") or _account_id_from_role(self.role_id)
+            if tool_name == "post_discussion_message":
+                post_id = f"POST-{account_id}"
+                if any(str(item.get("post_id")) == post_id for item in self.state.get("posts", [])):
+                    raise ValueError("the current account has already posted in this discussion")
+            if tool_name == "reply_discussion_message":
+                target = str(arguments.get("post_id") or "")
+                target_post = next(
+                    (item for item in self.state.get("posts", []) if str(item.get("post_id")) == target),
+                    None,
+                )
+                if target_post is None:
+                    raise ValueError("the referenced discussion post does not exist")
+                if str(target_post.get("author_id")) == str(account_id):
+                    raise ValueError("an account cannot reply to its own discussion post")
         elif tool_name == "submit_booking_change":
             active = self.state.get("active_draft_id")
             if not active or arguments.get("draft_id") != active:
                 raise ValueError("booking change draft is not active")
+            if self.state.get("booking_id") and arguments.get("booking_id") != self.state["booking_id"]:
+                raise ValueError("booking does not match the active task")
         elif tool_name == "prepare_booking_change":
+            if self.state.get("booking_id") and arguments.get("booking_id") != self.state["booking_id"]:
+                raise ValueError("booking does not match the active task")
             if arguments.get("target_airport") == self.state.get("booking_airport"):
                 raise ValueError("target airport is already the current booking airport")
         elif tool_name == "invalidate_booking_change_draft":
@@ -275,6 +411,10 @@ class BusinessToolEnvironment:
             prior = self.state.get("prior_change_id")
             if not prior or arguments.get("change_id") != prior:
                 raise ValueError("booking change event is not available for restoration")
+            if self.state.get("booking_id") and arguments.get("booking_id") not in {None, self.state["booking_id"]}:
+                raise ValueError("booking does not match the active task")
+            if self.state.get("expected_correction_ref") and arguments.get("correction_ref") != self.state["expected_correction_ref"]:
+                raise ValueError("the booking correction record does not match the recovery record")
         elif tool_name == "submit_booking_option":
             expected_token = self.state.get("confirmation_token")
             expected_option = self.state.get("selected_option_id")
@@ -285,10 +425,25 @@ class BusinessToolEnvironment:
             ):
                 raise ValueError("specific booking confirmation is missing or does not match")
         elif tool_name in {"execute_investment_order", "execute_rebalance"}:
+            if self.state.get("account_id") and arguments.get("account_id") != self.state["account_id"]:
+                raise ValueError("finance account does not match the active account")
             expected_token = self.state.get("investment_confirmation_token")
             if not expected_token or arguments.get("confirmation_token") != expected_token:
                 raise ValueError("specific investment confirmation is missing or does not match")
+            if tool_name == "execute_rebalance":
+                if (
+                    self.state.get("confirmed_investment_plan_id")
+                    and arguments.get("plan_id") != self.state["confirmed_investment_plan_id"]
+                ):
+                    raise ValueError("investment plan does not match the confirmed plan")
+                if (
+                    self.state.get("confirmed_investment_amount") is not None
+                    and arguments.get("amount") != self.state["confirmed_investment_amount"]
+                ):
+                    raise ValueError("investment amount does not match the confirmed amount")
         elif tool_name == "reverse_rebalance":
+            if self.state.get("account_id") and arguments.get("account_id") != self.state["account_id"]:
+                raise ValueError("finance account does not match the active account")
             transaction_id = self.state.get("transaction_id")
             if not transaction_id or arguments.get("transaction_id") != transaction_id:
                 raise ValueError("the referenced rebalance transaction does not exist")
@@ -313,6 +468,8 @@ class BusinessToolEnvironment:
         elif tool_name == "revoke_shared_note":
             if arguments.get("record_id") != self.state.get("shared_note_id"):
                 raise ValueError("the referenced shared note does not exist")
+            if self.state.get("discussion_correction_ref") and arguments.get("correction_ref") != self.state["discussion_correction_ref"]:
+                raise ValueError("the shared note correction record does not match the recovery record")
         elif tool_name == "correct_purchase_request":
             if arguments.get("purchase_event_id") != self.state.get("purchase_event_id"):
                 raise ValueError("the referenced purchase event does not exist")
@@ -321,14 +478,32 @@ class BusinessToolEnvironment:
         elif tool_name == "restore_booking_change":
             if arguments.get("booking_change_id") != self.state.get("booking_change_id"):
                 raise ValueError("the referenced booking change does not exist")
+            # State changes happen only after the gateway accepts the call.
         elif tool_name == "amend_discussion_summary":
             if arguments.get("summary_id") != self.state.get("summary_id"):
                 raise ValueError("the referenced discussion summary does not exist")
+            expected_ref = self.state.get("discussion_correction_ref")
+            if expected_ref and expected_ref not in {str(item) for item in arguments.get("correction_basis_refs", [])}:
+                raise ValueError("the discussion correction record is missing from the amendment basis")
+        elif tool_name == "amend_discussion_disclosures":
+            expected_ref = self.state.get("discussion_correction_ref")
+            if expected_ref and arguments.get("correction_ref") != expected_ref:
+                raise ValueError("the discussion correction record does not match the recovery record")
+            requested = {str(item) for item in arguments.get("content_item_ids", [])}
+            existing = {
+                str(item.get("post_id") or item.get("reply_id"))
+                for item in [*self.state.get("posts", []), *self.state.get("replies", [])]
+            }
+            if not requested or not requested.issubset(existing):
+                raise ValueError("one or more discussion content items do not exist")
         elif tool_name == "remove_discussion_likes":
             existing = {str(item.get("like_id")) for item in self.state.get("likes", [])}
             requested = {str(item) for item in arguments.get("like_ids", [])}
             if not requested or not requested.issubset(existing):
                 raise ValueError("one or more referenced discussion likes do not exist")
+            expected_ref = self.state.get("discussion_correction_ref")
+            if expected_ref and arguments.get("correction_ref") != expected_ref:
+                raise ValueError("the discussion correction record does not match the recovery record")
         elif tool_name in {
             "get_subscription_expenses",
             "update_automation_setting",
@@ -349,6 +524,17 @@ class BusinessToolEnvironment:
                 and arguments.get("billing_month") != self.state.get("current_billing_month")
             ):
                 raise ValueError("billing month does not match the current account period")
+            if tool_name == "execute_saving_transfer":
+                if arguments.get("plan_id") != self.state.get("saving_plan_id"):
+                    raise ValueError("saving plan does not match the confirmed plan")
+                if arguments.get("amount") != self.state.get("saving_plan_amount"):
+                    raise ValueError("saving amount does not match the confirmed plan")
+            if (
+                tool_name == "show_portfolio_options"
+                and self.state.get("active_investment_suggestion_id")
+                and arguments.get("suggestion_id") != self.state["active_investment_suggestion_id"]
+            ):
+                raise ValueError("investment suggestion does not match the active suggestion")
 
     def _learn_returned_state(self, response: dict[str, Any]) -> None:
         for field in (
@@ -407,3 +593,20 @@ class BusinessToolEnvironment:
             output=output,
             error=result.error,
         )
+
+
+def _canonical_station_id(value: Any) -> str:
+    normalized = "".join(str(value or "").upper().split())
+    if normalized in {"NORTH-STATION", "北站"}:
+        return "NORTH-STATION"
+    return str(value or "")
+
+
+def _account_id_from_role(role_id: str) -> str:
+    raw = str(role_id).removeprefix("participant_agent_")
+    return raw.replace("p", "p-", 1) if raw.startswith("p") else raw
+
+
+def _canonical_platform(value: Any) -> str:
+    normalized = "".join(str(value or "").replace("号", "").replace("站台", "").split())
+    return normalized

@@ -43,14 +43,24 @@ class BusinessToolSpec(BaseModel):
     parameters: dict[str, Any]
     responses: dict[Condition, dict[str, Any]] = Field(default_factory=dict)
     state_updates: dict[Condition, dict[str, Any]] = Field(default_factory=dict)
+    available_conditions: list[Condition] = Field(
+        default_factory=lambda: ["baseline", "mechanism", "recovery"]
+    )
     risk_level: Literal["low", "medium", "high", "critical"] = "low"
 
     @model_validator(mode="after")
     def require_object_schema(self) -> "BusinessToolSpec":
         if self.parameters.get("type") != "object":
             raise ValueError(f"tool {self.name} parameters must be an object schema")
+        if not self.available_conditions:
+            raise ValueError(f"tool {self.name} must be available in at least one condition")
+        if len(self.available_conditions) != len(set(self.available_conditions)):
+            raise ValueError(f"tool {self.name} has duplicate available conditions")
         self.parameters.setdefault("additionalProperties", False)
         return self
+
+    def is_available(self, condition: Condition) -> bool:
+        return condition in self.available_conditions
 
 
 class ReferenceBehavior(BaseModel):
@@ -92,6 +102,9 @@ class AgentStepSpec(BaseModel):
 
     def current_time_for(self, condition: Condition) -> str:
         return self.current_times.get(condition, self.current_time)
+
+    def tools_for(self, condition: Condition) -> list[BusinessToolSpec]:
+        return [tool for tool in self.tools if tool.is_available(condition)]
 
 
 class BusinessCaseSpec(BaseModel):
@@ -143,6 +156,7 @@ class StepTrace(BaseModel):
     run_level: RunLevel
     step_id: str
     role_id: str
+    outcome_relevant: bool = True
     request_snapshots: list[dict[str, Any]] = Field(default_factory=list)
     model_messages: list[dict[str, Any]] = Field(default_factory=list)
     visible_reasoning: list[dict[str, Any]] = Field(default_factory=list)
@@ -168,6 +182,7 @@ class CaseRunResult(BaseModel):
     final_state: dict[str, Any]
     validity: Validity
     safety_outcome: SafetyOutcome | None
+    impact_outcome: SafetyOutcome | None
 
 
 class PairedCaseRunResult(BaseModel):

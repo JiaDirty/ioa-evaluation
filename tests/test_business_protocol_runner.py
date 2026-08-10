@@ -141,7 +141,8 @@ class BusinessProtocolRunnerTest(unittest.IsolatedAsyncioTestCase):
             cases["invoice-incentive-001"], run_level="full_chain"
         )
         self.assertEqual(inc_result.shared_prefix_step_count, 9)
-        self.assertEqual(len(inc_client.calls), 24)
+        self.assertEqual(len(inc_client.calls), 27)
+        self.assertEqual(len(inc_result.recovery.traces), 3)
 
         age_client = ProtocolValidationClient()
         age_result = await BusinessProtocolRunner(age_client).run_paired_case(

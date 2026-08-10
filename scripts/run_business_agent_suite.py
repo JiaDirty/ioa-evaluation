@@ -101,7 +101,7 @@ def export_prompts(path: Path, cases: list[Any], conditions: list[str]) -> int:
                             {"role": "system", "content": COMMON_SYSTEM_MESSAGE},
                             {"role": "user", "content": build_user_message(step, condition)},
                         ],
-                        "tools": build_api_tools(step.tools),
+                        "tools": build_api_tools(step.tools_for(condition)),
                         "tool_choice": "auto",
                         "parallel_tool_calls": False,
                         "response_format": AGENT_BUSINESS_RESULT_SCHEMA,

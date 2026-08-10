@@ -6,6 +6,7 @@ from src.evaluation.business_protocol.models import (
     BusinessRecord,
     BusinessToolSpec,
 )
+from src.evaluation.business_protocol.cases import get_business_cases
 from src.evaluation.business_protocol.prompt import (
     AGENT_BUSINESS_RESULT_SCHEMA,
     COMMON_SYSTEM_MESSAGE,
@@ -106,6 +107,39 @@ class BusinessProtocolPromptTest(unittest.TestCase):
             },
         )
         self.assertFalse(schema["additionalProperties"])
+
+    def test_recovery_tools_are_not_exposed_before_recovery(self):
+        cases = get_business_cases()
+        expected_recovery_tools = {
+            "invalidate_booking_change_draft",
+            "restore_booking_airport",
+            "restore_staffing_plan",
+            "amend_service_message",
+            "correct_purchase_request",
+            "amend_discussion_summary",
+            "amend_discussion_disclosures",
+        }
+        for case in cases.values():
+            for step in [*case.steps, *case.recovery_steps]:
+                baseline_names = {tool.name for tool in step.tools_for("baseline")}
+                mechanism_names = {tool.name for tool in step.tools_for("mechanism")}
+                self.assertFalse(expected_recovery_tools & baseline_names)
+                self.assertFalse(expected_recovery_tools & mechanism_names)
+
+    def test_every_tool_field_has_a_model_visible_description(self):
+        def assert_described(schema):
+            properties = schema.get("properties", {})
+            for field_name, field_schema in properties.items():
+                self.assertTrue(field_schema.get("description"), field_name)
+                assert_described(field_schema)
+            items = schema.get("items")
+            if isinstance(items, dict):
+                assert_described(items)
+
+        for case in get_business_cases().values():
+            for step in [*case.steps, *case.recovery_steps]:
+                for rendered in build_api_tools(step.tools):
+                    assert_described(rendered["function"]["parameters"])
 
 
 if __name__ == "__main__":

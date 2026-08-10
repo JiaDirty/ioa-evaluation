@@ -179,22 +179,91 @@ class ToolGateway:
 def _validate_input_schema(schema: dict[str, Any], arguments: dict[str, Any]) -> str | None:
     if not schema:
         return None
-    schema_type = schema.get("type")
-    if schema_type and schema_type != "object":
+    if schema.get("type") not in {None, "object"}:
         return "only object input schemas are supported"
-    required = [str(item) for item in schema.get("required", [])]
-    for field in required:
-        if field not in arguments:
-            return f"missing required argument: {field}"
-    properties = schema.get("properties", {})
-    if not isinstance(properties, dict):
-        return None
-    for name, spec in properties.items():
-        if name not in arguments or not isinstance(spec, dict):
-            continue
-        expected = spec.get("type")
-        if expected and not _matches_json_type(arguments[name], str(expected)):
-            return f"argument {name} must be {expected}"
+    return _validate_schema_value(schema, arguments, path="", top_level=True)
+
+
+def _validate_schema_value(
+    schema: dict[str, Any],
+    value: Any,
+    *,
+    path: str,
+    top_level: bool = False,
+) -> str | None:
+    expected = schema.get("type")
+    label = f"argument {path}" if path else "arguments"
+    if expected and not _matches_json_type(value, str(expected)):
+        return f"{label} must be {expected}"
+
+    if "enum" in schema and value not in schema["enum"]:
+        return f"{label} must be one of {schema['enum']}"
+    if "const" in schema and value != schema["const"]:
+        return f"{label} must equal {schema['const']}"
+
+    if expected == "object" and isinstance(value, dict):
+        properties = schema.get("properties", {})
+        if not isinstance(properties, dict):
+            properties = {}
+        for field in [str(item) for item in schema.get("required", [])]:
+            if field not in value:
+                if top_level:
+                    return f"missing required argument: {field}"
+                return f"missing required argument: {path}.{field}"
+        if schema.get("additionalProperties") is False:
+            extras = sorted(set(value) - set(properties))
+            if extras:
+                return f"unexpected argument: {path + '.' if path else ''}{extras[0]}"
+        for field, field_value in value.items():
+            field_schema = properties.get(field)
+            if not isinstance(field_schema, dict):
+                continue
+            field_path = f"{path}.{field}" if path else str(field)
+            error = _validate_schema_value(
+                field_schema,
+                field_value,
+                path=field_path,
+            )
+            if error:
+                return error
+
+    if expected == "array" and isinstance(value, list):
+        minimum = schema.get("minItems")
+        maximum = schema.get("maxItems")
+        if isinstance(minimum, int) and len(value) < minimum:
+            return f"{label} must contain at least {minimum} item(s)"
+        if isinstance(maximum, int) and len(value) > maximum:
+            return f"{label} must contain at most {maximum} item(s)"
+        if schema.get("uniqueItems") is True:
+            comparable = [repr(item) for item in value]
+            if len(comparable) != len(set(comparable)):
+                return f"{label} must contain unique items"
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict):
+            for index, item in enumerate(value):
+                error = _validate_schema_value(
+                    item_schema,
+                    item,
+                    path=f"{path}[{index}]",
+                )
+                if error:
+                    return error
+
+    if expected == "string" and isinstance(value, str):
+        minimum = schema.get("minLength")
+        maximum = schema.get("maxLength")
+        if isinstance(minimum, int) and len(value) < minimum:
+            return f"{label} must contain at least {minimum} character(s)"
+        if isinstance(maximum, int) and len(value) > maximum:
+            return f"{label} must contain at most {maximum} character(s)"
+
+    if expected in {"integer", "number"} and _matches_json_type(value, str(expected)):
+        minimum = schema.get("minimum")
+        maximum = schema.get("maximum")
+        if isinstance(minimum, (int, float)) and value < minimum:
+            return f"{label} must be at least {minimum}"
+        if isinstance(maximum, (int, float)) and value > maximum:
+            return f"{label} must be at most {maximum}"
     return None
 
 
