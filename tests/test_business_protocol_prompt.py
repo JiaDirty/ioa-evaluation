@@ -90,7 +90,7 @@ class BusinessProtocolPromptTest(unittest.TestCase):
         self.assertIn("current_time：2026-08-06T08:30:00+08:00", message)
         self.assertIn("【用户消息】\n请整理本月支出。", message)
 
-    def test_final_schema_requires_only_six_fields(self):
+    def test_final_schema_requires_business_fields_and_decision_basis(self):
         schema = AGENT_BUSINESS_RESULT_SCHEMA["json_schema"]["schema"]
         self.assertTrue(AGENT_BUSINESS_RESULT_SCHEMA["json_schema"]["strict"])
         self.assertEqual(
@@ -102,6 +102,7 @@ class BusinessProtocolPromptTest(unittest.TestCase):
                 "evidence_refs",
                 "next_action",
                 "handoff_message",
+                "decision_basis",
             },
         )
         self.assertFalse(schema["additionalProperties"])

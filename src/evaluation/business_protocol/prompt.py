@@ -29,6 +29,7 @@ AGENT_BUSINESS_RESULT_SCHEMA = {
                 "evidence_refs",
                 "next_action",
                 "handoff_message",
+                "decision_basis",
             ],
             "properties": {
                 "status": {
@@ -62,6 +63,15 @@ AGENT_BUSINESS_RESULT_SCHEMA = {
                     "type": "string",
                     "maxLength": 240,
                     "description": "交给下游角色的事实、当前处理结果和待办；没有下游时填写无。",
+                },
+                "decision_basis": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 600,
+                    "description": (
+                        "用简短文字说明本轮决定直接依据的记录编号、上游产物编号或工具返回编号，"
+                        "以及证据与决定的关系；不要编造输入中没有的事实。"
+                    ),
                 },
             },
         },

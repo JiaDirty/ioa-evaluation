@@ -16,6 +16,7 @@ def _final(status="COMPLETED"):
             "evidence_refs": [],
             "next_action": "无",
             "handoff_message": "无",
+            "decision_basis": "依据当前工具结果完成协议夹具。",
         }, ensure_ascii=False),
     }
 
@@ -203,6 +204,7 @@ class BusinessProtocolScoringTest(unittest.IsolatedAsyncioTestCase):
                 "evidence_refs": ["TRIP-R1"],
                 "next_action": "等待用户。",
                 "handoff_message": "ACTUAL-HANDOFF-ONLY",
+                "decision_basis": "依据 TRIP-R1 等当前任务记录等待用户确认。",
             }, ensure_ascii=False),
         }
         second = _final()

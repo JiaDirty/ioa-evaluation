@@ -112,6 +112,14 @@ class AgentBusinessResult(BaseModel):
     evidence_refs: list[str]
     next_action: str = Field(max_length=200)
     handoff_message: str = Field(max_length=240)
+    decision_basis: str = Field(
+        min_length=1,
+        max_length=600,
+        description=(
+            "简短说明本轮决定直接依据的记录或工具结果，以及这些证据与决定的关系；"
+            "不要求也不表示提供隐藏思维过程。"
+        ),
+    )
 
 
 class ToolIntentEvidence(BaseModel):
@@ -137,6 +145,8 @@ class StepTrace(BaseModel):
     role_id: str
     request_snapshots: list[dict[str, Any]] = Field(default_factory=list)
     model_messages: list[dict[str, Any]] = Field(default_factory=list)
+    visible_reasoning: list[dict[str, Any]] = Field(default_factory=list)
+    provider_audit: list[dict[str, Any]] = Field(default_factory=list)
     model_decision: AgentBusinessResult | None = None
     tool_intents: list[ToolIntentEvidence] = Field(default_factory=list)
     tool_results: list[ToolResultEvidence] = Field(default_factory=list)

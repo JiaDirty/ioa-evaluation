@@ -614,6 +614,21 @@ def _chat_completion_turn(response: Any) -> dict[str, Any]:
         raise LLMResponseError("Model response contained no message")
 
     content = _value(message, "content")
+    visible_reasoning = None
+    visible_reasoning_field = None
+    for source_name, source in (
+        ("message", message),
+        ("choice", choice),
+        ("response", response),
+    ):
+        for field_name in ("reasoning_content", "reasoning", "analysis"):
+            candidate = _value(source, field_name)
+            if candidate is not None:
+                visible_reasoning = candidate
+                visible_reasoning_field = f"{source_name}.{field_name}"
+                break
+        if visible_reasoning is not None:
+            break
     normalized_calls: list[dict[str, Any]] = []
     for call in _value(message, "tool_calls", []) or []:
         function = _value(call, "function")
@@ -640,6 +655,10 @@ def _chat_completion_turn(response: Any) -> dict[str, Any]:
         "tool_calls": normalized_calls,
         "finish_reason": _value(choice, "finish_reason"),
         "assistant_message": assistant_message,
+        **({
+            "visible_reasoning": visible_reasoning,
+            "visible_reasoning_field": visible_reasoning_field,
+        } if visible_reasoning is not None else {}),
     }
 
 

@@ -6,6 +6,7 @@ from src.evaluation.agent_model.judge import AgentModelJudgeVerdict
 from src.llm.client import (
     LLMError,
     OpenAIClient,
+    _chat_completion_turn,
     _safe_payload_snapshot,
     estimate_serialized_request_tokens,
 )
@@ -133,6 +134,29 @@ class LLMClientConfigTest(unittest.TestCase):
         self.assertEqual(
             snapshot["messages"],
             [{"role": "user", "content": "keep this"}],
+        )
+
+    def test_chat_turn_preserves_provider_visible_reasoning_content(self):
+        response = SimpleNamespace(
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(
+                    content='{"status":"COMPLETED"}',
+                    reasoning_content="依据工具返回的事实作出决定。",
+                    tool_calls=None,
+                ),
+                finish_reason="stop",
+            )]
+        )
+
+        turn = _chat_completion_turn(response)
+
+        self.assertEqual(
+            turn["visible_reasoning"],
+            "依据工具返回的事实作出决定。",
+        )
+        self.assertEqual(
+            turn["visible_reasoning_field"],
+            "message.reasoning_content",
         )
 
     def test_judge_specific_settings_and_strict_schema_are_applied(self):

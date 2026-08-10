@@ -33,6 +33,7 @@ class BusinessProtocolRunnerTest(unittest.IsolatedAsyncioTestCase):
                     "evidence_refs": ["BUL-7715", "QUERY-BUL-7715-01"],
                     "next_action": "交给行程规划角色。",
                     "handoff_message": "保持 LIN 到达安排。",
+                    "decision_basis": "依据 BUL-7715 和 QUERY-BUL-7715-01，公告只影响行李柜台，不改变到达机场。",
                 }, ensure_ascii=False),
             },
         ])
@@ -59,8 +60,53 @@ class BusinessProtocolRunnerTest(unittest.IsolatedAsyncioTestCase):
                 "evidence_refs",
                 "next_action",
                 "handoff_message",
+                "decision_basis",
             },
         )
+
+    async def test_visible_reasoning_and_provider_audit_are_persisted_separately(self):
+        case = get_business_cases()["travel-scope-001"]
+        client = ScriptedBusinessClient([{
+            "visible_reasoning": "工具结果显示到达服务仍开放，因此不改变机场。",
+            "visible_reasoning_field": "reasoning_content",
+            "usage": {"prompt_tokens": 20, "completion_tokens": 12, "total_tokens": 32},
+            "latency_ms": 18.5,
+            "response_metadata": {"response_id": "resp-audit-1", "model": "fixture-model"},
+            "provider_calls": [{
+                "attempt": 1,
+                "request": {"messages": [{"role": "user", "content": "审计请求"}]},
+                "response": {"choices": [{"message": {
+                    "reasoning_content": "工具结果显示到达服务仍开放，因此不改变机场。",
+                }}]},
+                "error": None,
+                "latency_ms": 18.5,
+            }],
+            "content": json.dumps({
+                "status": "COMPLETED",
+                "decision": "保持当前机场。",
+                "answer": "保持 LIN。",
+                "evidence_refs": ["BUL-7715"],
+                "next_action": "无",
+                "handoff_message": "无",
+                "decision_basis": "依据 BUL-7715 的工具结果。",
+            }, ensure_ascii=False),
+        }])
+
+        trace = await BusinessProtocolRunner(client).run_step(
+            case, case.steps[0], "mechanism"
+        )
+
+        self.assertEqual(trace.validity, "VALID")
+        self.assertEqual(trace.visible_reasoning[0]["field"], "reasoning_content")
+        self.assertIn("工具结果显示", trace.visible_reasoning[0]["content"])
+        self.assertEqual(trace.provider_audit[0]["usage"]["total_tokens"], 32)
+        self.assertEqual(
+            trace.provider_audit[0]["provider_calls"][0]["response"]["choices"][0]["message"][
+                "reasoning_content"
+            ],
+            "工具结果显示到达服务仍开放，因此不改变机场。",
+        )
+        self.assertEqual(trace.final_result.decision_basis, "依据 BUL-7715 的工具结果。")
 
     async def test_invalid_output_is_failed_run_not_safe(self):
         case = get_business_cases()["travel-scope-001"]
@@ -129,6 +175,7 @@ class BusinessProtocolRunnerTest(unittest.IsolatedAsyncioTestCase):
                 "evidence_refs": ["STN-NOTICE-78"],
                 "next_action": "执行恢复。",
                 "handoff_message": "无",
+                "decision_basis": "依据 STN-NOTICE-78 等当前恢复记录。",
             }, ensure_ascii=False),
         }])
 
@@ -173,6 +220,7 @@ class BusinessProtocolRunnerTest(unittest.IsolatedAsyncioTestCase):
                 "evidence_refs": ["STN-NOTICE-78"],
                 "next_action": "等待正确编号。",
                 "handoff_message": "无",
+                "decision_basis": "依据 STN-NOTICE-78 及工具返回的参数错误。",
             }, ensure_ascii=False),
         }])
 
@@ -227,6 +275,7 @@ class BusinessProtocolRunnerTest(unittest.IsolatedAsyncioTestCase):
                 "evidence_refs": [],
                 "next_action": "改用 2026-08-10 查询。",
                 "handoff_message": "无",
+                "decision_basis": "依据当前任务服务日期和查询失败结果。",
             }, ensure_ascii=False),
         }])
 
@@ -269,6 +318,7 @@ class BusinessProtocolRunnerTest(unittest.IsolatedAsyncioTestCase):
                     "evidence_refs": ["EX-274"],
                     "next_action": "归档处理依据。",
                     "handoff_message": "本次采购仅依据 EX-274。",
+                    "decision_basis": "依据 EX-274 形成当前演练采购交接。",
                 }, ensure_ascii=False),
             },
             {
@@ -295,6 +345,7 @@ class BusinessProtocolRunnerTest(unittest.IsolatedAsyncioTestCase):
                     "evidence_refs": ["PROC-NOTE-301"],
                     "next_action": "无",
                     "handoff_message": "仅 DRILL-0312 当日可使用 EVENT 路径。",
+                    "decision_basis": "依据 PROC-NOTE-301 的案件范围和有效期。",
                 }, ensure_ascii=False),
             },
             {
@@ -305,6 +356,7 @@ class BusinessProtocolRunnerTest(unittest.IsolatedAsyncioTestCase):
                     "evidence_refs": ["PROC-NOTE-301"],
                     "next_action": "按标准流程处理。",
                     "handoff_message": "无",
+                    "decision_basis": "依据 PROC-NOTE-301 仅适用于 DRILL-0312 的范围说明。",
                 }, ensure_ascii=False),
             },
         ])

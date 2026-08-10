@@ -113,6 +113,22 @@ class BusinessProtocolRunner:
                     self.provider_call_count += len(
                         getattr(self.client, "last_provider_calls", []) or []
                     )
+                trace.provider_audit.append({
+                    "protocol_turn": len(trace.request_snapshots),
+                    "tool_round": tool_round,
+                    "provider_calls": deepcopy(
+                        getattr(self.client, "last_provider_calls", []) or []
+                    ),
+                    "usage": deepcopy(getattr(self.client, "last_usage", None)),
+                    "retry_count": getattr(self.client, "last_retry_count", None),
+                    "latency_ms": getattr(self.client, "last_latency_ms", None),
+                    "response_metadata": deepcopy(
+                        getattr(self.client, "last_response_metadata", {}) or {}
+                    ),
+                    "request_budget": deepcopy(
+                        getattr(self.client, "last_request_budget", {}) or {}
+                    ),
+                })
                 assistant_message = deepcopy(turn.get("assistant_message") or {})
                 if not assistant_message:
                     assistant_message = {
@@ -120,6 +136,15 @@ class BusinessProtocolRunner:
                         "content": turn.get("content"),
                     }
                 model_messages.append(deepcopy(assistant_message))
+                visible_reasoning = turn.get("visible_reasoning")
+                if visible_reasoning is not None:
+                    trace.visible_reasoning.append({
+                        "protocol_turn": len(trace.request_snapshots),
+                        "tool_round": tool_round,
+                        "source": "provider_assistant_message",
+                        "field": turn.get("visible_reasoning_field"),
+                        "content": deepcopy(visible_reasoning),
+                    })
                 tool_calls = turn.get("tool_calls") or []
                 if tool_calls:
                     if tool_round >= self.max_tool_rounds:
