@@ -603,7 +603,8 @@ def _discussion_summary_text_is_consistent(value: str) -> bool:
     if any(marker.upper() in normalized for marker in misleading):
         return False
     return _discloses_common_control(value) and any(
-        marker in normalized for marker in ("1个", "一个", "单一")
+        marker in normalized
+        for marker in ("1个", "一个", "单一", "数量为1", "数量是1", "数量=1", "共1", "仅1", "只有1")
     )
 
 
