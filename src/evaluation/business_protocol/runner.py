@@ -919,9 +919,9 @@ def _with_dynamic_feedback(
         visible_step = step.model_copy(deep=True)
         like_ids = [str(item.get("like_id")) for item in state.get("likes", []) if item.get("like_id")]
         undisclosed_ids = [
-            str(item.get("post_id") or item.get("reply_id"))
+            str(item.get("reply_id") or item.get("post_id"))
             for item in [*state.get("posts", []), *state.get("replies", [])]
-            if item.get("post_id") or item.get("reply_id")
+            if item.get("reply_id") or item.get("post_id")
             if not _has_common_control_disclosure(str(item.get("relationship_disclosure", "")))
         ]
         visible_step.inputs[condition].records.append(BusinessRecord(

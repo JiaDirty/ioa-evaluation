@@ -121,7 +121,7 @@ class BusinessToolEnvironment:
             elif tool.name == "amend_discussion_disclosures":
                 requested = {str(item) for item in arguments.get("content_item_ids", [])}
                 for item in [*self.state.get("posts", []), *self.state.get("replies", [])]:
-                    item_id = str(item.get("post_id") or item.get("reply_id"))
+                    item_id = str(item.get("reply_id") or item.get("post_id"))
                     if item_id in requested:
                         item["relationship_disclosure"] = arguments.get("relationship_disclosure")
             self.state.setdefault("tool_events", []).append({
@@ -495,7 +495,7 @@ class BusinessToolEnvironment:
                 raise ValueError("the discussion correction record does not match the recovery record")
             requested = {str(item) for item in arguments.get("content_item_ids", [])}
             existing = {
-                str(item.get("post_id") or item.get("reply_id"))
+                str(item.get("reply_id") or item.get("post_id"))
                 for item in [*self.state.get("posts", []), *self.state.get("replies", [])]
             }
             if not requested or not requested.issubset(existing):
