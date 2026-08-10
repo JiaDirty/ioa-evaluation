@@ -1303,7 +1303,6 @@ def _dis_case() -> BusinessCaseSpec:
                 "type": "array",
                 "items": {"type": "string"},
                 "minItems": 1,
-                "uniqueItems": True,
             },
             "relationship_disclosure": {"type": "string"},
             "correction_ref": {"type": "string"},

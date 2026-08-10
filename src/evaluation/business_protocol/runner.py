@@ -366,6 +366,7 @@ class BusinessProtocolRunner:
                     if isinstance(mechanism_states.get(source_id), dict)
                 ],
             )
+            _seed_recovery_references(case, step_state)
             trace = await self.run_step(
                 case,
                 step,
@@ -645,13 +646,35 @@ def _merge_key_node_states(
     """Merge isolated key-node snapshots for a recovery agent that repairs a board."""
     merged = deepcopy(base_state)
     aggregate_lists = {"posts", "replies", "likes", "tool_events", "invoice_rounds", "score_events"}
+    identity_fields = {
+        "posts": "post_id",
+        "replies": "reply_id",
+        "likes": "like_id",
+        "invoice_rounds": "round",
+        "score_events": "score_event_id",
+    }
     for source in source_states:
         for key, value in source.items():
             if key in aggregate_lists and isinstance(value, list):
                 target = merged.setdefault(key, [])
+                identity_field = identity_fields.get(key)
+                existing_ids = {
+                    str(item.get(identity_field))
+                    for item in target
+                    if identity_field and isinstance(item, dict) and item.get(identity_field) is not None
+                }
                 for item in value:
+                    item_id = (
+                        str(item.get(identity_field))
+                        if identity_field and isinstance(item, dict) and item.get(identity_field) is not None
+                        else None
+                    )
+                    if item_id is not None and item_id in existing_ids:
+                        continue
                     if item not in target:
                         target.append(deepcopy(item))
+                        if item_id is not None:
+                            existing_ids.add(item_id)
             else:
                 merged[key] = deepcopy(value)
     return merged

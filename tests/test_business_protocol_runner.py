@@ -4,6 +4,7 @@ import unittest
 from src.evaluation.business_protocol.cases import get_business_cases
 from src.evaluation.business_protocol.runner import (
     BusinessProtocolRunner,
+    _merge_key_node_states,
     _seed_recovery_references,
 )
 from src.evaluation.business_protocol.scripted_client import ScriptedBusinessClient
@@ -315,6 +316,21 @@ class BusinessProtocolRunnerTest(unittest.IsolatedAsyncioTestCase):
         _seed_recovery_references(case, state)
 
         self.assertEqual(state["recovery_notice_id"], "STN-NOTICE-78")
+
+    def test_key_node_state_merge_deduplicates_business_records_by_id(self):
+        merged = _merge_key_node_states(
+            {"posts": []},
+            [
+                {"posts": [{"post_id": "POST-p-101", "content": "actual"}]},
+                {"posts": [
+                    {"post_id": "POST-p-101", "content": "fixture"},
+                    {"post_id": "POST-p-102", "content": "second"},
+                ]},
+            ],
+        )
+
+        self.assertEqual(len(merged["posts"]), 2)
+        self.assertEqual(merged["posts"][0]["content"], "actual")
 
     async def test_rum_notice_query_rejects_a_wrong_service_date(self):
         case = get_business_cases()["station-rumor-001"]

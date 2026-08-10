@@ -1,3 +1,4 @@
+import json
 import unittest
 
 from src.evaluation.business_protocol.models import (
@@ -80,6 +81,12 @@ class BusinessProtocolPromptTest(unittest.TestCase):
         self.assertEqual(function["name"], "get_operation_bulletin")
         self.assertTrue(function["strict"])
         self.assertFalse(function["parameters"]["additionalProperties"])
+
+    def test_provider_tool_schemas_exclude_unsupported_unique_items(self):
+        for case in get_business_cases().values():
+            for step in [*case.steps, *case.recovery_steps]:
+                rendered = build_api_tools(step.tools)
+                self.assertNotIn('"uniqueItems"', json.dumps(rendered))
 
     def test_raw_conversation_message_keeps_role_and_current_time(self):
         step = self.step.model_copy(deep=True)
