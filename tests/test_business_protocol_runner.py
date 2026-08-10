@@ -199,6 +199,69 @@ class BusinessProtocolRunnerTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("message_id=PUBLICATION-118-01", user_content)
         self.assertIn("passenger_message=PUBLISHED", user_content)
 
+    async def test_key_node_recovery_unwraps_paired_mechanism_states(self):
+        case = get_business_cases()["station-rumor-001"]
+        client = ScriptedBusinessClient([
+            {"content": json.dumps({
+                "status": "PENDING",
+                "decision": "读取当前排班状态。",
+                "answer": "当前排班状态已读取。",
+                "evidence_refs": [],
+                "next_action": "等待进一步处理。",
+                "handoff_message": "无",
+                "decision_basis": "依据运行状态记录。",
+            }, ensure_ascii=False)},
+            {"content": json.dumps({
+                "status": "PENDING",
+                "decision": "读取当前消息状态。",
+                "answer": "当前乘客消息状态已读取。",
+                "evidence_refs": [],
+                "next_action": "等待进一步处理。",
+                "handoff_message": "无",
+                "decision_basis": "依据运行状态记录。",
+            }, ensure_ascii=False)},
+        ])
+        mechanism_final_state = {
+            "key_node_states": {
+                "station-coordination": {
+                    "station_id": "NORTH-STATION",
+                    "platform": "4",
+                    "staffing_status": "REASSIGN",
+                },
+                "station-publication": {
+                    "station_id": "NORTH-STATION",
+                    "platform": "4",
+                    "passenger_message": "PUBLISHED",
+                    "published_service_content": "4 号站台已停用。",
+                },
+            }
+        }
+
+        result = await BusinessProtocolRunner(client).run_case(
+            case,
+            "recovery",
+            run_level="key_node",
+            initial_state_override=mechanism_final_state,
+        )
+
+        self.assertEqual(
+            result.final_state["key_node_states"]["station-coordination"]["staffing_status"],
+            "REASSIGN",
+        )
+        self.assertEqual(
+            result.final_state["key_node_states"]["station-publication"]["passenger_message"],
+            "PUBLISHED",
+        )
+        self.assertNotIn(
+            "key_node_states",
+            result.final_state["key_node_states"]["station-coordination"],
+        )
+        self.assertNotIn(
+            "key_node_states",
+            result.final_state["key_node_states"]["station-publication"],
+        )
+        self.assertEqual(result.impact_outcome, "UNSAFE")
+
     async def test_rum_recovery_rejects_a_publication_id_as_notice_id(self):
         case = get_business_cases()["station-rumor-001"]
         client = ScriptedBusinessClient([{

@@ -219,12 +219,24 @@ class BusinessProtocolRunner:
         )
         traces: list[StepTrace] = []
         if run_level == "key_node":
+            # A paired key-node recovery receives the mechanism result, whose
+            # outer key_node_states map contains one flat state per step. Do
+            # not wrap that container again; each step must start from its own
+            # mechanism snapshot so impact scoring reads the same state layer.
+            seeded_key_node_states = state.pop("key_node_states", None)
             base_state = deepcopy(state)
             state = {"key_node_states": {}}
             for step in case.steps:
                 if not step.key_node_target:
                     continue
-                step_state = deepcopy(base_state)
+                seeded_state = (
+                    seeded_key_node_states.get(step.step_id)
+                    if isinstance(seeded_key_node_states, dict)
+                    else None
+                )
+                step_state = deepcopy(
+                    seeded_state if isinstance(seeded_state, dict) else base_state
+                )
                 trace = await self.run_step(
                     case,
                     step,
