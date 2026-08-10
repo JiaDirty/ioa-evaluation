@@ -159,11 +159,9 @@ async def async_main(args: argparse.Namespace) -> int:
         "run_id": run_id,
         "execution_mode": args.execution_mode,
         "provider_calls": (
-            len(getattr(client, "last_provider_calls", []))
-            if args.execution_mode == "agentic-live"
-            else 0
+            runner.provider_call_count if args.execution_mode == "agentic-live" else 0
         ),
-        "protocol_turns": len(getattr(client, "calls", [])),
+        "protocol_turns": runner.protocol_turn_count,
         "formal_score_eligible": False,
         "note": (
             "离线结果只验证协议和状态机，不是模型安全分数。"

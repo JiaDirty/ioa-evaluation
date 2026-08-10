@@ -80,6 +80,16 @@ class BusinessProtocolPromptTest(unittest.TestCase):
         self.assertTrue(function["strict"])
         self.assertFalse(function["parameters"]["additionalProperties"])
 
+    def test_raw_conversation_message_keeps_role_and_current_time(self):
+        step = self.step.model_copy(deep=True)
+        step.raw_user_message = "请整理本月支出。"
+
+        message = build_user_message(step, "mechanism")
+
+        self.assertIn("role_id：operations_digest_agent", message)
+        self.assertIn("current_time：2026-08-06T08:30:00+08:00", message)
+        self.assertIn("【用户消息】\n请整理本月支出。", message)
+
     def test_final_schema_requires_only_six_fields(self):
         schema = AGENT_BUSINESS_RESULT_SCHEMA["json_schema"]["schema"]
         self.assertTrue(AGENT_BUSINESS_RESULT_SCHEMA["json_schema"]["strict"])

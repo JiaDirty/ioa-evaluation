@@ -42,6 +42,8 @@ class BusinessProtocolRunner:
     def __init__(self, client: Any, *, max_tool_rounds: int = 6) -> None:
         self.client = client
         self.max_tool_rounds = max_tool_rounds
+        self.protocol_turn_count = 0
+        self.provider_call_count = 0
 
     async def run_step(
         self,
@@ -56,6 +58,7 @@ class BusinessProtocolRunner:
     ) -> StepTrace:
         mutable_state = state if state is not None else deepcopy(case.initial_state.get(condition, {}))
         visible_step = _with_dynamic_feedback(case, step, condition, mutable_state)
+        visible_step.current_time = visible_step.current_time_for(condition)
         state_before = deepcopy(mutable_state)
         user_message = build_user_message(
             visible_step,
@@ -72,7 +75,12 @@ class BusinessProtocolRunner:
             messages.extend(deepcopy(effective_history))
         messages.append({"role": "user", "content": user_message})
         model_messages: list[dict[str, Any]] = []
-        environment = BusinessToolEnvironment(visible_step.tools, condition, mutable_state)
+        environment = BusinessToolEnvironment(
+            visible_step.tools,
+            condition,
+            mutable_state,
+            role_id=visible_step.role_id,
+        )
         trace = StepTrace(
             case_id=case.case_id,
             category=case.category,
@@ -92,13 +100,19 @@ class BusinessProtocolRunner:
                     "parallel_tool_calls": False,
                     "response_format": final_response_schema(),
                 })
-                turn = self.client.generate_chat_turn(
-                    deepcopy(messages),
-                    tools=api_tools,
-                    tool_choice="auto",
-                    parallel_tool_calls=False,
-                    response_format=final_response_schema(),
-                )
+                try:
+                    turn = self.client.generate_chat_turn(
+                        deepcopy(messages),
+                        tools=api_tools,
+                        tool_choice="auto",
+                        parallel_tool_calls=False,
+                        response_format=final_response_schema(),
+                    )
+                finally:
+                    self.protocol_turn_count += 1
+                    self.provider_call_count += len(
+                        getattr(self.client, "last_provider_calls", []) or []
+                    )
                 assistant_message = deepcopy(turn.get("assistant_message") or {})
                 if not assistant_message:
                     assistant_message = {
@@ -222,6 +236,14 @@ class BusinessProtocolRunner:
             return await self._run_inc_paired(case)
         if run_level == "full_chain" and case.category == "AGE":
             return await self._run_age_paired(case)
+        if run_level == "full_chain" and case.category == "NOR":
+            return await self._run_nor_paired(case)
+        if run_level == "full_chain" and case.category == "DIS":
+            return await self._run_dis_paired(case)
+        if run_level == "full_chain" and case.category == "CON":
+            return await self._run_con_paired(case)
+        if run_level == "full_chain" and case.category == "RUM":
+            return await self._run_rum_paired(case)
         baseline = await self.run_case(case, "baseline", run_level=run_level)
         mechanism = await self.run_case(case, "mechanism", run_level=run_level)
         if mechanism.safety_outcome == "UNSAFE":
@@ -250,7 +272,8 @@ class BusinessProtocolRunner:
         context: _SequenceContext,
     ) -> None:
         for index, step in indexed_steps:
-            visible_step = _with_dynamic_feedback(case, step, condition, context.state)
+            visible_step = step.model_copy(deep=True)
+            visible_step.current_time = visible_step.current_time_for(condition)
             if step.upstream_step_ids:
                 if not all(
                     dependency in context.artifacts_by_step
@@ -266,7 +289,7 @@ class BusinessProtocolRunner:
             prior_history = context.history_by_role.get(step.role_id, [])
             trace = await self.run_step(
                 case,
-                visible_step,
+                step,
                 condition,
                 run_level="full_chain",
                 state=context.state,
@@ -278,18 +301,12 @@ class BusinessProtocolRunner:
             if trace.validity == "INVALID":
                 break
             if trace.final_result is not None:
-                artifact = _artifact_from_trace(step, trace)
+                artifact = _artifact_from_trace(visible_step, trace)
                 if artifact is not None:
                     context.artifacts_by_step[step.step_id] = artifact
                 role_history = context.history_by_role.setdefault(step.role_id, [])
-                role_history.append({
-                    "role": "user",
-                    "content": build_user_message(
-                        visible_step,
-                        condition,
-                        upstream_override=upstream_override,
-                    ),
-                })
+                first_request_messages = trace.request_snapshots[0]["messages"]
+                role_history.append(deepcopy(first_request_messages[-1]))
                 role_history.extend(deepcopy(trace.model_messages))
 
     async def _run_inc_paired(self, case: BusinessCaseSpec) -> PairedCaseRunResult:
@@ -330,6 +347,110 @@ class BusinessProtocolRunner:
             mechanism=mechanism,
             recovery=recovery,
             shared_prefix_step_count=9,
+        )
+
+    async def _run_nor_paired(self, case: BusinessCaseSpec) -> PairedCaseRunResult:
+        baseline = await self.run_case(case, "baseline", run_level="full_chain")
+        mechanism = await self.run_case(case, "mechanism", run_level="full_chain")
+        if mechanism.safety_outcome == "UNSAFE" and case.recovery_steps:
+            recovery_context = _SequenceContext(state=deepcopy(mechanism.final_state))
+            selected_steps: list[AgentStepSpec] = []
+            if (
+                recovery_context.state.get("shared_note_scope") == "TEAM"
+                and recovery_context.state.get("shared_note_status", "ACTIVE") == "ACTIVE"
+            ):
+                selected_steps.append(case.recovery_steps[0])
+            if recovery_context.state.get("purchase_path") == "EVENT":
+                purchase_correction = case.recovery_steps[1].model_copy(deep=True)
+                if not selected_steps:
+                    purchase_correction.upstream_step_ids = []
+                selected_steps.append(purchase_correction)
+            await self._run_full_sequence(
+                case,
+                "recovery",
+                list(enumerate(selected_steps, start=len(case.steps))),
+                recovery_context,
+            )
+            recovery = _result_from_context(case, "recovery", recovery_context)
+        else:
+            recovery = _empty_recovery(case, "full_chain", mechanism)
+        return PairedCaseRunResult(
+            case_id=case.case_id,
+            category=case.category,
+            run_level="full_chain",
+            baseline=baseline,
+            mechanism=mechanism,
+            recovery=recovery,
+        )
+
+    async def _run_dis_paired(self, case: BusinessCaseSpec) -> PairedCaseRunResult:
+        baseline = await self.run_case(case, "baseline", run_level="full_chain")
+        mechanism = await self.run_case(case, "mechanism", run_level="full_chain")
+        if mechanism.safety_outcome == "UNSAFE" and case.recovery_steps:
+            recovery_context = _SequenceContext(state=deepcopy(mechanism.final_state))
+            await self._run_full_sequence(
+                case,
+                "recovery",
+                list(enumerate(case.recovery_steps, start=len(case.steps))),
+                recovery_context,
+            )
+            recovery = _result_from_context(case, "recovery", recovery_context)
+        else:
+            recovery = _empty_recovery(case, "full_chain", mechanism)
+        return PairedCaseRunResult(
+            case_id=case.case_id,
+            category=case.category,
+            run_level="full_chain",
+            baseline=baseline,
+            mechanism=mechanism,
+            recovery=recovery,
+        )
+
+    async def _run_con_paired(self, case: BusinessCaseSpec) -> PairedCaseRunResult:
+        baseline = await self.run_case(case, "baseline", run_level="full_chain")
+        mechanism = await self.run_case(case, "mechanism", run_level="full_chain")
+        if mechanism.safety_outcome == "UNSAFE" and case.recovery_steps:
+            recovery_context = _SequenceContext(state=deepcopy(mechanism.final_state))
+            await self._run_full_sequence(
+                case,
+                "recovery",
+                list(enumerate(case.recovery_steps, start=len(case.steps))),
+                recovery_context,
+            )
+            recovery = _result_from_context(case, "recovery", recovery_context)
+        else:
+            recovery = _empty_recovery(case, "full_chain", mechanism)
+        return PairedCaseRunResult(
+            case_id=case.case_id,
+            category=case.category,
+            run_level="full_chain",
+            baseline=baseline,
+            mechanism=mechanism,
+            recovery=recovery,
+        )
+
+    async def _run_rum_paired(self, case: BusinessCaseSpec) -> PairedCaseRunResult:
+        baseline = await self.run_case(case, "baseline", run_level="full_chain")
+        mechanism = await self.run_case(case, "mechanism", run_level="full_chain")
+        if mechanism.safety_outcome == "UNSAFE" and case.recovery_steps:
+            recovery_context = _SequenceContext(state=deepcopy(mechanism.final_state))
+            _seed_recovery_references(case, recovery_context.state)
+            await self._run_full_sequence(
+                case,
+                "recovery",
+                list(enumerate(case.recovery_steps, start=len(case.steps))),
+                recovery_context,
+            )
+            recovery = _result_from_context(case, "recovery", recovery_context)
+        else:
+            recovery = _empty_recovery(case, "full_chain", mechanism)
+        return PairedCaseRunResult(
+            case_id=case.case_id,
+            category=case.category,
+            run_level="full_chain",
+            baseline=baseline,
+            mechanism=mechanism,
+            recovery=recovery,
         )
 
     async def _run_age_paired(self, case: BusinessCaseSpec) -> PairedCaseRunResult:
@@ -387,6 +508,21 @@ def _parse_arguments(raw: Any) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError("tool arguments must decode to a JSON object")
     return parsed
+
+
+def _seed_recovery_references(
+    case: BusinessCaseSpec,
+    state: dict[str, Any],
+) -> None:
+    """Expose fixture-backed references to the deterministic local tools."""
+    for step in case.recovery_steps:
+        recovery_input = step.inputs.get("recovery")
+        if recovery_input is None:
+            continue
+        for record in recovery_input.records:
+            if record.record_type == "official_notice":
+                state.setdefault("recovery_notice_id", record.record_id)
+                return
 
 
 def _result_from_context(
@@ -458,9 +594,35 @@ def _artifact_from_trace(
     successful_intents = [
         intent for intent in trace.tool_intents if intent.tool_call_id in successful
     ]
-    content = trace.final_result.handoff_message
+    handoff = trace.final_result.handoff_message.strip()
+    content = (
+        trace.final_result.answer
+        if handoff.lower() in {"", "无", "none", "n/a"}
+        else handoff
+    )
     evidence_refs = list(trace.final_result.evidence_refs)
-    if step.step_id == "station-record":
+    if step.step_id == "airport-digest":
+        content = trace.final_result.answer
+    elif step.step_id.startswith("batch-report-"):
+        content = trace.final_result.answer
+    elif step.step_id == "itinerary-plan":
+        prepared = next((
+            intent for intent in successful_intents
+            if intent.tool_name == "prepare_booking_change"
+        ), None)
+        if prepared is not None:
+            result = successful[prepared.tool_call_id].output
+            content = json.dumps({
+                "draft_id": result.get("draft_id") or result.get("result_id"),
+                "target_airport": prepared.arguments.get("target_airport"),
+                "reason": prepared.arguments.get("reason"),
+                "handoff": content,
+            }, ensure_ascii=False)
+            evidence_refs = [
+                str(result.get("draft_id") or result.get("result_id")),
+                *evidence_refs,
+            ]
+    elif step.step_id == "station-record":
         saved = next((
             intent for intent in successful_intents
             if intent.tool_name == "save_operation_record"
@@ -480,8 +642,14 @@ def _artifact_from_trace(
         ), None)
         if written is None:
             return None
-        content = str(written.arguments.get("content", ""))
         result = successful[written.tool_call_id].output
+        content = json.dumps({
+            "record_id": result.get("record_id") or result.get("result_id"),
+            "scope": written.arguments.get("scope"),
+            "content": written.arguments.get("content"),
+            "valid_until": written.arguments.get("valid_until"),
+            "source_task_id": written.arguments.get("note_id"),
+        }, ensure_ascii=False)
         evidence_refs = [str(result.get("record_id") or result.get("result_id"))]
     elif step.step_id == "discussion-plan":
         planned = next((
@@ -529,6 +697,79 @@ def _with_dynamic_feedback(
     condition: Condition,
     state: dict[str, Any],
 ) -> AgentStepSpec:
+    if condition == "recovery" and case.category in {"CAS", "RUM", "NOR"}:
+        visible_step = step.model_copy(deep=True)
+        details: list[str] = []
+        if case.category == "CAS" and step.step_id == "booking-action":
+            details = [
+                f"current_airport={state.get('booking_airport', 'UNKNOWN')}",
+                f"active_draft_id={state.get('active_draft_id', 'NONE')}",
+                f"prior_change_id={state.get('prior_change_id', 'NONE')}",
+            ]
+        elif case.category == "RUM" and step.step_id in {
+            "station-coordination-recovery",
+            "station-publication-recovery",
+        }:
+            details = [
+                f"staffing_change_id={state.get('staffing_change_id', 'NONE')}",
+                f"staffing_status={state.get('staffing_status', 'UNKNOWN')}",
+                f"message_id={state.get('message_id', 'NONE')}",
+                f"passenger_message={state.get('passenger_message', 'UNKNOWN')}",
+            ]
+        elif case.category == "RUM" and step.step_id == "station-coordination":
+            details = [
+                f"staffing_change_id={state.get('staffing_change_id', 'NONE')}"
+            ]
+        elif case.category == "RUM" and step.step_id == "station-publication":
+            details = [f"message_id={state.get('message_id', 'NONE')}"]
+        elif case.category == "NOR" and step.step_id in {"knowledge-maintenance", "knowledge-correction"}:
+            details = [
+                f"shared_note_id={state.get('shared_note_id', 'NONE')}",
+                f"shared_note_scope={state.get('shared_note_scope', 'UNKNOWN')}",
+                f"shared_note_status={state.get('shared_note_status', 'ACTIVE')}",
+            ]
+        elif case.category == "NOR" and step.step_id in {"new-purchase", "purchase-correction"}:
+            details = [
+                f"purchase_event_id={state.get('purchase_event_id', 'NONE')}",
+                f"purchase_path={state.get('purchase_path', 'UNKNOWN')}",
+            ]
+        if details:
+            visible_step.inputs[condition].records.append(BusinessRecord(
+                record_id=f"RUNTIME-STATE-{step.step_id}",
+                record_type="runtime_business_state",
+                created_at=visible_step.current_time_for(condition),
+                content="；".join(details),
+            ))
+        return visible_step
+    if condition == "recovery" and case.category == "DIS" and step.step_id == "discussion-correction":
+        visible_step = step.model_copy(deep=True)
+        like_ids = [str(item.get("like_id")) for item in state.get("likes", []) if item.get("like_id")]
+        visible_step.inputs[condition].records.append(BusinessRecord(
+            record_id="RUNTIME-STATE-discussion-correction",
+            record_type="runtime_business_state",
+            created_at=visible_step.current_time_for(condition),
+            content=(
+                f"summary_id={state.get('summary_id', 'NONE')}；"
+                f"summary_controller_count={state.get('summary_controller_count', 'UNKNOWN')}；"
+                f"summary_independent_source_count={state.get('summary_independent_source_count', 'UNKNOWN')}；"
+                f"summary_relationship_disclosed={state.get('summary_relationship_disclosed', 'UNKNOWN')}；"
+                f"like_ids={','.join(like_ids) if like_ids else 'NONE'}；"
+                f"ranking_status={state.get('ranking_status', 'NORMAL')}"
+            ),
+        ))
+        return visible_step
+    if condition == "recovery" and case.category == "CON" and step.step_id == "batch-recovery":
+        visible_step = step.model_copy(deep=True)
+        visible_step.inputs[condition].records.append(BusinessRecord(
+            record_id="RUNTIME-STATE-batch-recovery",
+            record_type="runtime_business_state",
+            created_at=visible_step.current_time_for(condition),
+            content=(
+                f"batch_status={state.get('batch_status', 'UNKNOWN')}；"
+                f"independent_origin_count={state.get('independent_origin_count', 'UNKNOWN')}"
+            ),
+        ))
+        return visible_step
     if case.category == "AGE" and step.metadata.get("recovery_only"):
         visible_step = step.model_copy(deep=True)
         settings = state.get("automation_settings", {})

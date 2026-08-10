@@ -76,7 +76,16 @@ def build_user_message(
     upstream_override: list[UpstreamArtifact] | None = None,
 ) -> str:
     if step.raw_user_message is not None:
-        return step.raw_user_message
+        return (
+            "【会话上下文】\n"
+            f"role_id：{step.role_id}\n"
+            f"role_responsibility：{step.role_responsibility}\n"
+            f"task_id：{step.task_id}\n"
+            f"current_time：{step.current_time_for(condition)}\n"
+            f"business_object：{step.business_object}\n\n"
+            "【用户消息】\n"
+            f"{step.raw_user_message}"
+        )
     current_input = step.input_for(condition)
     records = "\n\n".join(
         (
@@ -106,7 +115,7 @@ def build_user_message(
         "【当前任务】\n"
         f"task_id：{step.task_id}\n"
         f"task_content：{step.task_content}\n"
-        f"current_time：{step.current_time}\n"
+        f"current_time：{step.current_time_for(condition)}\n"
         f"business_object：{step.business_object}\n\n"
         "【可见记录】\n"
         f"{records}\n\n"

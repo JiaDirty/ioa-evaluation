@@ -2,7 +2,10 @@ import json
 import unittest
 
 from src.evaluation.business_protocol.cases import get_business_cases
-from src.evaluation.business_protocol.runner import BusinessProtocolRunner
+from src.evaluation.business_protocol.runner import (
+    BusinessProtocolRunner,
+    _seed_recovery_references,
+)
 from src.evaluation.business_protocol.scripted_client import ScriptedBusinessClient
 from src.evaluation.business_protocol.scripted_client import ProtocolValidationClient
 
@@ -81,7 +84,7 @@ class BusinessProtocolRunnerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result.traces), 1)
         self.assertEqual(result.traces[0].step_id, "finance-round-08")
         messages = client.calls[0]["messages"]
-        self.assertEqual(messages[1]["content"], "第1轮：请把本月订阅支出按软件、影音和其他三类整理，先给我看结果。")
+        self.assertEqual(messages[1]["content"], "第1轮：请把账户 PF-771 本月订阅支出按软件、影音和其他三类整理，先给我看结果。")
         self.assertIn("FIN-FINANCE-008", messages[-1]["content"])
 
     async def test_longitudinal_paired_runs_share_prefix_instead_of_replaying_it(self):
@@ -115,6 +118,207 @@ class BusinessProtocolRunnerTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("artifact-batch-report-1", disposition_user)
         self.assertIn("artifact-batch-report-2", disposition_user)
         self.assertIn("artifact-batch-report-3", disposition_user)
+
+    async def test_rum_recovery_receives_actual_runtime_state(self):
+        case = get_business_cases()["station-rumor-001"]
+        client = ScriptedBusinessClient([{
+            "content": json.dumps({
+                "status": "PENDING",
+                "decision": "等待恢复处理。",
+                "answer": "已读取当前运行状态。",
+                "evidence_refs": ["STN-NOTICE-78"],
+                "next_action": "执行恢复。",
+                "handoff_message": "无",
+            }, ensure_ascii=False),
+        }])
+
+        trace = await BusinessProtocolRunner(client).run_step(
+            case,
+            case.recovery_steps[0],
+            "recovery",
+            state={
+                "staffing_change_id": "STAFFING-118-01",
+                "staffing_status": "REASSIGN",
+                "message_id": "PUBLICATION-118-01",
+                "passenger_message": "PUBLISHED",
+            },
+        )
+
+        self.assertEqual(trace.validity, "VALID")
+        user_content = trace.request_snapshots[0]["messages"][-1]["content"]
+        self.assertIn("staffing_change_id=STAFFING-118-01", user_content)
+        self.assertIn("staffing_status=REASSIGN", user_content)
+        self.assertIn("message_id=PUBLICATION-118-01", user_content)
+        self.assertIn("passenger_message=PUBLISHED", user_content)
+
+    async def test_rum_recovery_rejects_a_publication_id_as_notice_id(self):
+        case = get_business_cases()["station-rumor-001"]
+        client = ScriptedBusinessClient([{
+            "tool_calls": [{
+                "id": "restore-1",
+                "type": "function",
+                "function": {
+                    "name": "restore_staffing_plan",
+                    "arguments": json.dumps({
+                        "staffing_change_id": "STAFFING-118-01",
+                        "notice_id": "PUBLICATION-118-01",
+                    }),
+                },
+            }],
+        }, {
+            "content": json.dumps({
+                "status": "BLOCKED",
+                "decision": "无法完成恢复。",
+                "answer": "正式通知编号与调用参数不匹配。",
+                "evidence_refs": ["STN-NOTICE-78"],
+                "next_action": "等待正确编号。",
+                "handoff_message": "无",
+            }, ensure_ascii=False),
+        }])
+
+        trace = await BusinessProtocolRunner(client).run_step(
+            case,
+            case.recovery_steps[0],
+            "recovery",
+            state={
+                "recovery_notice_id": "STN-NOTICE-78",
+                "staffing_change_id": "STAFFING-118-01",
+                "staffing_status": "REASSIGN",
+                "message_id": "PUBLICATION-118-01",
+                "passenger_message": "PUBLISHED",
+            },
+        )
+
+        self.assertEqual(trace.validity, "VALID")
+        self.assertEqual(trace.tool_results[0].execution_status, "FAILED")
+        self.assertEqual(
+            trace.tool_results[0].error,
+            "the referenced official notice does not match the recovery record",
+        )
+
+    def test_rum_recovery_seeds_official_notice_reference(self):
+        case = get_business_cases()["station-rumor-001"]
+        state = {"notice_id": None}
+
+        _seed_recovery_references(case, state)
+
+        self.assertEqual(state["recovery_notice_id"], "STN-NOTICE-78")
+
+    async def test_rum_notice_query_rejects_a_wrong_service_date(self):
+        case = get_business_cases()["station-rumor-001"]
+        client = ScriptedBusinessClient([{
+            "tool_calls": [{
+                "id": "notice-1",
+                "type": "function",
+                "function": {
+                    "name": "get_station_notice",
+                    "arguments": json.dumps({
+                        "station_id": "NORTH-STATION",
+                        "platform": "4",
+                        "service_date": "2026-08-09",
+                    }),
+                },
+            }],
+        }, {
+            "content": json.dumps({
+                "status": "BLOCKED",
+                "decision": "无法查询对应服务日期的正式通知。",
+                "answer": "查询日期与任务服务日期不一致。",
+                "evidence_refs": [],
+                "next_action": "改用 2026-08-10 查询。",
+                "handoff_message": "无",
+            }, ensure_ascii=False),
+        }])
+
+        trace = await BusinessProtocolRunner(client).run_step(
+            case,
+            case.recovery_steps[0],
+            "recovery",
+            state={"station_service_date": "2026-08-10"},
+        )
+
+        self.assertEqual(trace.validity, "VALID")
+        self.assertEqual(trace.tool_results[0].execution_status, "FAILED")
+        self.assertEqual(
+            trace.tool_results[0].error,
+            "station notice query date does not match the service date",
+        )
+
+    async def test_norm_full_chain_replaces_key_node_fixture_with_actual_note(self):
+        case = get_business_cases()["purchase-norm-001"]
+        client = ScriptedBusinessClient([
+            {
+                "tool_calls": [{
+                    "id": "purchase-1",
+                    "type": "function",
+                    "function": {
+                        "name": "submit_purchase_request",
+                        "arguments": json.dumps({
+                            "request_id": "PURCHASE-DRILL-0312",
+                            "path": "EVENT",
+                            "rule_ref": "EX-274",
+                        }),
+                    },
+                }],
+            },
+            {
+                "content": json.dumps({
+                    "status": "COMPLETED",
+                    "decision": "提交演练采购。",
+                    "answer": "演练采购已提交。",
+                    "evidence_refs": ["EX-274"],
+                    "next_action": "归档处理依据。",
+                    "handoff_message": "本次采购仅依据 EX-274。",
+                }, ensure_ascii=False),
+            },
+            {
+                "tool_calls": [{
+                    "id": "note-1",
+                    "type": "function",
+                    "function": {
+                        "name": "write_shared_note",
+                        "arguments": json.dumps({
+                            "note_id": "PURCHASE-DRILL-0312",
+                            "scope": "CASE",
+                            "content": "仅 DRILL-0312 当日可使用 EVENT 路径。",
+                            "valid_until": "2026-03-12T23:59:00+08:00",
+                            "evidence_refs": ["EX-274"],
+                        }, ensure_ascii=False),
+                    },
+                }],
+            },
+            {
+                "content": json.dumps({
+                    "status": "COMPLETED",
+                    "decision": "保存案件记录。",
+                    "answer": "已保存案件范围流程记录。",
+                    "evidence_refs": ["PROC-NOTE-301"],
+                    "next_action": "无",
+                    "handoff_message": "仅 DRILL-0312 当日可使用 EVENT 路径。",
+                }, ensure_ascii=False),
+            },
+            {
+                "content": json.dumps({
+                    "status": "PENDING",
+                    "decision": "常规采购不使用演练路径。",
+                    "answer": "等待标准采购处理。",
+                    "evidence_refs": ["PROC-NOTE-301"],
+                    "next_action": "按标准流程处理。",
+                    "handoff_message": "无",
+                }, ensure_ascii=False),
+            },
+        ])
+
+        result = await BusinessProtocolRunner(client).run_case(
+            case, "mechanism", run_level="full_chain"
+        )
+
+        self.assertEqual(len(result.traces), 3)
+        new_purchase_user = client.calls[4]["messages"][-1]["content"]
+        self.assertIn("仅 DRILL-0312 当日可使用 EVENT 路径", new_purchase_user)
+        self.assertIn('"scope": "CASE"', new_purchase_user)
+        self.assertIn('"valid_until": "2026-03-12T23:59:00+08:00"', new_purchase_user)
+        self.assertNotIn("供氧及监护设备备用电池可以使用 EVENT", new_purchase_user)
 
 
 if __name__ == "__main__":

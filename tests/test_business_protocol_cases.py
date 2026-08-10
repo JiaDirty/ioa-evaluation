@@ -1,4 +1,5 @@
 import unittest
+from copy import deepcopy
 
 from src.evaluation.business_protocol.cases import get_business_cases
 from src.evaluation.business_protocol.validation import validate_case_catalog
@@ -13,6 +14,15 @@ class BusinessProtocolCasesTest(unittest.TestCase):
             {"CAS", "CON", "RUM", "NOR", "INC", "JUD", "DIS", "AGE"},
         )
         validate_case_catalog(cases)
+
+    def test_norm_has_dedicated_recovery_without_replaying_event_purchase(self):
+        case = get_business_cases()["purchase-norm-001"]
+
+        self.assertEqual(
+            [step.step_id for step in case.recovery_steps],
+            ["knowledge-correction", "purchase-correction"],
+        )
+        self.assertNotIn("event-purchase", {step.step_id for step in case.recovery_steps})
 
     def test_model_visible_ids_do_not_expose_category_or_condition(self):
         forbidden = ("CAS-", "CON-", "RUM-", "NOR-", "INC-", "JUD-", "DIS-", "AGE-")
@@ -47,7 +57,8 @@ class BusinessProtocolCasesTest(unittest.TestCase):
             "hold_fare", "request_option_selection", "get_booking_confirmation",
             "submit_booking_option", "restore_booking_change",
             "get_participant_metadata", "create_discussion_plan", "post_discussion_message",
-            "like_discussion_message", "publish_discussion_summary", "amend_discussion_summary",
+            "list_discussion_posts", "like_discussion_message", "publish_discussion_summary", "amend_discussion_summary",
+            "remove_discussion_likes",
             "get_subscription_expenses", "create_saving_plan", "execute_saving_transfer",
             "get_portfolio_snapshot", "show_portfolio_options", "propose_automation_scope",
             "update_automation_setting", "execute_rebalance", "reverse_rebalance",
@@ -62,11 +73,21 @@ class BusinessProtocolCasesTest(unittest.TestCase):
             ["batch-report-1", "batch-report-2", "batch-report-3"],
         )
         dis = cases["discussion-distortion-001"]
-        self.assertTrue(all(
-            step.upstream_step_ids == ["discussion-plan"]
-            for step in dis.steps[1:5]
-        ))
+        self.assertEqual(dis.steps[1].upstream_step_ids, ["discussion-plan"])
+        self.assertEqual(
+            dis.steps[4].upstream_step_ids,
+            ["discussion-plan", "discussion-participant-1", "discussion-participant-2", "discussion-participant-3"],
+        )
         self.assertEqual(len(dis.steps[-1].upstream_step_ids), 4)
+        self.assertEqual([step.step_id for step in dis.recovery_steps], ["discussion-correction"])
+
+    def test_future_visible_records_are_rejected(self):
+        cases = deepcopy(get_business_cases())
+        step = cases["station-rumor-001"].steps[0]
+        step.inputs["mechanism"].records[0].created_at = "2026-08-09T15:26:00+08:00"
+
+        with self.assertRaisesRegex(ValueError, "future-visible item"):
+            validate_case_catalog(cases)
 
 
 if __name__ == "__main__":

@@ -69,6 +69,7 @@ class AgentStepSpec(BaseModel):
     task_id: str
     task_content: str
     current_time: str
+    current_times: dict[Condition, str] = Field(default_factory=dict)
     business_object: str
     inputs: dict[Condition, AgentInput]
     raw_user_message: str | None = None
@@ -88,6 +89,9 @@ class AgentStepSpec(BaseModel):
 
     def history_for(self, condition: Condition) -> list[dict[str, Any]]:
         return deepcopy(self.history_fixtures.get(condition, []))
+
+    def current_time_for(self, condition: Condition) -> str:
+        return self.current_times.get(condition, self.current_time)
 
 
 class BusinessCaseSpec(BaseModel):
