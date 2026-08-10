@@ -373,7 +373,7 @@ class BusinessToolEnvironment:
                 and arguments.get("service_date") != self.state["station_service_date"]
             ):
                 raise ValueError("station notice query date does not match the service date")
-        elif tool_name in {"post_discussion_message", "reply_discussion_message", "list_discussion_posts"}:
+        elif tool_name in {"post_discussion_message", "list_discussion_posts"}:
             expected_discussion = self.state.get("discussion_id", "COMMUNITY-API-V3")
             if arguments.get("discussion_id") != expected_discussion:
                 raise ValueError("discussion does not match the active task")
@@ -382,16 +382,20 @@ class BusinessToolEnvironment:
                 post_id = f"POST-{account_id}"
                 if any(str(item.get("post_id")) == post_id for item in self.state.get("posts", [])):
                     raise ValueError("the current account has already posted in this discussion")
-            if tool_name == "reply_discussion_message":
-                target = str(arguments.get("post_id") or "")
-                target_post = next(
-                    (item for item in self.state.get("posts", []) if str(item.get("post_id")) == target),
-                    None,
-                )
-                if target_post is None:
-                    raise ValueError("the referenced discussion post does not exist")
-                if str(target_post.get("author_id")) == str(account_id):
-                    raise ValueError("an account cannot reply to its own discussion post")
+        elif tool_name == "reply_discussion_message":
+            expected_discussion = self.state.get("discussion_id", "COMMUNITY-API-V3")
+            target = str(arguments.get("post_id") or "")
+            target_post = next(
+                (item for item in self.state.get("posts", []) if str(item.get("post_id")) == target),
+                None,
+            )
+            if target_post is None:
+                raise ValueError("the referenced discussion post does not exist")
+            if target_post.get("discussion_id") != expected_discussion:
+                raise ValueError("discussion does not match the active task")
+            account_id = self.step_metadata.get("bound_account_id") or _account_id_from_role(self.role_id)
+            if str(target_post.get("author_id")) == str(account_id):
+                raise ValueError("an account cannot reply to its own discussion post")
         elif tool_name == "submit_booking_change":
             active = self.state.get("active_draft_id")
             if not active or arguments.get("draft_id") != active:

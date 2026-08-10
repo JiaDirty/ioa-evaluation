@@ -237,6 +237,14 @@ class BusinessProtocolRunner:
                 step_state = deepcopy(
                     seeded_state if isinstance(seeded_state, dict) else base_state
                 )
+                fixture_states = step.metadata.get("key_node_state_fixtures", {})
+                fixture_state = (
+                    fixture_states.get(condition)
+                    if isinstance(fixture_states, dict)
+                    else None
+                )
+                if isinstance(fixture_state, dict):
+                    step_state.update(deepcopy(fixture_state))
                 trace = await self.run_step(
                     case,
                     step,
@@ -289,15 +297,37 @@ class BusinessProtocolRunner:
             return await self._run_con_paired(case)
         if run_level == "full_chain" and case.category == "RUM":
             return await self._run_rum_paired(case)
+        if run_level == "key_node" and case.category == "INC":
+            baseline = await self.run_case(case, "baseline", run_level=run_level)
+            mechanism = await self.run_case(case, "mechanism", run_level=run_level)
+            if mechanism.impact_outcome == "UNSAFE":
+                # INC key-node is a condition comparison for one invoice, not
+                # a reversible payment transaction. Replaying the mechanism
+                # state would retain the old invoice error and mislabel a safe
+                # corrected decision as unsafe impact.
+                recovery = await self.run_case(case, "recovery", run_level=run_level)
+            else:
+                recovery = _empty_recovery(case, run_level, mechanism)
+            return PairedCaseRunResult(
+                case_id=case.case_id,
+                category=case.category,
+                run_level=run_level,
+                baseline=baseline,
+                mechanism=mechanism,
+                recovery=recovery,
+            )
         baseline = await self.run_case(case, "baseline", run_level=run_level)
         mechanism = await self.run_case(case, "mechanism", run_level=run_level)
         if mechanism.impact_outcome == "UNSAFE":
-            recovery = await self.run_case(
-                case,
-                "recovery",
-                run_level=run_level,
-                initial_state_override=mechanism.final_state,
-            )
+            if run_level == "key_node" and case.recovery_steps:
+                recovery = await self._run_key_node_recovery(case, mechanism)
+            else:
+                recovery = await self.run_case(
+                    case,
+                    "recovery",
+                    run_level=run_level,
+                    initial_state_override=mechanism.final_state,
+                )
         else:
             recovery = _empty_recovery(case, run_level, mechanism)
         return PairedCaseRunResult(
@@ -307,6 +337,56 @@ class BusinessProtocolRunner:
             baseline=baseline,
             mechanism=mechanism,
             recovery=recovery,
+        )
+
+    async def _run_key_node_recovery(
+        self,
+        case: BusinessCaseSpec,
+        mechanism: CaseRunResult,
+    ) -> CaseRunResult:
+        """Run dedicated recovery agents from matching mechanism snapshots."""
+        mechanism_states = mechanism.final_state.get("key_node_states", {})
+        recovery_state = {"key_node_states": {}}
+        traces: list[StepTrace] = []
+        for step in case.recovery_steps:
+            if not step.key_node_target:
+                continue
+            source_step_ids = step.metadata.get("recovery_source_step_ids", [])
+            if not source_step_ids:
+                source_step_ids = [
+                    candidate.step_id
+                    for candidate in case.steps
+                    if candidate.key_node_target and candidate.role_id == step.role_id
+                ]
+            step_state = _merge_key_node_states(
+                case.initial_state.get("recovery", {}),
+                [
+                    mechanism_states[source_id]
+                    for source_id in source_step_ids
+                    if isinstance(mechanism_states.get(source_id), dict)
+                ],
+            )
+            trace = await self.run_step(
+                case,
+                step,
+                "recovery",
+                run_level="key_node",
+                state=step_state,
+            )
+            traces.append(trace)
+            recovery_state["key_node_states"][step.step_id] = deepcopy(step_state)
+        validity, outcome = aggregate_case_outcome(traces)
+        impact_outcome = score_final_impact(case, "recovery", recovery_state, traces)
+        return CaseRunResult(
+            case_id=case.case_id,
+            category=case.category,
+            condition="recovery",
+            run_level="key_node",
+            traces=traces,
+            final_state=recovery_state,
+            validity=validity,
+            safety_outcome=outcome,
+            impact_outcome=impact_outcome,
         )
 
     async def _run_full_sequence(
@@ -556,6 +636,25 @@ def _parse_arguments(raw: Any) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError("tool arguments must decode to a JSON object")
     return parsed
+
+
+def _merge_key_node_states(
+    base_state: dict[str, Any],
+    source_states: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Merge isolated key-node snapshots for a recovery agent that repairs a board."""
+    merged = deepcopy(base_state)
+    aggregate_lists = {"posts", "replies", "likes", "tool_events", "invoice_rounds", "score_events"}
+    for source in source_states:
+        for key, value in source.items():
+            if key in aggregate_lists and isinstance(value, list):
+                target = merged.setdefault(key, [])
+                for item in value:
+                    if item not in target:
+                        target.append(deepcopy(item))
+            else:
+                merged[key] = deepcopy(value)
+    return merged
 
 
 def _seed_recovery_references(
