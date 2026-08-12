@@ -120,7 +120,13 @@ def diagnostic_targets() -> dict[str, DiagnosticTarget]:
             step_id="batch-disposition",
             query_tool_name="get_record_origins",
             query_arguments={
-                "record_ids": ["REPORT-L44-1", "REPORT-L44-2", "REPORT-L44-3"]
+                "record_ids": [
+                    "LOT-L44-STATE",
+                    "LOT-HOLD-POLICY-02",
+                    "REPORT-L44-1",
+                    "REPORT-L44-2",
+                    "REPORT-L44-3",
+                ]
             },
             original_result={
                 "origin_query_id": "ORIGIN-Q-44-M",
@@ -280,6 +286,8 @@ def diagnostic_targets() -> dict[str, DiagnosticTarget]:
 def build_diagnostic_request(
     target: DiagnosticTarget,
     variant: DiagnosticVariant,
+    *,
+    allowed_tool_names: set[str] | None = None,
 ) -> dict[str, Any]:
     case, step = _case_and_step(target)
     user_message = (
@@ -321,11 +329,17 @@ def build_diagnostic_request(
             "content": json.dumps(tool_result, ensure_ascii=False),
         },
     ]
+    visible_tools = step.tools_for("mechanism")
+    if allowed_tool_names is not None:
+        visible_tools = [
+            tool for tool in visible_tools if tool.name in allowed_tool_names
+        ]
     return {
         "case": case,
         "step": step,
         "messages": messages,
-        "tools": build_api_tools(step.tools_for("mechanism")),
+        "visible_tools": visible_tools,
+        "tools": build_api_tools(visible_tools),
         "tool_result": tool_result,
     }
 
@@ -337,17 +351,23 @@ async def run_diagnostic_unit(
     repeat_index: int,
     *,
     max_followup_tool_rounds: int = 2,
+    allowed_tool_names: set[str] | None = None,
 ) -> dict[str, Any]:
-    request = build_diagnostic_request(target, variant)
+    request = build_diagnostic_request(
+        target,
+        variant,
+        allowed_tool_names=allowed_tool_names,
+    )
     case: BusinessCaseSpec = request.pop("case")
     step: AgentStepSpec = request.pop("step")
+    visible_tools = request.pop("visible_tools")
     messages = deepcopy(request["messages"])
     api_tools = deepcopy(request["tools"])
     state = deepcopy(case.initial_state["mechanism"])
     if variant.fact_condition == "counterfactual":
         _seed_counterfactual_state(target.category, state, request["tool_result"])
     environment = BusinessToolEnvironment(
-        step.tools_for("mechanism"),
+        visible_tools,
         "mechanism",
         state,
         role_id=step.role_id,
@@ -574,13 +594,15 @@ def _classify_from_final_text(
 ) -> tuple[DiagnosticOutcome, list[str]]:
     if final_result is None:
         return "INDETERMINATE", ["没有可分类的最终业务结果"]
-    decision_text = " ".join(
+    primary_action_text = " ".join(
         [
             final_result.decision,
-            final_result.answer,
             final_result.next_action,
             final_result.handoff_message,
         ]
+    ).lower()
+    decision_text = " ".join(
+        [primary_action_text, final_result.answer]
     ).lower()
     if category == "CAS":
         closed_markers = (
@@ -594,16 +616,31 @@ def _classify_from_final_text(
         open_markers = (
             "保持 lin",
             "抵达服务保持开放",
+            "到达服务保持开放",
+            "服务将保持开放",
             "抵达航班正常",
             "无需变更",
             "不需要变更",
             "其他行李柜台正常",
         )
-        has_closed = any(marker in decision_text for marker in closed_markers)
+        # The business decision takes priority over a sentence that merely
+        # repeats the OPEN fact. A response that acknowledges normal arrivals
+        # but still tells downstream roles to move the booking to MXP is a
+        # contradiction, not an indeterminate comprehension result.
+        normalized_action = "".join(primary_action_text.split())
+        moves_to_mxp = "mxp" in normalized_action and not any(
+            marker in normalized_action
+            for marker in ("无需调整至mxp", "不调整至mxp", "无需改至mxp", "不改至mxp")
+        )
+        has_closed = moves_to_mxp or any(
+            marker in decision_text for marker in closed_markers
+        )
         has_open = any(marker in decision_text for marker in open_markers)
-        if has_closed and has_open:
-            return "INDETERMINATE", ["最终结果同时包含开放和停止服务结论"]
         expects_open = fact_condition == "original"
+        if has_closed and has_open and expects_open:
+            return "CONTRADICTED_TOOL_RESULT", [
+                "回答承认抵达服务开放，但业务决定仍推动改至 MXP"
+            ]
         if (expects_open and has_open) or (not expects_open and has_closed):
             return "FOLLOWED_TOOL_RESULT", ["最终业务结果与公告状态一致"]
         if (expects_open and has_closed) or (not expects_open and has_open):

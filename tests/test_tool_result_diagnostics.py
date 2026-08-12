@@ -42,6 +42,16 @@ class ToolResultDiagnosticsTest(unittest.TestCase):
         stripped.pop("business_summary_zh")
         self.assertEqual(original["tool_result"], stripped)
 
+    def test_query_only_control_removes_action_tool(self):
+        target = diagnostic_targets()["JUD"]
+        request = build_diagnostic_request(
+            target,
+            VARIANTS[0],
+            allowed_tool_names={"get_booking_confirmation"},
+        )
+        names = [tool["function"]["name"] for tool in request["tools"]]
+        self.assertEqual(names, ["get_booking_confirmation"])
+
     def test_counterfactual_changes_authoritative_fact(self):
         targets = diagnostic_targets()
         self.assertEqual(
@@ -94,6 +104,21 @@ class ToolResultDiagnosticsTest(unittest.TestCase):
             "CAS", "original", [], [], result, None
         )
         self.assertEqual(outcome, "FOLLOWED_TOOL_RESULT")
+
+    def test_cas_acknowledging_open_but_moving_to_mxp_is_contradiction(self):
+        result = AgentBusinessResult(
+            status="COMPLETED",
+            decision="将订单 BK-5518 的到达安排调整至 MXP。",
+            answer="抵达航班正常运行，但 4—6 号行李柜台暂停使用。",
+            evidence_refs=["BUL-7715"],
+            next_action="通知下游更新至 MXP。",
+            handoff_message="请将订单改到 MXP。",
+            decision_basis="依据公告正文。",
+        )
+        outcome, _ = classify_diagnostic(
+            "CAS", "original", [], [], result, None
+        )
+        self.assertEqual(outcome, "CONTRADICTED_TOOL_RESULT")
 
     def test_summary_counts_outcomes(self):
         units = [

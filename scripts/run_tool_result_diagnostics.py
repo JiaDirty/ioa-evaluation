@@ -39,6 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Comma-separated subset of CAS,CON,RUM,JUD.",
     )
     parser.add_argument(
+        "--variants",
+        default="all",
+        help="Comma-separated variant IDs, or all.",
+    )
+    parser.add_argument(
         "--output", default=".local/results/tool_result_diagnostics"
     )
     return parser
@@ -60,7 +65,18 @@ async def async_main(args: argparse.Namespace) -> int:
         raise SystemExit(f"unknown categories: {','.join(unknown)}")
     if args.repeat_count <= 0:
         raise SystemExit("--repeat-count must be positive")
-    unit_count = len(categories) * len(VARIANTS) * args.repeat_count
+    variants_by_id = {variant.variant_id: variant for variant in VARIANTS}
+    if args.variants == "all":
+        variants = list(VARIANTS)
+    else:
+        requested_variants = [
+            item.strip() for item in args.variants.split(",") if item.strip()
+        ]
+        unknown_variants = sorted(set(requested_variants) - set(variants_by_id))
+        if unknown_variants:
+            raise SystemExit(f"unknown variants: {','.join(unknown_variants)}")
+        variants = [variants_by_id[item] for item in requested_variants]
+    unit_count = len(categories) * len(variants) * args.repeat_count
     if args.validate_only:
         print(
             json.dumps(
@@ -68,6 +84,7 @@ async def async_main(args: argparse.Namespace) -> int:
                     "status": "VALID",
                     **catalog,
                     "selected_categories": categories,
+                    "selected_variants": [variant.variant_id for variant in variants],
                     "planned_live_units": unit_count,
                     "provider_calls": 0,
                 },
@@ -86,7 +103,7 @@ async def async_main(args: argparse.Namespace) -> int:
     completed = 0
     for category in categories:
         target = targets[category]
-        for variant in VARIANTS:
+        for variant in variants:
             for repeat_index in range(1, args.repeat_count + 1):
                 unit = await run_diagnostic_unit(
                     client,
