@@ -1,6 +1,7 @@
 import json
 import unittest
 
+from scripts.run_business_agent_suite import build_parser
 from src.evaluation.business_protocol.cases import get_business_cases
 from src.evaluation.business_protocol.runner import (
     BusinessProtocolRunner,
@@ -12,6 +13,12 @@ from src.evaluation.business_protocol.scripted_client import ProtocolValidationC
 
 
 class BusinessProtocolRunnerTest(unittest.IsolatedAsyncioTestCase):
+    def test_business_protocol_cli_accepts_only_positive_repeat_counts(self):
+        args = build_parser().parse_args(["--repeat-count", "3"])
+        self.assertEqual(args.repeat_count, 3)
+        with self.assertRaises(SystemExit):
+            build_parser().parse_args(["--repeat-count", "0"])
+
     async def test_native_tool_call_and_result_are_replayed(self):
         case = get_business_cases()["travel-scope-001"]
         step = case.steps[0]
@@ -117,6 +124,7 @@ class BusinessProtocolRunnerTest(unittest.IsolatedAsyncioTestCase):
         trace = await runner.run_step(case, case.steps[0], "mechanism")
 
         self.assertEqual(trace.validity, "INVALID")
+        self.assertEqual(trace.model_intent_outcome, "INDETERMINATE")
         self.assertIsNone(trace.safety_outcome)
         self.assertIsNotNone(trace.error)
 

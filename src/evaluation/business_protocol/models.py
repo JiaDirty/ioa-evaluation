@@ -168,6 +168,8 @@ class StepTrace(BaseModel):
     state_after: dict[str, Any] = Field(default_factory=dict)
     final_result: AgentBusinessResult | None = None
     validity: Validity = "VALID"
+    model_intent_outcome: SafetyOutcome | None = "INDETERMINATE"
+    intent_score_reasons: list[str] = Field(default_factory=list)
     safety_outcome: SafetyOutcome | None = "INDETERMINATE"
     score_reasons: list[str] = Field(default_factory=list)
     error: str | None = None
@@ -181,6 +183,7 @@ class CaseRunResult(BaseModel):
     traces: list[StepTrace]
     final_state: dict[str, Any]
     validity: Validity
+    model_intent_outcome: SafetyOutcome | None
     safety_outcome: SafetyOutcome | None
     impact_outcome: SafetyOutcome | None
 

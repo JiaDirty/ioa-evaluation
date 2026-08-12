@@ -31,6 +31,13 @@ from src.evaluation.business_protocol.scripted_client import ProtocolValidationC
 from src.evaluation.business_protocol.validation import validate_case_catalog
 
 
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("value must be at least 1")
+    return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Eight-category neutral business Agent evaluation")
     parser.add_argument("--validate-only", action="store_true")
@@ -58,6 +65,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output",
         default=".local/results/business_protocol",
+    )
+    parser.add_argument(
+        "--repeat-count",
+        type=_positive_int,
+        default=1,
+        help="Repeat every selected case and run level independently.",
     )
     parser.add_argument(
         "--export-prompts",
@@ -129,10 +142,15 @@ async def async_main(args: argparse.Namespace) -> int:
         exported = export_prompts(Path(args.export_prompts), selected, conditions)
 
     if args.validate_only:
+        results_per_repeat = len(selected) * len(levels)
+        if args.condition != "all":
+            results_per_repeat *= len(conditions)
         print(json.dumps({
             "status": "VALID",
             "case_count": len(selected),
             "step_count": sum(len(case.steps) + len(case.recovery_steps) for case in selected),
+            "repeat_count": args.repeat_count,
+            "planned_result_count": results_per_repeat * args.repeat_count,
             "prompt_snapshots_exported": exported,
             "provider_calls": 0,
         }, ensure_ascii=False, indent=2))
@@ -148,16 +166,22 @@ async def async_main(args: argparse.Namespace) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     run_id = datetime.now(timezone.utc).strftime("business-%Y%m%dT%H%M%SZ")
     results = []
-    for case in selected:
-        for level in levels:
-            if args.condition == "all":
-                results.append(await runner.run_paired_case(case, run_level=level))
-            else:
-                for condition in conditions:
-                    results.append(await runner.run_case(case, condition, run_level=level))
+    result_repeat_indexes = []
+    for repeat_index in range(1, args.repeat_count + 1):
+        for case in selected:
+            for level in levels:
+                if args.condition == "all":
+                    results.append(await runner.run_paired_case(case, run_level=level))
+                    result_repeat_indexes.append(repeat_index)
+                else:
+                    for condition in conditions:
+                        results.append(await runner.run_case(case, condition, run_level=level))
+                        result_repeat_indexes.append(repeat_index)
     payload = {
         "run_id": run_id,
         "execution_mode": args.execution_mode,
+        "repeat_count": args.repeat_count,
+        "result_repeat_indexes": result_repeat_indexes,
         "provider_calls": (
             runner.provider_call_count if args.execution_mode == "agentic-live" else 0
         ),
@@ -176,6 +200,7 @@ async def async_main(args: argparse.Namespace) -> int:
         "status": "COMPLETED",
         "execution_mode": args.execution_mode,
         "result_count": len(results),
+        "repeat_count": args.repeat_count,
         "result_path": str(result_path.resolve()),
         "provider_calls": payload["provider_calls"],
         "protocol_turns": payload["protocol_turns"],

@@ -25,7 +25,12 @@ from .prompt import (
     build_user_message,
     final_response_schema,
 )
-from .scoring import aggregate_case_outcome, score_final_impact, score_step
+from .scoring import (
+    aggregate_case_outcome,
+    aggregate_model_intent_outcome,
+    score_final_impact,
+    score_step,
+)
 from .tool_environment import BusinessToolEnvironment
 
 
@@ -92,7 +97,7 @@ class BusinessProtocolRunner:
             role_id=step.role_id,
             outcome_relevant=(
                 visible_step.key_node_target
-                or (run_level == "full_chain" and case.category == "AGE")
+                or (run_level == "full_chain" and case.category in {"AGE", "RUM"})
             ),
             state_before=state_before,
         )
@@ -266,6 +271,7 @@ class BusinessProtocolRunner:
             traces = context.traces
             state = context.state
         validity, outcome = aggregate_case_outcome(traces)
+        model_intent_outcome = aggregate_model_intent_outcome(traces)
         impact_outcome = score_final_impact(case, condition, state, traces)
         return CaseRunResult(
             case_id=case.case_id,
@@ -275,6 +281,7 @@ class BusinessProtocolRunner:
             traces=traces,
             final_state=state,
             validity=validity,
+            model_intent_outcome=model_intent_outcome,
             safety_outcome=outcome,
             impact_outcome=impact_outcome,
         )
@@ -377,6 +384,7 @@ class BusinessProtocolRunner:
             traces.append(trace)
             recovery_state["key_node_states"][step.step_id] = deepcopy(step_state)
         validity, outcome = aggregate_case_outcome(traces)
+        model_intent_outcome = aggregate_model_intent_outcome(traces)
         impact_outcome = score_final_impact(case, "recovery", recovery_state, traces)
         return CaseRunResult(
             case_id=case.case_id,
@@ -386,6 +394,7 @@ class BusinessProtocolRunner:
             traces=traces,
             final_state=recovery_state,
             validity=validity,
+            model_intent_outcome=model_intent_outcome,
             safety_outcome=outcome,
             impact_outcome=impact_outcome,
         )
@@ -705,6 +714,7 @@ def _result_from_context(
 ) -> CaseRunResult:
     selected_traces = context.traces if traces is None else traces
     validity, outcome = aggregate_case_outcome(selected_traces)
+    model_intent_outcome = aggregate_model_intent_outcome(selected_traces)
     impact_outcome = score_final_impact(case, condition, context.state, selected_traces)
     return CaseRunResult(
         case_id=case.case_id,
@@ -714,6 +724,7 @@ def _result_from_context(
         traces=deepcopy(selected_traces),
         final_state=deepcopy(context.state),
         validity=validity,
+        model_intent_outcome=model_intent_outcome,
         safety_outcome=outcome,
         impact_outcome=impact_outcome,
     )
@@ -735,6 +746,7 @@ def _empty_recovery(
         traces=[],
         final_state=deepcopy(mechanism.final_state),
         validity="VALID",
+        model_intent_outcome=outcome,
         safety_outcome=outcome,
         impact_outcome=outcome,
     )

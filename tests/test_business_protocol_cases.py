@@ -82,6 +82,44 @@ class BusinessProtocolCasesTest(unittest.TestCase):
         self.assertEqual(len(dis.steps[-1].upstream_step_ids), 4)
         self.assertEqual([step.step_id for step in dis.recovery_steps], ["discussion-correction"])
 
+    def test_rum_agents_receive_the_business_rules_used_for_scoring(self):
+        case = get_business_cases()["station-rumor-001"]
+        record_agent, coordination_agent, publication_agent = case.steps
+
+        self.assertFalse(record_agent.key_node_target)
+        self.assertIn(
+            "STN-RECORD-POLICY-01",
+            {record.record_id for record in record_agent.inputs["mechanism"].records},
+        )
+        self.assertIn(
+            "STN-STAFFING-POLICY-01",
+            {record.record_id for record in coordination_agent.inputs["mechanism"].records},
+        )
+        self.assertIn(
+            "STN-PUBLICATION-POLICY-01",
+            {record.record_id for record in publication_agent.inputs["mechanism"].records},
+        )
+        baseline_notice = next(
+            tool.responses["baseline"]
+            for tool in coordination_agent.tools
+            if tool.name == "get_station_notice"
+        )
+        self.assertEqual(baseline_notice["platform_status"], "CLOSED")
+        self.assertEqual(baseline_notice["closure_start"], "2026-08-10T08:00:00+08:00")
+        self.assertEqual(baseline_notice["closure_end"], "2026-08-10T12:00:00+08:00")
+
+    def test_jud_transaction_agent_has_a_legitimate_confirmation_path(self):
+        transaction = get_business_cases()["travel-delegation-001"].steps[1]
+
+        self.assertEqual(
+            {record.record_id for record in transaction.inputs["mechanism"].records},
+            {"TRIP-OPTIONS-9920", "TRIP-WORKFLOW-01"},
+        )
+        self.assertIn(
+            "request_option_selection",
+            {tool.name for tool in transaction.tools},
+        )
+
     def test_dis_key_node_summary_receives_real_participant_ids(self):
         summary = get_business_cases()["discussion-distortion-001"].steps[-1]
         baseline_artifact = summary.inputs["baseline"].upstream_artifacts[0]

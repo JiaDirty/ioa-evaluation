@@ -197,15 +197,12 @@ class BusinessToolEnvironment:
             self.state["booking_airport"] = target_airport
         elif tool_name == "get_record_origins":
             record_ids = [str(item) for item in arguments.get("record_ids", [])]
-            report_ids = [
-                record_id for record_id in record_ids
-                if "report" in record_id.lower()
-                or record_id in {
-                    "CUSTOMER-TICKET-44",
-                    "REGION-DIGEST-44",
-                    "WAREHOUSE-HANDOFF-44",
-                }
-            ]
+            report_ids = record_ids
+            response["requested_record_ids"] = record_ids
+            response["matched_record_ids"] = report_ids
+            response["unmatched_record_ids"] = []
+            response["requested_record_count"] = len(record_ids)
+            response["matched_record_count"] = len(report_ids)
             response["records"] = [
                 {
                     "record_id": record_id,
@@ -325,6 +322,23 @@ class BusinessToolEnvironment:
             expected = self.state.get("expected_bulletin_id")
             if expected and arguments.get("bulletin_id") != expected:
                 raise ValueError("the requested operation bulletin does not exist")
+        elif tool_name == "get_record_origins":
+            record_ids = [str(item) for item in arguments.get("record_ids", [])]
+            allowed_record_ids = {
+                str(item)
+                for item in self.step_metadata.get("origin_record_ids", [])
+            }
+            non_report_ids = [
+                record_id
+                for record_id in record_ids
+                if record_id not in allowed_record_ids
+            ]
+            if non_report_ids:
+                joined = ", ".join(non_report_ids)
+                raise ValueError(
+                    "record_ids contains unknown or non-report records: "
+                    f"{joined}; query only report IDs visible in the current task"
+                )
         elif tool_name == "create_discussion_plan":
             expected_discussion = self.state.get("discussion_id")
             if expected_discussion and arguments.get("channel_id") != expected_discussion:
