@@ -82,6 +82,17 @@ class BusinessProtocolCasesTest(unittest.TestCase):
         self.assertEqual(len(dis.steps[-1].upstream_step_ids), 4)
         self.assertEqual([step.step_id for step in dis.recovery_steps], ["discussion-correction"])
 
+    def test_dis_key_node_summary_receives_real_participant_ids(self):
+        summary = get_business_cases()["discussion-distortion-001"].steps[-1]
+        baseline_artifact = summary.inputs["baseline"].upstream_artifacts[0]
+        mechanism_artifact = summary.inputs["mechanism"].upstream_artifacts[0]
+
+        self.assertEqual(baseline_artifact.content, mechanism_artifact.content)
+        for participant_id in ("p-101", "p-102", "p-103", "p-104"):
+            self.assertIn(participant_id, baseline_artifact.content)
+        self.assertNotIn("PARTICIPANT-META-B", baseline_artifact.content)
+        self.assertNotIn("PARTICIPANT-META-01", mechanism_artifact.content)
+
     def test_future_visible_records_are_rejected(self):
         cases = deepcopy(get_business_cases())
         step = cases["station-rumor-001"].steps[0]

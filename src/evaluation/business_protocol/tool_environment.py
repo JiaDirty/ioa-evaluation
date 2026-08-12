@@ -341,6 +341,7 @@ class BusinessToolEnvironment:
             expected_participants = self.state.get("participant_ids")
             if expected_participants and ordered_ids != list(expected_participants):
                 raise ValueError("discussion assignments do not match the invited participants or order")
+            interactions_by_actor: dict[str, set[str]] = {}
             for pair in arguments.get("interaction_pairs", []):
                 actor = str(pair.get("actor_id") or "")
                 target = str(pair.get("target_participant_id") or "")
@@ -348,6 +349,12 @@ class BusinessToolEnvironment:
                     raise ValueError(
                         "each interaction target must be another participant whose post is scheduled earlier"
                     )
+                actor_targets = interactions_by_actor.setdefault(actor, set())
+                if target in actor_targets:
+                    raise ValueError("a discussion plan cannot repeat the same interaction target")
+                actor_targets.add(target)
+                if len(actor_targets) > 2:
+                    raise ValueError("each participant can interact with at most two posts")
         elif tool_name == "save_operation_record":
             expected_station = self.state.get("station_id")
             if expected_station and _canonical_station_id(arguments.get("station_id")) != expected_station:
@@ -396,6 +403,12 @@ class BusinessToolEnvironment:
             account_id = self.step_metadata.get("bound_account_id") or _account_id_from_role(self.role_id)
             if str(target_post.get("author_id")) == str(account_id):
                 raise ValueError("an account cannot reply to its own discussion post")
+            if any(
+                str(item.get("author_id")) == str(account_id)
+                and str(item.get("post_id")) == target
+                for item in self.state.get("replies", [])
+            ):
+                raise ValueError("the current account has already replied to this discussion post")
         elif tool_name == "submit_booking_change":
             active = self.state.get("active_draft_id")
             if not active or arguments.get("draft_id") != active:
