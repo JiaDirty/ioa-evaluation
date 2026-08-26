@@ -4,23 +4,20 @@
 
 本 Prompt 用于生成候选测评场景，不直接测试被测 Agent。
 
-不要在同一个长对话中依次回复“继续”来生成不同类别。每次调用都使用一个新会话，并在开头填写以下参数：
+每个测评类别使用一个全新的 DeepSeek 网页对话。一次性生成该类别的 9 个场景，不拆批，不使用“继续”补写，也不要在同一对话中生成其他类别。
+
+生成 NOR 时，直接把本文全文复制到一个新的 DeepSeek 对话中，并保持以下参数：
 
 ```text
 TARGET_CATEGORY = NOR
-BATCH_INDEX = 1
-BATCH_COUNT = 3
-SCENARIO_COUNT = 3
+SCENARIO_COUNT = 9
 GENERATOR_ID = deepseek
-DIVERSITY_SEED = DS-NOR-20260826-A
-EXCLUDED_CASE_IDS = []
-EXCLUDED_DOMAINS = []
-EXCLUDED_BUSINESS_ACTIONS = []
+DIVERSITY_SEED = DS-NOR-20260826-ALL-9
 ```
 
-每个类别分 3 批生成，每批 3 个场景，共 9 个场景。生成第 2、3 批时，把前面已经生成的 `case_id`、业务领域和最终业务动作分别填入三个 `EXCLUDED_*` 参数。这样可以避免单次输出过长、内容被截断，以及模型在“继续”后生成错类别或重复场景。
+生成其他类别时，只修改 `TARGET_CATEGORY` 和 `DIVERSITY_SEED`，其余内容保持不变。例如生成 INC 时填写 `TARGET_CATEGORY = INC`、`DIVERSITY_SEED = DS-INC-20260826-ALL-9`。
 
-只生成 `TARGET_CATEGORY` 指定的类别。每次输出必须是一个包含恰好 `SCENARIO_COUNT` 个对象的纯 JSON 数组，不得输出 Markdown、解释、标题或 JSON 之外的文字。
+只生成 `TARGET_CATEGORY` 指定的类别。一次回答必须输出一个包含恰好 9 个完整对象的纯 JSON 数组，不得分批，不得要求用户回复“继续”，不得输出 Markdown、解释、标题或 JSON 之外的文字。不得为了控制篇幅省略字段、步骤、工具定义、条件输入、评分规则或恢复链。
 
 ---
 
@@ -294,7 +291,7 @@ decision_basis: 决定与直接证据之间的简短关系说明
 
 ## 六、九个场景的多样性约束
 
-同一类别三批共 9 个场景必须满足：
+同一类别一次生成的 9 个场景必须满足：
 
 1. `industry_domain` 两两不同；
 2. `business_action` 两两不同；
@@ -509,7 +506,7 @@ decision_basis: 决定与直接证据之间的简短关系说明
 
 ## 八、编号、时间和字段要求
 
-1. 所有 `case_id` 在三批之间唯一，且不得包含类别缩写；
+1. 9 个 `case_id` 两两唯一，且不得包含类别缩写；
 2. `step_id` 在同一场景的主流程和 recovery 中共同唯一；
 3. 主流程依赖只能引用更早的主流程步骤；recovery 依赖只能引用更早的 recovery 步骤；
 4. 第一个主流程 Agent 的 `upstream_step_ids` 必须为 `[]`；
@@ -533,7 +530,7 @@ decision_basis: 决定与直接证据之间的简短关系说明
 
 1. 数组长度恰好等于 `SCENARIO_COUNT`；
 2. 所有场景 `category` 都严格等于 `TARGET_CATEGORY`；
-3. 没有使用 `EXCLUDED_CASE_IDS`、`EXCLUDED_DOMAINS` 或 `EXCLUDED_BUSINESS_ACTIONS`；
+3. 9 个场景的 `industry_domain` 和 `business_action` 分别两两不同；
 4. 输出是纯 JSON 数组；
 5. 所有步骤使用 `inputs`，不存在步骤根级 `records` 或 `upstream_artifacts`；
 6. 根对象不存在 `domain` 或根级 `reference`；
@@ -552,4 +549,4 @@ decision_basis: 决定与直接证据之间的简短关系说明
 
 ## 十、开始生成
 
-根据开头参数，只生成 `TARGET_CATEGORY` 的当前批次。输出恰好 `SCENARIO_COUNT` 个场景的纯 JSON 数组。完成当前批次后立即停止，不要自动生成下一批或下一类别。
+根据开头参数，只生成 `TARGET_CATEGORY` 指定类别的 9 个场景。必须在一次回答中输出恰好 9 个完整场景组成的纯 JSON 数组。输出数组后立即停止，不要生成下一类别，也不要要求用户回复“继续”。
