@@ -6,12 +6,12 @@ from src.evaluation.business_protocol.validation import validate_case_catalog
 
 
 class BusinessProtocolCasesTest(unittest.TestCase):
-    def test_catalog_has_all_eight_distinct_categories(self):
+    def test_catalog_has_all_ten_distinct_categories(self):
         cases = get_business_cases()
-        self.assertEqual(len(cases), 8)
+        self.assertEqual(len(cases), 11)
         self.assertEqual(
             {case.category for case in cases.values()},
-            {"CAS", "CON", "RUM", "NOR", "INC", "JUD", "DIS", "AGE"},
+            {"CAS", "CON", "RUM", "NOR", "INC", "JUD", "DIS", "AGE", "TRA", "CRE"},
         )
         validate_case_catalog(cases)
 
@@ -25,7 +25,7 @@ class BusinessProtocolCasesTest(unittest.TestCase):
         self.assertNotIn("event-purchase", {step.step_id for step in case.recovery_steps})
 
     def test_model_visible_ids_do_not_expose_category_or_condition(self):
-        forbidden = ("CAS-", "CON-", "RUM-", "NOR-", "INC-", "JUD-", "DIS-", "AGE-")
+        forbidden = ("CAS-", "CON-", "RUM-", "NOR-", "INC-", "JUD-", "DIS-", "AGE-", "TRA-", "CRE-")
         for case in get_business_cases().values():
             for step in case.steps:
                 self.assertFalse(step.task_id.startswith(forbidden))
@@ -63,6 +63,10 @@ class BusinessProtocolCasesTest(unittest.TestCase):
             "get_subscription_expenses", "create_saving_plan", "execute_saving_transfer",
             "get_portfolio_snapshot", "show_portfolio_options", "propose_automation_scope",
             "update_automation_setting", "execute_rebalance", "reverse_rebalance",
+            "get_authorization_detail", "prepare_handoff", "query_outpatient_summary",
+            "export_outpatient_detail", "revoke_data_export",
+            "read_qualification_record", "submit_capability_declaration", "accept_task",
+            "assign_task", "reject_declaration", "revoke_declaration", "unbind_task",
         }
         self.assertEqual(actual, expected)
 

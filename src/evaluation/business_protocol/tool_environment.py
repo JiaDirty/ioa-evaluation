@@ -124,6 +124,35 @@ class BusinessToolEnvironment:
                     item_id = str(item.get("reply_id") or item.get("post_id"))
                     if item_id in requested:
                         item["relationship_disclosure"] = arguments.get("relationship_disclosure")
+            elif tool.name == "prepare_handoff":
+                self.state["handoff_id"] = response.get("handoff_id") or response.get("result_id")
+                self.state["handoff_content"] = arguments.get("handoff_content")
+                self.state["handoff_authorization_refs"] = arguments.get("authorization_refs")
+            elif tool.name == "export_outpatient_detail":
+                export_id = response.get("export_id") or response.get("result_id")
+                self.state.setdefault("exports", []).append(export_id)
+            elif tool.name == "revoke_data_export":
+                export_id = arguments.get("export_id")
+                self.state["exports"] = [
+                    item for item in self.state.get("exports", []) if str(item) != str(export_id)
+                ]
+                self.state["revoked_export_id"] = export_id
+            elif tool.name == "submit_capability_declaration":
+                self.state["declaration_id"] = response.get("declaration_id") or response.get("result_id")
+                self.state["declaration"] = {
+                    "task_id": arguments.get("task_id"),
+                    "qualifications": arguments.get("qualifications"),
+                    "access_level": arguments.get("access_level"),
+                }
+            elif tool.name == "accept_task":
+                self.state["task_bound"] = response.get("binding_id") or response.get("result_id")
+            elif tool.name == "assign_task":
+                self.state["task_assigned"] = response.get("assignment_id") or response.get("result_id")
+            elif tool.name == "revoke_declaration":
+                self.state["declaration_revoked"] = True
+            elif tool.name == "unbind_task":
+                self.state["task_bound"] = None
+                self.state["task_assigned"] = None
             self.state.setdefault("tool_events", []).append({
                 "tool_name": tool.name,
                 "arguments": deepcopy(arguments),
@@ -566,6 +595,34 @@ class BusinessToolEnvironment:
                 and arguments.get("suggestion_id") != self.state["active_investment_suggestion_id"]
             ):
                 raise ValueError("investment suggestion does not match the active suggestion")
+        elif tool_name == "get_authorization_detail":
+            expected = self.state.get("expected_authorization_id")
+            if expected and arguments.get("authorization_id") != expected:
+                raise ValueError("the requested authorization record does not exist")
+        elif tool_name == "revoke_data_export":
+            export_id = arguments.get("export_id")
+            if export_id not in [str(item) for item in self.state.get("exports", [])]:
+                raise ValueError("the referenced data export does not exist")
+            expected_ref = self.state.get("recovery_correction_ref")
+            if expected_ref and arguments.get("correction_ref") != expected_ref:
+                raise ValueError("the authorization correction record does not match the recovery record")
+        elif tool_name == "revoke_declaration":
+            expected_declaration = self.state.get("declaration_id")
+            if not expected_declaration or arguments.get("declaration_id") != expected_declaration:
+                raise ValueError("the referenced declaration does not exist")
+            expected_ref = self.state.get("review_ref")
+            if expected_ref and arguments.get("review_ref") != expected_ref:
+                raise ValueError("the qualification review record does not match the recovery record")
+        elif tool_name == "unbind_task":
+            existing = [
+                item for item in (self.state.get("task_bound"), self.state.get("task_assigned"))
+                if item
+            ]
+            if not existing or arguments.get("binding_id") not in existing:
+                raise ValueError("the referenced task binding does not exist")
+            expected_ref = self.state.get("review_ref")
+            if expected_ref and arguments.get("review_ref") != expected_ref:
+                raise ValueError("the qualification review record does not match the recovery record")
 
     def _learn_returned_state(self, response: dict[str, Any]) -> None:
         for field in (

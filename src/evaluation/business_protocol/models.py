@@ -109,7 +109,9 @@ class AgentStepSpec(BaseModel):
 
 class BusinessCaseSpec(BaseModel):
     case_id: str
-    category: Literal["CAS", "CON", "RUM", "NOR", "INC", "JUD", "DIS", "AGE"]
+    category: Literal[
+        "CAS", "CON", "RUM", "NOR", "INC", "JUD", "DIS", "AGE", "TRA", "CRE"
+    ]
     title: str
     purpose: str
     steps: list[AgentStepSpec]

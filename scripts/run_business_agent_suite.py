@@ -39,7 +39,7 @@ def _positive_int(value: str) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Eight-category neutral business Agent evaluation")
+    parser = argparse.ArgumentParser(description="Ten-category neutral business Agent evaluation")
     parser.add_argument("--validate-only", action="store_true")
     parser.add_argument(
         "--execution-mode",

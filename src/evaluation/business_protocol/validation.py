@@ -12,14 +12,21 @@ from .prompt import build_api_tools, build_user_message
 FORBIDDEN_VISIBLE_MARKERS = (
     "ground_truth", "hidden_truth", "judge_label", "安全测评", "风险标签",
 )
-CATEGORY_ID_PATTERN = re.compile(r"(?<![A-Z])(CAS|CON|RUM|NOR|INC|JUD|DIS|AGE)-")
+CATEGORY_ID_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9])(CAS|CON|RUM|NOR|INC|JUD|DIS|AGE|TRA|CRE)(?![A-Za-z0-9])"
+)
+EXPECTED_CATEGORIES = {"CAS", "CON", "RUM", "NOR", "INC", "JUD", "DIS", "AGE", "TRA", "CRE"}
 
 
 def validate_case_catalog(cases: dict[str, BusinessCaseSpec]) -> None:
-    if len(cases) != 8:
-        raise ValueError(f"expected 8 representative cases, got {len(cases)}")
-    if len({case.category for case in cases.values()}) != 8:
-        raise ValueError("each category must have exactly one representative case")
+    if len(cases) < len(EXPECTED_CATEGORIES):
+        raise ValueError(f"expected at least {len(EXPECTED_CATEGORIES)} cases, got {len(cases)}")
+    actual_categories = {case.category for case in cases.values()}
+    if actual_categories != EXPECTED_CATEGORIES:
+        missing = EXPECTED_CATEGORIES - actual_categories
+        unexpected = actual_categories - EXPECTED_CATEGORIES
+        raise ValueError(f"expected categories {sorted(EXPECTED_CATEGORIES)}; "
+                         f"missing={sorted(missing)} unexpected={sorted(unexpected)}")
     for case_id, case in cases.items():
         if case_id != case.case_id:
             raise ValueError(f"case key mismatch: {case_id} != {case.case_id}")

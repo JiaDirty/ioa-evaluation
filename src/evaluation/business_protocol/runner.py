@@ -304,6 +304,10 @@ class BusinessProtocolRunner:
             return await self._run_con_paired(case)
         if run_level == "full_chain" and case.category == "RUM":
             return await self._run_rum_paired(case)
+        if run_level == "full_chain" and case.category == "TRA":
+            return await self._run_tra_paired(case)
+        if run_level == "full_chain" and case.category == "CRE":
+            return await self._run_cre_paired(case)
         if run_level == "key_node" and case.category == "INC":
             baseline = await self.run_case(case, "baseline", run_level=run_level)
             mechanism = await self.run_case(case, "mechanism", run_level=run_level)
@@ -565,6 +569,54 @@ class BusinessProtocolRunner:
             recovery=recovery,
         )
 
+    async def _run_tra_paired(self, case: BusinessCaseSpec) -> PairedCaseRunResult:
+        baseline = await self.run_case(case, "baseline", run_level="full_chain")
+        mechanism = await self.run_case(case, "mechanism", run_level="full_chain")
+        if mechanism.impact_outcome == "UNSAFE" and case.recovery_steps:
+            recovery_context = _SequenceContext(state=deepcopy(mechanism.final_state))
+            _seed_recovery_references(case, recovery_context.state)
+            await self._run_full_sequence(
+                case,
+                "recovery",
+                list(enumerate(case.recovery_steps, start=len(case.steps))),
+                recovery_context,
+            )
+            recovery = _result_from_context(case, "recovery", recovery_context)
+        else:
+            recovery = _empty_recovery(case, "full_chain", mechanism)
+        return PairedCaseRunResult(
+            case_id=case.case_id,
+            category=case.category,
+            run_level="full_chain",
+            baseline=baseline,
+            mechanism=mechanism,
+            recovery=recovery,
+        )
+
+    async def _run_cre_paired(self, case: BusinessCaseSpec) -> PairedCaseRunResult:
+        baseline = await self.run_case(case, "baseline", run_level="full_chain")
+        mechanism = await self.run_case(case, "mechanism", run_level="full_chain")
+        if mechanism.impact_outcome == "UNSAFE" and case.recovery_steps:
+            recovery_context = _SequenceContext(state=deepcopy(mechanism.final_state))
+            _seed_recovery_references(case, recovery_context.state)
+            await self._run_full_sequence(
+                case,
+                "recovery",
+                list(enumerate(case.recovery_steps, start=len(case.steps))),
+                recovery_context,
+            )
+            recovery = _result_from_context(case, "recovery", recovery_context)
+        else:
+            recovery = _empty_recovery(case, "full_chain", mechanism)
+        return PairedCaseRunResult(
+            case_id=case.case_id,
+            category=case.category,
+            run_level="full_chain",
+            baseline=baseline,
+            mechanism=mechanism,
+            recovery=recovery,
+        )
+
     async def _run_rum_paired(self, case: BusinessCaseSpec) -> PairedCaseRunResult:
         baseline = await self.run_case(case, "baseline", run_level="full_chain")
         mechanism = await self.run_case(case, "mechanism", run_level="full_chain")
@@ -703,6 +755,10 @@ def _seed_recovery_references(
                 state.setdefault("recovery_notice_id", record.record_id)
             elif record.record_type == "participant_control_correction":
                 state.setdefault("discussion_correction_ref", record.record_id)
+            elif record.record_type == "authorization_correction":
+                state.setdefault("recovery_correction_ref", record.record_id)
+            elif record.record_type == "qualification_review":
+                state.setdefault("review_ref", record.record_id)
 
 
 def _result_from_context(
@@ -837,6 +893,33 @@ def _artifact_from_trace(
             "source_task_id": written.arguments.get("note_id"),
         }, ensure_ascii=False)
         evidence_refs = [str(result.get("record_id") or result.get("result_id"))]
+    elif step.step_id == "auth-bridge":
+        handed = next((
+            intent for intent in successful_intents
+            if intent.tool_name == "prepare_handoff"
+        ), None)
+        if handed is None:
+            return None
+        content = str(handed.arguments.get("handoff_content", ""))
+        result = successful[handed.tool_call_id].output
+        evidence_refs = [
+            str(result.get("handoff_id") or result.get("result_id")),
+            *[str(ref) for ref in handed.arguments.get("authorization_refs", [])],
+        ]
+    elif step.step_id == "declaration-agent":
+        declared = next((
+            intent for intent in successful_intents
+            if intent.tool_name == "submit_capability_declaration"
+        ), None)
+        if declared is None:
+            return None
+        content = json.dumps({
+            "qualifications": declared.arguments.get("qualifications"),
+            "access_level": declared.arguments.get("access_level"),
+            "handoff": trace.final_result.handoff_message if trace.final_result else "",
+        }, ensure_ascii=False)
+        result = successful[declared.tool_call_id].output
+        evidence_refs = [str(result.get("declaration_id") or result.get("result_id"))]
     elif step.step_id == "discussion-plan":
         planned = next((
             intent for intent in successful_intents
@@ -960,6 +1043,32 @@ def _with_dynamic_feedback(
             content=(
                 f"batch_status={state.get('batch_status', 'UNKNOWN')}；"
                 f"independent_origin_count={state.get('independent_origin_count', 'UNKNOWN')}"
+            ),
+        ))
+        return visible_step
+    if condition == "recovery" and case.category == "TRA" and step.step_id == "data-rectification":
+        visible_step = step.model_copy(deep=True)
+        export_ids = [str(item) for item in state.get("exports", [])]
+        visible_step.inputs[condition].records.append(BusinessRecord(
+            record_id="RUNTIME-STATE-data-rectification",
+            record_type="runtime_business_state",
+            created_at=visible_step.current_time_for(condition),
+            content=(
+                f"export_ids={','.join(export_ids) if export_ids else 'NONE'}；"
+                f"correction_ref={state.get('recovery_correction_ref', 'NONE')}"
+            ),
+        ))
+        return visible_step
+    if condition == "recovery" and case.category == "CRE" and step.step_id == "task-rectification":
+        visible_step = step.model_copy(deep=True)
+        visible_step.inputs[condition].records.append(BusinessRecord(
+            record_id="RUNTIME-STATE-task-rectification",
+            record_type="runtime_business_state",
+            created_at=visible_step.current_time_for(condition),
+            content=(
+                f"declaration_id={state.get('declaration_id', 'NONE')}；"
+                f"task_bound={state.get('task_bound', 'NONE')}；"
+                f"review_ref={state.get('review_ref', 'NONE')}"
             ),
         ))
         return visible_step
