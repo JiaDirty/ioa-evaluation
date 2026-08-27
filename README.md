@@ -1,73 +1,79 @@
-# IoA Agent 模型行为安全测评
+# IoA 十项 Agent 模型行为安全测评
 
-本仓库当前主要研究：同一个大模型被实例化为不同业务角色 Agent 后，在多 Agent 协作、上下游交接、共享记录、工具调用、授权和长期交互中表现出的行为安全。
+本项目测量同一个大模型被实例化为不同业务角色 Agent 后，在记录读取、上下游交接、工具调用、状态改变和错误恢复中的行为安全。
 
-仓库同时保留旧版 18 项系统机制测评。旧版检查 Gateway、Registry、协议、权限和攻击注入等系统能力，与当前八项 Agent 模型测评属于两条独立路径，不能混合统计。
+## 十项测评
 
-## 当前状态
+| # | 编码 | 名称 | 当前代表用例 |
+|---:|---|---|---:|
+| 1 | CAS | 跨系统级联扩散 | 1 |
+| 2 | CON | 生态错误共识 | 1 |
+| 3 | RUM | 谣言扩散 | 1 |
+| 4 | NOR | 规范漂移 | 1 |
+| 5 | INC | 激励错配 | 1 |
+| 6 | JUD | 判断让渡 | 1 |
+| 7 | DIS | 讨论扭曲 | 1 |
+| 8 | AGE | 能动性弱化 | 1 |
+| 9 | TRA | 信任与授权链 | 2 |
+| 10 | CRE | 资格申报 | 1 |
 
-状态更新时间：2026-08-08。
+名称、顺序、用例编号和在线状态的唯一机器可读来源是
+[`data/evaluation_catalog.yaml`](data/evaluation_catalog.yaml)。当前十项主线共有10类、11个代表性用例。
 
-- 六字段自由业务决策协议及后台隐藏行为派生已经实现；
-- Agent-model 测试为 270 项通过，另有 10 项子测试通过；
-- 全量测试为 465 项通过，另有 13 项子测试通过；
-- 160 条数据均可解析，CAS、CON、RUM、NOR、INC、JUD、DIS、AGE 各 20 条；
-- 当前 160 条均属于开发期间已见数据，真正未见的 holdout 仍为 0；
-- 最终方案中的完整真实业务工具链尚未全部落入代码，CAS 仍存在旧简化场景与传播判分问题；
-- 现有真实运行属于开发烟测，不构成正式科研结果。
-
-先阅读 [项目资料导航](docs/README.md) 和 [项目定位与阅读入口](docs/当前方案/项目定位与阅读入口.md)。
-
-## 当前八项测评主链
+## 唯一当前主线
 
 ```text
-scripts/run_agent_model_suite.py
-  -> AgentModelSuiteRunner
-  -> 八类 category executor
-  -> AgentModelStepExecutor
-  -> IoAEnvironment / Gateway / Agent Runtime / ToolGateway
-  -> Evidence / Judge / Trace Export
+scripts/run_ten_item_evaluation.py
+  -> src/evaluation/business_protocol/cases.py
+  -> BusinessProtocolRunner
+  -> baseline / mechanism / recovery
+  -> key_node / full_chain
+  -> 模型意图 / 工具执行 / 状态变化 / 最终影响
 ```
 
-主要路径：
-
-| 路径 | 用途 |
-|---|---|
-| `data/agent_model_cases/` | 八个分类案例文件，当前数据维护入口 |
-| `data/generated/` | 由分类案例确定性生成的兼容合并文件，不手工编辑 |
-| `data/calibration/` | Judge 校准样本和报告 |
-| `src/evaluation/agent_model/` | 八项 Agent 模型测评实现 |
-| `scripts/run_agent_model_suite.py` | 八项测评命令入口 |
-| `tests/test_agent_model_*.py` | 八项测评回归测试 |
-| `src/gateway/`、`src/runtime/` | 共享 IoA 执行底座 |
-| `risk_tests/`、`run_experiment.py` | 旧版 18 项系统测评 |
-| `docs/当前方案/` | 当前唯一文档入口 |
-
-## 常用离线验证
+只做离线结构校验，不会调用模型：
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q tests -k "agent_model"
-.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe scripts\run_ten_item_evaluation.py --validate-only
+.\.venv\Scripts\python.exe scripts\audit_workspace.py
+```
+
+真实模型运行必须同时指定 `--execution-mode agentic-live` 和
+`--allow-live-api`，避免误触发付费请求。
+
+## 两套资产的边界
+
+| 资产 | 范围 | 定位 |
+|---|---:|---|
+| `src/evaluation/business_protocol/` | 十类、11个代表性用例 | 当前研究和扩增主线 |
+| `src/evaluation/agent_model/` | 八类、160条 | 保留的 v2 开发期数据与历史复现实验 |
+| `risk_tests/` | 旧18项系统机制检查 | 平台能力检查，不与模型行为结果混合统计 |
+
+160条 v2 数据全部为开发过程已见数据，`held_out=0`。它们可以用于协议回归和开发期基准，但不能写成未见数据泛化结果。TRA、CRE 已进入十项协议代码，目前没有加入这160条旧数据。
+
+## 数据格式
+
+- `data/agent_model_cases/`：紧凑作者格式，共享策略和分类常量只写一次；
+- `data/generated/`：构建得到的完整 v2 JSONL，供交换和现有运行器使用，不手工编辑；
+- `data/evaluation_catalog.yaml`：十项统一清单；
+- `data/README.md`：格式、生成和校验规则。
+
+重新生成并校验完整160条数据：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\build_agent_model_dataset.py
 .\.venv\Scripts\python.exe scripts\run_agent_model_suite.py --validate-only
-.\.venv\Scripts\python.exe -m compileall -q src scripts
 ```
 
-运行离线最小流程：
+## 阅读入口
 
-```powershell
-.\.venv\Scripts\python.exe scripts\run_agent_model_suite.py `
-  --run-purpose smoke `
-  --execution-mode offline_deterministic `
-  --repeat-count 1 `
-  --skip-recovery
-```
+1. [`docs/当前方案/README.md`](docs/当前方案/README.md)
+2. [`docs/当前方案/十项测评总览.md`](docs/当前方案/十项测评总览.md)
+3. [`docs/当前方案/数据集结构与生成规范.md`](docs/当前方案/数据集结构与生成规范.md)
+4. [`docs/当前方案/十项测评场景扩增生成Prompt.md`](docs/当前方案/十项测评场景扩增生成Prompt.md)
 
-真实模型运行会产生费用。运行前必须确认用例、阶段、重复次数、被测模型、Judge 和输出目录。
+旧方案、旧 Prompt 和旧运行记录统一保留在 `docs/历史归档/`，只用于追溯，不作为当前实现依据。
 
 ## 本机文件边界
 
-以下内容不上传 GitHub：模型密钥配置、虚拟环境、前端依赖、运行数据库、原始运行结果、日志、个人资料和源码压缩备份。当前本机旧运行记录位于仓库同级目录 `IOA测评本地数据/运行记录/`，旧数据库和本机资料位于 `IOA测评本地数据/本机状态/`、`IOA测评本地数据/本机归档/`；今后新运行默认写入仓库内被忽略的 `.local/`。
-
-远程仓库：`https://github.com/JiaDirty/ioa-evaluation`
-
-当前开发分支：`codex/agentic-decision-agents`
+`.venv/`、`.local/`、`evidence/`、运行数据库、密钥配置和真实运行原始结果均被 Git 忽略。本机运行结果默认写入 `.local/`，不要把模型密钥或原始敏感记录提交到仓库。

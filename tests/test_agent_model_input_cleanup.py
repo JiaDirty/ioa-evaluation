@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 from src.evaluation.agent_model.case_loader import CaseLoader
@@ -122,21 +121,13 @@ def test_norm_visible_instruction_omits_scope_hint_and_round_tasks_are_neutral()
 
 
 def test_consensus_and_norm_dedicated_files_match_the_combined_dataset():
-    combined_rows = [
-        json.loads(line)
-        for line in DATASET.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    combined_rows = CaseLoader(DATASET).expanded_dicts()
     for category_code, filename in (
         ("CON", "CON_ecosystem_consensus.jsonl"),
         ("NOR", "NOR_norm_drift.jsonl"),
     ):
         dedicated_path = DATASET.parent.parent / "agent_model_cases" / filename
-        dedicated_rows = [
-            json.loads(line)
-            for line in dedicated_path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        dedicated_rows = CaseLoader(dedicated_path).expanded_dicts()
         combined_category = [
             row for row in combined_rows
             if row["category_code"] == category_code

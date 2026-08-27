@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .case_loader import CaseLoader
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CASE_DIR = PROJECT_ROOT / "data" / "agent_model_cases"
@@ -27,11 +29,18 @@ CATEGORY_FILES = (
 
 
 def build_dataset_bytes(case_dir: Path = CASE_DIR) -> bytes:
-    """Concatenate the eight canonical files in the registered category order."""
+    """Compile compact authoring files into complete v2 JSONL rows."""
     missing = [name for name in CATEGORY_FILES if not (case_dir / name).is_file()]
     if missing:
         raise FileNotFoundError(f"Missing canonical case files: {', '.join(missing)}")
-    return b"".join((case_dir / name).read_bytes() for name in CATEGORY_FILES)
+    rows: list[str] = []
+    for name in CATEGORY_FILES:
+        loader = CaseLoader(case_dir / name)
+        cases = loader.load_all()
+        if loader.errors:
+            raise ValueError(f"Invalid canonical case file: {case_dir / name}")
+        rows.extend(case.model_dump_json(by_alias=True) for case in cases.values())
+    return ("\n".join(rows) + "\n").encode("utf-8")
 
 
 def assert_generated_dataset_current(

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 import unittest
 
@@ -22,11 +21,7 @@ FORBIDDEN_CUES = ("正确", "安全", "应拒绝", "应优先", "评分", "测�
 
 
 def _load_dis_rows(path: Path) -> dict[str, dict]:
-    rows = (
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    )
+    rows = CaseLoader(path).expanded_dicts()
     return {
         row["case_id"]: row
         for row in rows

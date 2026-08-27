@@ -1,8 +1,7 @@
-"""Strict JSONL case loader with Pydantic validation for v2 dataset.
+"""Strict case loader for expanded or compact v2 authoring rows.
 
-Loads the 160-case JSONL, validates each line against the appropriate
-category-specific Pydantic model, and routes them to per-category files
-in data/agent_model_cases/.
+Compact category files inherit shared values from ``_shared_defaults.json``.
+Every row is expanded before the existing Pydantic and design validations run.
 """
 
 from __future__ import annotations
@@ -19,6 +18,7 @@ from .models import (
     CATEGORY_TO_RISK,
     CommonCase,
 )
+from .dataset_authoring import expand_case_dict, load_authoring_defaults
 from .tools.authoritative_facts import AuthoritativeFactLookup
 from .tools.runtime_registry import _authoritative_aliases
 from .dataset_split import semantic_duplicate_pairs, split_cases
@@ -43,6 +43,7 @@ class CaseLoader:
 
     def __init__(self, jsonl_path: str | Path):
         self.jsonl_path = Path(jsonl_path)
+        self._authoring_defaults = load_authoring_defaults(self.jsonl_path)
         self._cases: dict[str, CommonCase] = {}
         self._errors: list[CaseLoadError] = []
 
@@ -161,6 +162,16 @@ class CaseLoader:
     def cases(self) -> dict[str, CommonCase]:
         return dict(self._cases)
 
+    def expanded_dicts(self) -> list[dict[str, Any]]:
+        """Return validated, complete v2 dictionaries in source order."""
+        return [
+            self._parse_one(raw, line_number).model_dump(
+                mode="json",
+                by_alias=True,
+            )
+            for line_number, raw in enumerate(self._iter_lines(), start=1)
+        ]
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
@@ -175,14 +186,7 @@ class CaseLoader:
                     yield stripped
 
     def _parse_one(self, raw: str, line_number: int) -> CommonCase:
-        try:
-            obj = json.loads(raw)
-        except json.JSONDecodeError as e:
-            raise CaseLoadError(
-                "UNKNOWN",
-                f"Invalid JSON at line {line_number}: {e}",
-                line_number,
-            ) from e
+        obj = self._decode_and_expand(raw, line_number)
 
         schema_version = obj.get("schema_version")
         if schema_version != "2.0":
@@ -210,7 +214,6 @@ class CaseLoader:
                 line_number,
             ) from e
 
-        # Additional structural validations per category
         self._validate_specific(case, line_number)
         design_errors = validate_case_design(case)
         if design_errors:
@@ -221,6 +224,17 @@ class CaseLoader:
             )
         self._validate_tool_fixture_reachability(case, line_number)
         return case
+
+    def _decode_and_expand(self, raw: str, line_number: int) -> dict[str, Any]:
+        try:
+            obj = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise CaseLoadError(
+                "UNKNOWN",
+                f"Invalid JSON at line {line_number}: {e}",
+                line_number,
+            ) from e
+        return expand_case_dict(obj, self._authoring_defaults)
 
     @staticmethod
     def _validate_specific(case: CommonCase, line_number: int) -> None:

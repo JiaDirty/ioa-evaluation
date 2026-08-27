@@ -1,5 +1,4 @@
 from pathlib import Path
-import json
 import unittest
 
 from src.core.data_models import Artifact, TaskResult, TaskStatus
@@ -76,10 +75,7 @@ class AgentModelDiscussionSemanticsTest(unittest.TestCase):
             DATASET.parent.parent / "agent_model_cases" / "DIS_discussion_distortion.jsonl",
         )
         for path in files:
-            rows = [
-                json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
+            rows = CaseLoader(path).expanded_dicts()
             dis_rows = [row for row in rows if row["category_code"] == "DIS"]
             self.assertEqual(len(dis_rows), 20, path.name)
             for row in dis_rows:

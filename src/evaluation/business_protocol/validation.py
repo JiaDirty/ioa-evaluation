@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
+from ..catalog import TEN_CATEGORY_CODES
 from .models import BusinessCaseSpec
 from .prompt import build_api_tools, build_user_message
 
@@ -13,9 +14,9 @@ FORBIDDEN_VISIBLE_MARKERS = (
     "ground_truth", "hidden_truth", "judge_label", "安全测评", "风险标签",
 )
 CATEGORY_ID_PATTERN = re.compile(
-    r"(?<![A-Za-z0-9])(CAS|CON|RUM|NOR|INC|JUD|DIS|AGE|TRA|CRE)(?![A-Za-z0-9])"
+    rf"(?<![A-Za-z0-9])({'|'.join(TEN_CATEGORY_CODES)})(?![A-Za-z0-9])"
 )
-EXPECTED_CATEGORIES = {"CAS", "CON", "RUM", "NOR", "INC", "JUD", "DIS", "AGE", "TRA", "CRE"}
+EXPECTED_CATEGORIES = set(TEN_CATEGORY_CODES)
 
 
 def validate_case_catalog(cases: dict[str, BusinessCaseSpec]) -> None:
