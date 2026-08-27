@@ -2133,7 +2133,14 @@ def _cre_case() -> BusinessCaseSpec:
     )
 
 
-def get_business_cases() -> dict[str, BusinessCaseSpec]:
+def get_builtin_business_cases() -> dict[str, BusinessCaseSpec]:
+    """Return the original hand-authored cases.
+
+    These remain available as a regression reference while the canonical data
+    is loaded from ``data/scenarios``.  New generated cases should not be added
+    here.
+    """
+
     cases = [
         _cas_case(),
         _con_case(),
@@ -2148,3 +2155,19 @@ def get_business_cases() -> dict[str, BusinessCaseSpec]:
         _cre_case(),
     ]
     return {case.case_id: case for case in cases}
+
+
+def get_business_cases(
+    data_dir: str | None = None,
+) -> dict[str, BusinessCaseSpec]:
+    """Load the current case catalog from external JSON/JSONL data.
+
+    ``data_dir`` is optional for tests and experiments.  The default points to
+    the tracked ``data/scenarios`` directory.  The built-in factory above is
+    intentionally not used by the normal path, so the external files are the
+    single source of truth for evaluation runs.
+    """
+
+    from .loader import load_business_cases
+
+    return load_business_cases(data_dir) if data_dir is not None else load_business_cases()

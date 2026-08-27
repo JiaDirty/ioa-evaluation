@@ -53,6 +53,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--case-id", default="all")
     parser.add_argument(
+        "--data-dir",
+        help="Scenario JSON/JSONL directory; defaults to data/scenarios.",
+    )
+    parser.add_argument(
         "--condition",
         choices=["baseline", "mechanism", "recovery", "all"],
         default="all",
@@ -131,7 +135,7 @@ def _build_live_client():
 
 
 async def async_main(args: argparse.Namespace) -> int:
-    cases = get_business_cases()
+    cases = get_business_cases(args.data_dir)
     validate_case_catalog(cases)
     selected = _selected_cases(args, cases)
     conditions = _conditions(args.condition)

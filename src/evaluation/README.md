@@ -5,6 +5,8 @@
 | 路径 | 作用 |
 |---|---|
 | `catalog.py` | 读取并校验十项统一目录 |
+| `business_protocol/loader.py` | 从 `data/scenarios/` 读取并校验 JSON/JSONL 场景 |
+| `business_protocol/cases.py` | 原始手工场景构造器和回归基准 |
 | `business_protocol/` | 十一个代表性业务场景、工具环境、运行器和判分逻辑 |
 | `scenario_generation/` | 生成候选批次的严格结构与批次级质量门槛 |
 

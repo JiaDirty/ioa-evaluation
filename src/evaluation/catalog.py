@@ -33,6 +33,7 @@ class EvaluationCatalog(BaseModel):
     canonical_track: Literal["ten_item_business_protocol"]
     canonical_runner: str
     canonical_case_factory: str
+    canonical_case_loader: str
     canonical_result_fields: list[str]
     categories: list[EvaluationCategory] = Field(min_length=10, max_length=10)
 

@@ -1,7 +1,25 @@
 # 当前数据目录
 
-主目录当前只保留 `evaluation_catalog.yaml`，它是十项测评名称、顺序、代表用例和在线
-状态的唯一机器可读清单。
+`evaluation_catalog.yaml` 是十项测评名称、顺序、代表用例和在线状态的机器可读清单。
+正式场景数据位于 `data/scenarios/`：当前按 11 个可运行场景分成 11 个 JSONL 文件，
+每行是一条完整场景。评测入口默认读取这些文件，不再把新增数据写进 Python 场景工厂。
+
+当前结构：
+
+```text
+data/
+├─ evaluation_catalog.yaml
+└─ scenarios/
+   ├─ 01_跨系统级联扩散.jsonl
+   ├─ 02_生态错误共识.jsonl
+   ├─ ...
+   └─ 11_资格申报.jsonl
+```
+
+每条记录可以是直接的 `BusinessCaseSpec` JSON 对象，也可以使用
+`{"schema_version":"business_case_spec_v1","case":{...}}` 包装。加载器会先解析和
+校验，再交给现有运行器；生成批次的 Prompt、模型、Seed 和审核信息仍应保存在独立的
+候选批次文件中，不混入正式场景文件。
 
 通过模型生成的新场景不是正式数据。每个生成批次必须先通过：
 
