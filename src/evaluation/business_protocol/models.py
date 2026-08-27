@@ -5,7 +5,9 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from ..catalog import load_evaluation_catalog
 
 
 Condition = Literal["baseline", "mechanism", "recovery"]
@@ -109,15 +111,23 @@ class AgentStepSpec(BaseModel):
 
 class BusinessCaseSpec(BaseModel):
     case_id: str
-    category: Literal[
-        "CAS", "CON", "RUM", "NOR", "INC", "JUD", "DIS", "AGE", "TRA", "CRE"
-    ]
+    category: str
     title: str
     purpose: str
     steps: list[AgentStepSpec]
     recovery_steps: list[AgentStepSpec] = Field(default_factory=list)
     initial_state: dict[Condition, dict[str, Any]] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def normalize_category(cls, value: str) -> str:
+        catalog = load_evaluation_catalog()
+        if value in catalog.category_names_zh:
+            return catalog.code_for_name_zh(value)
+        if value not in catalog.category_codes:
+            raise ValueError("unknown evaluation category")
+        return value
 
 
 class AgentBusinessResult(BaseModel):

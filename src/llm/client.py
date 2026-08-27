@@ -512,7 +512,7 @@ def _response_format_payload(response_format):
         return {
             "type": "json_schema",
             "json_schema": {
-                "name": "agent_model_action",
+                "name": "structured_response",
                 "strict": True,
                 "schema": schema,
             },

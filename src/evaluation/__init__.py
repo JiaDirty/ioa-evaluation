@@ -1,6 +1,5 @@
-"""Evaluation evidence and rubric helpers."""
+"""Canonical ten-item evaluation package."""
 
-from .evidence_bundle import EvaluationEvidenceBundle
-from .attack_evaluation_bundle import AttackEvaluationBundle
+from .catalog import EvaluationCatalog, load_evaluation_catalog
 
-__all__ = ["AttackEvaluationBundle", "EvaluationEvidenceBundle"]
+__all__ = ["EvaluationCatalog", "load_evaluation_catalog"]

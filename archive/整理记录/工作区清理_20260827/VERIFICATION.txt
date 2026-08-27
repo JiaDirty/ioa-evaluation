@@ -1,0 +1,59 @@
+Workspace cleanup verification
+==============================
+
+Branch: codex/agentic-decision-agents
+Changed fields: legacy_dataset_cases removed; generated target_category and category use Chinese evaluation names at the external boundary.
+
+Artifacts
+---------
+MODIFIED_FILE: D:\个人文件\学习文件\实习\IOA测评搭建-agentic-decision-agents\archive\整理记录\工作区清理_20260827\MODIFIED_FILE.md
+DIFF_FILE: D:\个人文件\学习文件\实习\IOA测评搭建-agentic-decision-agents\archive\整理记录\工作区清理_20260827\DIFF_FILE.md
+VERIFICATION: D:\个人文件\学习文件\实习\IOA测评搭建-agentic-decision-agents\archive\整理记录\工作区清理_20260827\VERIFICATION.txt
+ROLLBACK: D:\个人文件\学习文件\实习\IOA测评搭建-agentic-decision-agents\archive\整理记录\工作区清理_20260827\ROLLBACK.sh
+
+Baseline identity
+-----------------
+Commit: ff3c34fbfed8310c60f47e45c9f424cba32129b3
+Tree: 940f6daa6b55d50281de24dadc9fe80fa2f96725
+README blob: 63f82f0eeb4fceb18eed8ac2428a344e7a46f2b1
+
+BASELINE
+--------
+Command: .\.venv\Scripts\python.exe -m pytest -q <11 current-mainline test files>
+Input: pre-cleanup workspace at baseline commit ff3c34fbfed8310c60f47e45c9f424cba32129b3
+Literal output/result: 117 passed, 3 subtests passed in 11.92s
+Exit status: 0
+Result: selected ten-item protocol, generation, model-client and tool tests passed before cleanup.
+
+MODIFIED
+--------
+Command: $env:PYTHONDONTWRITEBYTECODE='1'; .\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider
+Input: cleaned current mainline; pytest.ini limits discovery to tests/
+Literal output/result: 117 passed, 3 subtests passed in 5.46s
+Exit status: 0
+Result: all current mainline tests passed; archived tests were not collected.
+
+Command: .\.venv\Scripts\python.exe scripts\audit_workspace.py
+Input: cleaned workspace
+Literal output/result: status=VALID; catalog_has_ten_categories=true; protocol_matches_catalog=true; canonical_prompt_exists=true; legacy_runner_absent_from_mainline=true; legacy_dataset_absent_from_mainline=true; archive_documented=true; protocol_case_count=11; protocol_step_count=57; provider_calls=0
+Exit status: 0
+Result: the visible workspace exposes only the current ten-item route.
+
+Command: .\.venv\Scripts\python.exe scripts\run_ten_item_evaluation.py --validate-only
+Input: current eleven representative cases
+Literal output/result: status=VALID; case_count=11; step_count=57; repeat_count=1; planned_result_count=22; prompt_snapshots_exported=0; provider_calls=0
+Exit status: 0
+Result: current protocol validates offline without a paid model call.
+
+ROLLBACK
+--------
+Command: D:\Workspace\Git\bin\bash.exe archive/整理记录/工作区清理_20260827/ROLLBACK.sh D:\个人文件\学习文件\实习\IOA测评搭建-agentic-decision-agents C:\Users\27640\AppData\Local\Temp\ioa-rollback-final-5a1f3eb3be574ef987bafc53895f0df2
+Input: baseline commit ff3c34fbfed8310c60f47e45c9f424cba32129b3 and an empty temporary directory
+Literal output/result: restored_commit=ff3c34fbfed8310c60f47e45c9f424cba32129b3; restored_tree=940f6daa6b55d50281de24dadc9fe80fa2f96725; target=/tmp/ioa-rollback-final-5a1f3eb3be574ef987bafc53895f0df2; rollback_script_exit=0; restored_file_count=586; restored_readme_blob=63f82f0eeb4fceb18eed8ac2428a344e7a46f2b1; reconstructed_tree=940f6daa6b55d50281de24dadc9fe80fa2f96725; root_entries_unchanged=True
+Exit status: 0
+Restored behavior/status: all 586 baseline files were restored byte-for-byte; after preserving the baseline executable bit, the reconstructed tree exactly matched the baseline tree, and the current workspace root was unchanged.
+
+Notes
+-----
+The first rollback attempt used Windows WSL bash and exited 2 before extraction because it could not resolve the D: path. The successful command above explicitly uses Git Bash.
+The first Git Bash export restored all files but inherited core.autocrlf and changed text line endings. ROLLBACK.sh now forces core.autocrlf=false; the final README blob and reconstructed tree match exactly.

@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..business_protocol.models import BusinessCaseSpec
-from ..catalog import TEN_CATEGORY_CODES
+from ..catalog import TEN_CATEGORY_NAMES_ZH, load_evaluation_catalog
 
 
 GenerationStatus = Literal["COMPLETED", "FAILED_QUALITY_GATE"]
@@ -27,9 +27,9 @@ class GenerationConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_category(self) -> "GenerationConfig":
-        if self.target_category not in TEN_CATEGORY_CODES:
+        if self.target_category not in TEN_CATEGORY_NAMES_ZH:
             raise ValueError(
-                f"target_category must be one of {TEN_CATEGORY_CODES}"
+                f"target_category must be one of {TEN_CATEGORY_NAMES_ZH}"
             )
         return self
 
@@ -87,7 +87,9 @@ class ScenarioGenerationBatch(BaseModel):
         if failed_audits:
             raise ValueError(f"completed batch failed audits: {failed_audits}")
 
-        category = self.generation_config.target_category
+        category = load_evaluation_catalog().code_for_name_zh(
+            self.generation_config.target_category
+        )
         mismatched = [case.case_id for case in self.cases if case.category != category]
         if mismatched:
             raise ValueError(f"cases outside target category: {mismatched}")

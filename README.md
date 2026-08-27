@@ -1,79 +1,74 @@
 # IoA 十项 Agent 模型行为安全测评
 
-本项目测量同一个大模型被实例化为不同业务角色 Agent 后，在记录读取、上下游交接、工具调用、状态改变和错误恢复中的行为安全。
+本项目评估大模型作为不同业务角色协作时，如何读取记录、传递上游产物、调用工具、
+改变业务状态，以及在发现错误后完成恢复。
+
+当前版本只保留一条主线：十个测评类别、十一个代表性业务场景。其中前八项已有真实
+模型在线运行材料，信任与授权链、资格申报已完成代码和离线验证，尚未进行真实模型
+在线测评。
 
 ## 十项测评
 
-| # | 编码 | 名称 | 当前代表用例 |
-|---:|---|---|---:|
-| 1 | CAS | 跨系统级联扩散 | 1 |
-| 2 | CON | 生态错误共识 | 1 |
-| 3 | RUM | 谣言扩散 | 1 |
-| 4 | NOR | 规范漂移 | 1 |
-| 5 | INC | 激励错配 | 1 |
-| 6 | JUD | 判断让渡 | 1 |
-| 7 | DIS | 讨论扭曲 | 1 |
-| 8 | AGE | 能动性弱化 | 1 |
-| 9 | TRA | 信任与授权链 | 2 |
-| 10 | CRE | 资格申报 | 1 |
+1. 跨系统级联扩散
+2. 生态错误共识
+3. 谣言扩散
+4. 规范漂移
+5. 激励错配
+6. 判断让渡
+7. 讨论扭曲
+8. 能动性弱化
+9. 信任与授权链
+10. 资格申报
 
-名称、顺序、用例编号和在线状态的唯一机器可读来源是
-[`data/evaluation_catalog.yaml`](data/evaluation_catalog.yaml)。当前十项主线共有10类、11个代表性用例。
+机器可读的名称、顺序、用例编号和状态统一保存在
+[`data/evaluation_catalog.yaml`](data/evaluation_catalog.yaml)。
 
-## 唯一当前主线
+## 当前目录
 
 ```text
-scripts/run_ten_item_evaluation.py
-  -> src/evaluation/business_protocol/cases.py
-  -> BusinessProtocolRunner
-  -> baseline / mechanism / recovery
-  -> key_node / full_chain
-  -> 模型意图 / 工具执行 / 状态变化 / 最终影响
+config/       真实模型接口配置示例
+data/         十项统一目录和未来候选批次
+docs/         当前方案、生成 Prompt、运行指南和有效结果
+scripts/      当前运行、审计和候选数据校验入口
+src/          十项业务协议、场景生成 Schema、模型客户端和工具网关
+tests/        只覆盖当前主线的测试
+archive/      退出主线的旧代码、旧数据、旧文档和历史结果
+pytest.ini    限制测试只发现当前主线
 ```
 
-只做离线结构校验，不会调用模型：
+`archive/` 不参与当前导入、测试、运行或结果统计。
+
+## 离线验证
+
+以下命令不会调用模型：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\run_ten_item_evaluation.py --validate-only
 .\.venv\Scripts\python.exe scripts\audit_workspace.py
+.\.venv\Scripts\python.exe scripts\run_ten_item_evaluation.py --validate-only
+.\.venv\Scripts\python.exe -m pytest -q
 ```
 
-真实模型运行必须同时指定 `--execution-mode agentic-live` 和
-`--allow-live-api`，避免误触发付费请求。
+## 真实模型运行
 
-## 两套资产的边界
-
-| 资产 | 范围 | 定位 |
-|---|---:|---|
-| `src/evaluation/business_protocol/` | 十类、11个代表性用例 | 当前研究和扩增主线 |
-| `src/evaluation/agent_model/` | 八类、160条 | 保留的 v2 开发期数据与历史复现实验 |
-| `risk_tests/` | 旧18项系统机制检查 | 平台能力检查，不与模型行为结果混合统计 |
-
-160条 v2 数据全部为开发过程已见数据，`held_out=0`。它们可以用于协议回归和开发期基准，但不能写成未见数据泛化结果。TRA、CRE 已进入十项协议代码，目前没有加入这160条旧数据。
-
-## 数据格式
-
-- `data/agent_model_cases/`：紧凑作者格式，共享策略和分类常量只写一次；
-- `data/generated/`：构建得到的完整 v2 JSONL，供交换和现有运行器使用，不手工编辑；
-- `data/evaluation_catalog.yaml`：十项统一清单；
-- `data/README.md`：格式、生成和校验规则。
-
-重新生成并校验完整160条数据：
+先导出并人工检查模型可见输入：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\build_agent_model_dataset.py
-.\.venv\Scripts\python.exe scripts\run_agent_model_suite.py --validate-only
+.\.venv\Scripts\python.exe scripts\run_ten_item_evaluation.py `
+  --validate-only `
+  --export-prompts .local\prompt_review\ten_item_prompts.jsonl
 ```
+
+真实调用必须同时显式指定 `--execution-mode agentic-live` 和 `--allow-live-api`。
+没有第二个开关时，程序不会产生供应商调用。
 
 ## 阅读入口
 
-1. [`docs/当前方案/README.md`](docs/当前方案/README.md)
-2. [`docs/当前方案/十项测评总览.md`](docs/当前方案/十项测评总览.md)
-3. [`docs/当前方案/数据集结构与生成规范.md`](docs/当前方案/数据集结构与生成规范.md)
-4. [`docs/当前方案/十项测评场景扩增生成Prompt.md`](docs/当前方案/十项测评场景扩增生成Prompt.md)
+1. [十项测评总览](docs/十项测评总览.md)
+2. [方案与代码实现状态](docs/方案与代码实现状态.md)
+3. [数据集与场景生成规范](docs/数据集与场景生成规范.md)
+4. [十项测评场景生成 Prompt](docs/十项测评场景生成Prompt.md)
+5. [运行与判分指南](docs/运行与判分指南.md)
+6. [当前结果索引](docs/结果记录/当前结果索引.md)
 
-旧方案、旧 Prompt 和旧运行记录统一保留在 `docs/历史归档/`，只用于追溯，不作为当前实现依据。
-
-## 本机文件边界
-
-`.venv/`、`.local/`、`evidence/`、运行数据库、密钥配置和真实运行原始结果均被 Git 忽略。本机运行结果默认写入 `.local/`，不要把模型密钥或原始敏感记录提交到仓库。
+本机密钥、模型原始响应和运行状态均不提交 Git。历史材料需要查阅时，从
+[`archive/README.md`](archive/README.md) 进入。

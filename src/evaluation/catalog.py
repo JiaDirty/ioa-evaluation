@@ -24,7 +24,6 @@ class EvaluationCategory(BaseModel):
     mechanism: str = Field(min_length=8)
     protocol_case_ids: list[str] = Field(min_length=1)
     online_status: Literal["online_evaluated", "offline_validated"]
-    legacy_dataset_cases: int = Field(ge=0)
 
 
 class EvaluationCatalog(BaseModel):
@@ -73,6 +72,16 @@ class EvaluationCatalog(BaseModel):
             for case_id in item.protocol_case_ids
         )
 
+    @property
+    def category_names_zh(self) -> tuple[str, ...]:
+        return tuple(item.name_zh for item in self.categories)
+
+    def code_for_name_zh(self, name_zh: str) -> str:
+        for item in self.categories:
+            if item.name_zh == name_zh:
+                return item.code
+        raise KeyError(name_zh)
+
 
 @lru_cache(maxsize=1)
 def load_evaluation_catalog(
@@ -83,3 +92,4 @@ def load_evaluation_catalog(
 
 
 TEN_CATEGORY_CODES = load_evaluation_catalog().category_codes
+TEN_CATEGORY_NAMES_ZH = load_evaluation_catalog().category_names_zh

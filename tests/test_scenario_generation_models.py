@@ -17,7 +17,7 @@ def _batch_payload() -> dict:
         "prompt_version": "ioa_scenario_generation_v4",
         "generation_status": "COMPLETED",
         "generation_config": {
-            "target_category": "CAS",
+            "target_category": "跨系统级联扩散",
             "scenario_count": 3,
             "batch_id": "CAS-B01",
             "generator_id": "aihubmix",
@@ -43,7 +43,7 @@ def _batch_payload() -> dict:
 def test_completed_batch_accepts_exact_matching_cases():
     payload = _batch_payload()
     for case in payload["cases"]:
-        case["category"] = "CAS"
+        case["category"] = "跨系统级联扩散"
 
     batch = ScenarioGenerationBatch.model_validate(payload)
 

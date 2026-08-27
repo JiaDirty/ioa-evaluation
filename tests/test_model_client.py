@@ -2,7 +2,7 @@ import json
 import unittest
 from types import SimpleNamespace
 
-from src.evaluation.agent_model.judge import AgentModelJudgeVerdict
+from src.evaluation.business_protocol.models import AgentBusinessResult
 from src.llm.client import (
     LLMError,
     OpenAIClient,
@@ -177,7 +177,7 @@ class LLMClientConfigTest(unittest.TestCase):
         client.generate_with_system(
             "system",
             "user",
-            response_format=AgentModelJudgeVerdict,
+            response_format=AgentBusinessResult,
         )
 
         request = completions.kwargs
