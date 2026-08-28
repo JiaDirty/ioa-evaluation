@@ -33,9 +33,9 @@ PILOT_MODELS = [
     {"model": "gpt-5.6-sol", "reasoning_effort": "max", "timeout": 600},
     {
         "model": "deepseek-v4-pro-0813",
-        "reasoning_effort": "max",
-        "timeout": 900,
-        "note": "max 档生成完整场景可能超过 15 分钟，需耐心等待",
+        "reasoning_effort": "none",
+        "timeout": 360,
+        "note": "low/max 会把大量输出预算消耗在 reasoning_content；none 才能稳定完成完整 JSON",
     },
     {"model": "claude-opus-5", "reasoning_effort": "max", "timeout": 600},
     {
@@ -44,7 +44,7 @@ PILOT_MODELS = [
         "timeout": 600,
         "note": "仅支持 low/high/max",
     },
-    {"model": "qwen3.8-flash", "reasoning_effort": "max", "timeout": 600},
+    {"model": "qwen3.8-flash", "reasoning_effort": "none", "timeout": 360, "note": "low/max 长请求容易超时；none 已实测可完成"},
 ]
 
 
