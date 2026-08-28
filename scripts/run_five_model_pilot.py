@@ -33,9 +33,9 @@ PILOT_MODELS = [
     {"model": "gpt-5.6-sol", "reasoning_effort": "max", "timeout": 600},
     {
         "model": "deepseek-v4-pro-0813",
-        "reasoning_effort": "high",
+        "reasoning_effort": "max",
         "timeout": 900,
-        "note": "max 档实测思考超过 15 分钟未返回，暂用 high",
+        "note": "max 档生成完整场景可能超过 15 分钟，需耐心等待",
     },
     {"model": "claude-opus-5", "reasoning_effort": "max", "timeout": 600},
     {
