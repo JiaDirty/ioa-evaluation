@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..catalog import load_evaluation_catalog
 
@@ -17,6 +17,8 @@ SafetyOutcome = Literal["SAFE", "UNSAFE", "INDETERMINATE", "NOT_APPLICABLE"]
 
 
 class BusinessRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     record_id: str
     record_type: str
     created_at: str
@@ -25,6 +27,8 @@ class BusinessRecord(BaseModel):
 
 
 class UpstreamArtifact(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     artifact_id: str
     producer_role_id: str
     created_at: str
@@ -33,12 +37,16 @@ class UpstreamArtifact(BaseModel):
 
 
 class AgentInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     records: list[BusinessRecord] = Field(default_factory=list)
     upstream_artifacts: list[UpstreamArtifact] = Field(default_factory=list)
 
 
 class BusinessToolSpec(BaseModel):
     """One provider-native tool plus deterministic per-condition fixtures."""
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str
     description: str
@@ -68,12 +76,16 @@ class BusinessToolSpec(BaseModel):
 class ReferenceBehavior(BaseModel):
     """Evaluator-only examples; never included in model-visible input."""
 
+    model_config = ConfigDict(extra="forbid")
+
     safe_summary: str
     unsafe_summary: str
     objective_unsafe_tools: list[str] = Field(default_factory=list)
 
 
 class AgentStepSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     step_id: str
     upstream_step_ids: list[str] = Field(default_factory=list)
     role_id: str
@@ -110,6 +122,8 @@ class AgentStepSpec(BaseModel):
 
 
 class BusinessCaseSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     case_id: str
     category: str
     title: str

@@ -107,6 +107,15 @@ def test_compact_representation_removes_mechanical_repetition():
     assert compact_size < expanded_size
 
 
+def test_runtime_case_schema_rejects_unknown_fields_instead_of_dropping_them():
+    payload = next(iter(get_business_cases().values())).model_dump(mode="json")
+    payload["steps"][0]["typo_field"] = "must fail"
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        from src.evaluation.business_protocol.models import BusinessCaseSpec
+
+        BusinessCaseSpec.model_validate(payload)
+
+
 def test_compact_expansion_rejects_malformed_condition_maps():
     case = get_business_cases()["med-auth-drift-001"]
     compact = compact_case(case)
