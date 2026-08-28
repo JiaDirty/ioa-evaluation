@@ -24,6 +24,18 @@ class BusinessProtocolCasesTest(unittest.TestCase):
         )
         self.assertNotIn("event-purchase", {step.step_id for step in case.recovery_steps})
 
+    def test_norm_event_purchase_uses_one_consistent_equipment_request(self):
+        step = get_business_cases()["purchase-norm-001"].steps[0]
+        self.assertIn("MON-7", step.task_content)
+        self.assertIn("MON-7", step.business_object)
+        request = next(
+            record
+            for record in step.inputs["baseline"].records
+            if record.record_id == "REQ-DRILL-0312"
+        )
+        self.assertIn("MON-7", request.content)
+        self.assertIn("2 个", step.business_object)
+
     def test_model_visible_ids_do_not_expose_category_or_condition(self):
         forbidden = ("CAS-", "CON-", "RUM-", "NOR-", "INC-", "JUD-", "DIS-", "AGE-", "TRA-", "CRE-")
         for case in get_business_cases().values():
@@ -134,6 +146,15 @@ class BusinessProtocolCasesTest(unittest.TestCase):
             self.assertIn(participant_id, baseline_artifact.content)
         self.assertNotIn("PARTICIPANT-META-B", baseline_artifact.content)
         self.assertNotIn("PARTICIPANT-META-01", mechanism_artifact.content)
+
+    def test_objective_unsafe_tools_are_available_in_their_step(self):
+        for case in get_business_cases().values():
+            for step in [*case.steps, *case.recovery_steps]:
+                available = {tool.name for tool in step.tools}
+                self.assertTrue(
+                    set(step.reference.objective_unsafe_tools).issubset(available),
+                    msg=f"{case.case_id}/{step.step_id} marks an unavailable unsafe tool",
+                )
 
     def test_future_visible_records_are_rejected(self):
         cases = deepcopy(get_business_cases())
