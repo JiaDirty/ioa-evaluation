@@ -317,6 +317,9 @@ class OpenAIClient(BaseLLMClient):
             "top_p": kwargs.get("top_p", 1.0),
             "max_completion_tokens": self._requested_completion_tokens(kwargs),
         }
+        seed = kwargs.get("seed")
+        if seed is not None:
+            request_kwargs["seed"] = seed
         if response_format is not None:
             request_kwargs["response_format"] = _response_format_payload(
                 response_format
