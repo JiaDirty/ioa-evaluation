@@ -101,6 +101,7 @@ def main() -> int:
         "--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT
     )
     parser.add_argument("--timeout", type=int, default=600)
+    parser.add_argument("--retry-count", type=int, default=2)
     args = parser.parse_args()
 
     base_config = load_agent_llm_config()
@@ -114,7 +115,7 @@ def main() -> int:
         max_completion_tokens=16384,
         context_window_tokens=base_config.context_window_tokens,
         model_max_completion_tokens=16384,
-        retry_count=2,
+        retry_count=args.retry_count,
         retry_delay=2.0,
         timeout=args.timeout,
     )
