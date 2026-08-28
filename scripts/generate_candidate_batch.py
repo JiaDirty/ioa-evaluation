@@ -93,6 +93,11 @@ def main() -> int:
     parser.add_argument("--batch-id", required=True)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument(
+        "--reasoning-effort",
+        default=None,
+        help="思考强度：none/minimal/low/medium/high/max，按模型支持情况选择",
+    )
+    parser.add_argument(
         "--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT
     )
     parser.add_argument("--timeout", type=int, default=600)
@@ -157,6 +162,7 @@ def main() -> int:
             top_p=1.0,
             max_completion_tokens=16384,
             seed=args.seed,
+            reasoning_effort=args.reasoning_effort,
         )
     except Exception as exc:
         raw_request_path.write_text(
@@ -212,6 +218,7 @@ def main() -> int:
         "category": args.category,
         "batch_id": args.batch_id,
         "seed": args.seed,
+        "reasoning_effort": args.reasoning_effort,
         "generation_status": batch.generation_status,
         "case_count": len(batch.cases),
         "usage": client.last_usage,

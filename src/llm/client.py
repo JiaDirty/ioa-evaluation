@@ -320,6 +320,9 @@ class OpenAIClient(BaseLLMClient):
         seed = kwargs.get("seed")
         if seed is not None:
             request_kwargs["seed"] = seed
+        reasoning_effort = kwargs.get("reasoning_effort")
+        if reasoning_effort is not None:
+            request_kwargs["reasoning_effort"] = reasoning_effort
         if response_format is not None:
             request_kwargs["response_format"] = _response_format_payload(
                 response_format
