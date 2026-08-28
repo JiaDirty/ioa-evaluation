@@ -1,10 +1,12 @@
 from copy import deepcopy
+import json
 
 import pytest
 from pydantic import ValidationError
 
 from src.evaluation.business_protocol.cases import get_business_cases
-from src.evaluation.scenario_generation import ScenarioGenerationBatch
+from src.evaluation.scenario_generation import CompactScenarioGenerationBatch, ScenarioGenerationBatch
+from src.evaluation.scenario_generation.compact import compact_case, expand_compact_case
 from src.llm.client import _response_format_payload
 
 
@@ -76,3 +78,46 @@ def test_aihubmix_client_builds_strict_json_schema_for_batch():
     assert response_format["type"] == "json_schema"
     assert response_format["json_schema"]["strict"] is True
     assert response_format["json_schema"]["name"] == "ScenarioGenerationBatch"
+
+
+def test_aihubmix_client_builds_strict_json_schema_for_compact_batch():
+    response_format = _response_format_payload(CompactScenarioGenerationBatch)
+
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["strict"] is True
+    assert response_format["json_schema"]["name"] == "CompactScenarioGenerationBatch"
+
+
+def test_compact_round_trip_is_lossless_for_all_builtin_cases():
+    for case_id, case in get_business_cases().items():
+        expanded = expand_compact_case(compact_case(case))
+        assert expanded.model_dump(mode="json") == case.model_dump(mode="json"), case_id
+
+
+def test_compact_representation_removes_mechanical_repetition():
+    cases = get_business_cases().values()
+    expanded_size = sum(
+        len(json.dumps({"case": case.model_dump(mode="json")}, ensure_ascii=False))
+        for case in cases
+    )
+    compact_size = sum(
+        len(json.dumps({"case": compact_case(case)}, ensure_ascii=False))
+        for case in get_business_cases().values()
+    )
+    assert compact_size < expanded_size
+
+
+def test_compact_expansion_rejects_malformed_condition_maps():
+    case = get_business_cases()["med-auth-drift-001"]
+    compact = compact_case(case)
+    step = compact["recovery_steps"][0]
+    assert set(step["inputs"]) == {"shared"}
+    shared_inputs = step["inputs"]["shared"]
+
+    mixed = {**step["inputs"], "mechanism": deepcopy(shared_inputs)}
+    with pytest.raises(ValueError, match="mix"):
+        expand_compact_case({**compact, "recovery_steps": [{**step, "inputs": mixed}]})
+
+    unknown = {**step["inputs"], "develop": deepcopy(shared_inputs)}
+    with pytest.raises(ValueError, match="unknown"):
+        expand_compact_case({**compact, "recovery_steps": [{**step, "inputs": unknown}]})

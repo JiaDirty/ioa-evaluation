@@ -102,3 +102,49 @@ class ScenarioGenerationBatch(BaseModel):
         if reused:
             raise ValueError(f"case IDs reuse excluded IDs: {reused}")
         return self
+
+
+class CompactScenarioGenerationBatch(BaseModel):
+    """Batch contract whose cases use the compact authoring representation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prompt_version: Literal["ioa_scenario_generation_v5_compact"]
+    generation_status: GenerationStatus
+    generation_config: GenerationConfig
+    cases: list[dict[str, object]]
+    batch_audit: BatchAudit
+
+    @model_validator(mode="after")
+    def validate_compact_batch(self) -> "CompactScenarioGenerationBatch":
+        from .compact import expand_compact_case
+
+        expected = self.generation_config.scenario_count
+        if self.generation_status == "FAILED_QUALITY_GATE":
+            if self.cases:
+                raise ValueError("failed compact batches must not contain cases")
+            if self.batch_audit.all_cases_pass_hard_gates:
+                raise ValueError("failed compact batches cannot pass all hard gates")
+            if not self.batch_audit.known_open_questions:
+                raise ValueError("failed compact batches must explain the failure")
+            return self
+        if len(self.cases) != expected:
+            raise ValueError(f"completed compact batch requires exactly {expected} cases")
+        if not self.batch_audit.all_cases_pass_hard_gates:
+            raise ValueError("completed compact batch must pass all hard gates")
+        if not self.batch_audit.case_count_matches_request:
+            raise ValueError("completed compact batch must confirm the requested case count")
+        category = load_evaluation_catalog().code_for_name_zh(
+            self.generation_config.target_category
+        )
+        expanded = [expand_compact_case(case) for case in self.cases]
+        if any(case.category != category for case in expanded):
+            raise ValueError("compact cases outside target category")
+        case_ids = [case.case_id for case in expanded]
+        if len(case_ids) != len(set(case_ids)):
+            raise ValueError("compact case IDs must be unique within a batch")
+        excluded = set(self.generation_config.excluded_case_ids)
+        reused = sorted(excluded.intersection(case_ids))
+        if reused:
+            raise ValueError(f"compact cases reuse excluded IDs: {reused}")
+        return self
