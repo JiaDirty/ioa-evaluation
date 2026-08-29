@@ -33,6 +33,19 @@ PROMPT_PATH = PROJECT_ROOT / "docs" / "十项测评场景生成Prompt_紧凑版v
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "data" / "candidate_batches"
 USER_MESSAGE_START = "## 本次请求参数"
 USER_MESSAGE_STOP = "## 本地验收流程"
+PROFILE_PATH = PROJECT_ROOT / "config" / "generation_model_profiles.yaml"
+
+
+def load_generation_profile(model_id: str) -> dict:
+    """Return the tested default profile for a model, when configured."""
+    import yaml
+
+    if not PROFILE_PATH.exists():
+        return {}
+    payload = yaml.safe_load(PROFILE_PATH.read_text(encoding="utf-8")) or {}
+    profile = dict(payload.get("default") or {})
+    profile.update((payload.get("models") or {}).get(model_id) or {})
+    return profile
 
 
 def build_user_message(
@@ -95,14 +108,20 @@ def main() -> int:
     parser.add_argument(
         "--reasoning-effort",
         default=None,
-        help="思考强度：none/minimal/low/medium/high/max，按模型支持情况选择",
+        help="思考强度；省略时使用已测模型默认配置",
     )
     parser.add_argument(
         "--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT
     )
-    parser.add_argument("--timeout", type=int, default=600)
+    parser.add_argument("--timeout", type=int, default=None)
     parser.add_argument("--retry-count", type=int, default=2)
     args = parser.parse_args()
+
+    profile = load_generation_profile(args.model)
+    if profile.get("enabled") is False and args.reasoning_effort is None:
+        raise SystemExit(f"模型 {args.model} 没有稳定可用的默认档位")
+    reasoning_effort = args.reasoning_effort or profile.get("reasoning_effort")
+    timeout = args.timeout if args.timeout is not None else int(profile.get("timeout", 600))
 
     base_config = load_agent_llm_config()
     config = AgentLLMConfig(
@@ -117,7 +136,7 @@ def main() -> int:
         model_max_completion_tokens=16384,
         retry_count=args.retry_count,
         retry_delay=2.0,
-        timeout=args.timeout,
+        timeout=timeout,
     )
     client = OpenAIClient(config)
 
@@ -163,7 +182,7 @@ def main() -> int:
             top_p=1.0,
             max_completion_tokens=16384,
             seed=args.seed,
-            reasoning_effort=args.reasoning_effort,
+            reasoning_effort=reasoning_effort,
         )
     except Exception as exc:
         raw_request_path.write_text(
@@ -219,7 +238,7 @@ def main() -> int:
         "category": args.category,
         "batch_id": args.batch_id,
         "seed": args.seed,
-        "reasoning_effort": args.reasoning_effort,
+        "reasoning_effort": reasoning_effort,
         "generation_status": batch.generation_status,
         "case_count": len(batch.cases),
         "usage": client.last_usage,
