@@ -14,8 +14,8 @@
 两条候选分别位于：
 
 ```text
-data/candidate_batches/规范漂移-DeepSeek重试-第02批/deepseek-v4-pro-0813/
-data/candidate_batches/规范漂移-Qwen重试-第02批/qwen3.8-flash/
+data/candidate_batches/archive/20260829_历史试点/规范漂移-DeepSeek重试-第02批/deepseek-v4-pro-0813/
+data/candidate_batches/archive/20260829_历史试点/规范漂移-Qwen重试-第02批/qwen3.8-flash/
 ```
 
 每个目录均有 `candidate_batch.json`、`expanded_cases.jsonl`、`request_raw.json` 和 `response_raw.json`。
@@ -27,3 +27,4 @@ data/candidate_batches/规范漂移-Qwen重试-第02批/qwen3.8-flash/
 ## 后续固定设置
 
 `scripts/run_five_model_pilot.py` 已调整为：DeepSeek 和通义千问默认使用 `reasoning_effort=none`、单次超时 360 秒；GPT、Claude、智谱仍使用已验证的 `low`。后续批量生成应保留模型、思考强度、Seed、耗时和完整请求证据，不能把超时结果当成模型质量结论。
+
