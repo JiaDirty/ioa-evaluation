@@ -20,6 +20,13 @@ _STEP_OPTIONAL_DEFAULTS = {
     "current_times": {},
     "metadata": {},
 }
+_EXECUTION_PLAN_DEFAULT = {
+    "pairing": "independent",
+    "shared_prefix_step_ids": [],
+    "baseline_state_overrides": {},
+    "recovery_policy": "on_mechanism_unsafe",
+    "recovery_step_ids": None,
+}
 
 
 def _stable(value: Any) -> str:
@@ -77,6 +84,8 @@ def compact_case(case: BusinessCaseSpec | dict[str, Any]) -> dict[str, Any]:
         if isinstance(case, BusinessCaseSpec)
         else deepcopy(case)
     )
+    if source.get("execution_plan") == _EXECUTION_PLAN_DEFAULT:
+        source.pop("execution_plan", None)
     generic_scored = bool(source.get("scoring_contract"))
     for flow_name in ("steps", "recovery_steps"):
         input_conditions = (

@@ -227,6 +227,51 @@ class AgentStepSpec(BaseModel):
         return [tool for tool in self.tools if tool.is_available(condition)]
 
 
+class ExecutionPlan(BaseModel):
+    """Data-declared pairing and recovery policy for one scenario."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pairing: Literal["independent", "shared_prefix"] = "independent"
+    shared_prefix_step_ids: list[str] = Field(default_factory=list)
+    baseline_state_overrides: dict[str, Any] = Field(default_factory=dict)
+    recovery_policy: Literal["on_mechanism_unsafe", "always", "never"] = (
+        "on_mechanism_unsafe"
+    )
+    recovery_step_ids: list[str] | None = None
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> "ExecutionPlan":
+        if self.pairing == "independent" and self.shared_prefix_step_ids:
+            raise ValueError(
+                "shared_prefix_step_ids require pairing='shared_prefix'"
+            )
+        if self.pairing == "shared_prefix" and not self.shared_prefix_step_ids:
+            raise ValueError(
+                "pairing='shared_prefix' requires at least one shared prefix step"
+            )
+        if self.pairing == "independent" and self.baseline_state_overrides:
+            raise ValueError(
+                "baseline_state_overrides require pairing='shared_prefix'"
+            )
+        invalid_paths = [
+            path for path in self.baseline_state_overrides
+            if not PATH_PATTERN.fullmatch(path)
+        ]
+        if invalid_paths:
+            raise ValueError(
+                f"baseline_state_overrides must use dotted state paths: {invalid_paths}"
+            )
+        if len(self.shared_prefix_step_ids) != len(set(self.shared_prefix_step_ids)):
+            raise ValueError("shared_prefix_step_ids must be unique")
+        if self.recovery_step_ids is not None:
+            if not self.recovery_step_ids:
+                raise ValueError("recovery_step_ids cannot be empty when provided")
+            if len(self.recovery_step_ids) != len(set(self.recovery_step_ids)):
+                raise ValueError("recovery_step_ids must be unique")
+        return self
+
+
 class BusinessCaseSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -238,6 +283,7 @@ class BusinessCaseSpec(BaseModel):
     recovery_steps: list[AgentStepSpec] = Field(default_factory=list)
     initial_state: dict[Condition, dict[str, Any]] = Field(default_factory=dict)
     scoring_contract: GenericScoringContract | None = None
+    execution_plan: ExecutionPlan = Field(default_factory=ExecutionPlan)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("category", mode="before")
@@ -255,6 +301,45 @@ class BusinessCaseSpec(BaseModel):
         from .scoring_contract import validate_scoring_contract_for_case
 
         validate_scoring_contract_for_case(self)
+        main_ids = [step.step_id for step in self.steps]
+        prefix_ids = self.execution_plan.shared_prefix_step_ids
+        if prefix_ids and main_ids[: len(prefix_ids)] != prefix_ids:
+            raise ValueError(
+                "execution plan shared_prefix_step_ids must be a contiguous prefix of steps"
+            )
+        if self.execution_plan.recovery_step_ids is not None:
+            recovery_ids = {step.step_id for step in self.recovery_steps}
+            unknown = sorted(set(self.execution_plan.recovery_step_ids) - recovery_ids)
+            if unknown:
+                raise ValueError(
+                    f"execution plan references unknown recovery steps: {unknown}"
+                )
+        known_state_roots = {
+            str(key)
+            for condition_state in self.initial_state.values()
+            for key in condition_state
+        }
+        for step in [*self.steps, *self.recovery_steps]:
+            for tool in step.tools:
+                known_state_roots.update(
+                    str(key)
+                    for update in tool.state_updates.values()
+                    for key in update
+                )
+                known_state_roots.update(
+                    binding.target_path.split(".", 1)[0]
+                    for binding in tool.state_bindings
+                )
+        unknown_override_roots = sorted(
+            path.split(".", 1)[0]
+            for path in self.execution_plan.baseline_state_overrides
+            if path.split(".", 1)[0] not in known_state_roots
+        )
+        if unknown_override_roots:
+            raise ValueError(
+                "execution plan baseline overrides unknown state roots: "
+                f"{sorted(set(unknown_override_roots))}"
+            )
         return self
 
 

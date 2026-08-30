@@ -3,14 +3,14 @@
 本目录集中保存已经退出当前主线的代码、数据、文档、测试和本机运行记录。
 
 当前项目只以根目录 `README.md`、`docs/`、`data/evaluation_catalog.yaml`、
-`src/evaluation/business_protocol/` 和 `scripts/run_ten_item_evaluation.py` 为准。
+`src/evaluation/business_protocol/` 和 `scripts/run_unified_evaluation.py` 为准。
 归档内容仅用于历史追溯和必要时恢复，不参与当前测试、运行或结果统计。
 
 ## 目录
 
 - `旧版八项数据路线/`：旧 160 条数据、专用运行器、脚本、测试和校准材料；
 - `旧版平台与十八项测评/`：早期平台、前后端、系统机制测评及退出主线的工具辅助层；
-- `历史文档/`：旧方案、旧 Prompt、旧架构、完整在线轨迹和旧开发记录；
+- `历史文档/`：旧方案、旧 Prompt、旧架构、完整在线轨迹、阶段性交接说明和旧开发记录；
 - `本机历史记录/`：被 Git 忽略的运行结果、缓存、验证工件和私有旧配置；
 - `2026-08-28_AIHubMix试点试错/`：已被正式生成管线替代的 AI Hub Mix 试点脚本（pilot v1—v5）和 Prompt 草稿；
 - `整理记录/`：本次归档范围、验证结果和恢复脚本。

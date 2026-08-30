@@ -1,13 +1,11 @@
 #!/usr/bin/env python
-"""Generate one scored compact candidate scenario batch through AI Hub Mix.
+"""Generate one concise candidate scenario through AI Hub Mix.
 
-Builds the request from docs/十项测评场景生成Prompt_紧凑版v2.md, calls the
-provider in JSON-object mode, saves the raw request/response evidence, and
-validates the batch with ``CompactScenarioGenerationBatch`` before expanding
-validated cases to the runtime JSONL representation.  Compact cases use a
-free-form shape (``shared`` vs explicit conditions), which strict JSON Schema
-cannot constrain, so the batch contract is enforced locally instead.  The
-script never writes to data/scenarios.
+The model writes business-specific facts, tools and a concise observable
+oracle.  Local code injects identity/provenance and compiles mechanical
+condition maps plus the complete ``generic_scoring_v1`` contract.  Raw
+request/response evidence is always preserved.  The script never writes to
+``data/scenarios``.
 """
 
 from __future__ import annotations
@@ -26,12 +24,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.evaluation.business_protocol.loader import load_business_cases_from_paths  # noqa: E402
 from src.evaluation.catalog import load_evaluation_catalog  # noqa: E402
-from src.evaluation.scenario_generation import CompactScenarioGenerationBatch  # noqa: E402
-from src.evaluation.scenario_generation.compact import expand_compact_case  # noqa: E402
+from src.evaluation.scenario_generation import (  # noqa: E402
+    AuthoringScenarioResponse,
+    compile_authoring_response,
+)
 from src.llm.client import OpenAIClient  # noqa: E402
 from src.llm.config import AgentLLMConfig, load_agent_llm_config  # noqa: E402
 
-PROMPT_PATH = PROJECT_ROOT / "docs" / "十项测评场景生成Prompt_紧凑版v2.md"
+PROMPT_PATH = PROJECT_ROOT / "docs" / "十项测评场景生成Prompt_作者版v3.md"
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "data" / "candidate_batches"
 USER_MESSAGE_START = "## 本次请求参数"
 USER_MESSAGE_STOP = "## 本地验收流程"
@@ -148,6 +148,12 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=None)
     parser.add_argument("--retry-count", type=int, default=2)
     parser.add_argument(
+        "--repair-attempts",
+        type=int,
+        default=1,
+        help="把本地校验错误反馈给同一模型重写完整作者 JSON 的次数",
+    )
+    parser.add_argument(
         "--max-completion-tokens", type=int, default=16384,
         help="单次生成的输出上限；超长类别可提高到 32768",
     )
@@ -203,6 +209,24 @@ def main() -> int:
     raw_response_path = batch_dir / "response_raw.json"
     raw_request_path = batch_dir / "request_raw.json"
     batch_json_path = batch_dir / "candidate_batch.json"
+    generation_context_path = batch_dir / "generation_context.json"
+    generation_context_path.write_text(
+        json.dumps(
+            {
+                "target_category": args.category,
+                "batch_id": args.batch_id,
+                "generator_model_id": args.model,
+                "generation_seed": args.seed,
+                "required_case_id": required_case_id,
+                "variant": args.variant,
+                "reasoning_effort": reasoning_effort,
+                "prompt_path": str(PROMPT_PATH),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     print(
         json.dumps(
@@ -257,37 +281,111 @@ def main() -> int:
         encoding="utf-8",
     )
 
-    try:
-        batch = CompactScenarioGenerationBatch.model_validate(json.loads(raw))
-        config_echo = batch.generation_config
-        expected_echo = {
-            "target_category": args.category,
-            "scenario_count": 1,
-            "batch_id": args.batch_id,
-            "generator_id": "aihubmix",
-            "generator_model_id": args.model,
-            "generation_seed": args.seed,
-            "required_case_id": required_case_id,
-            "excluded_case_ids": excluded_ids,
-            "excluded_scenario_count": len(excluded_ids),
-        }
-        actual_echo = {
-            key: getattr(config_echo, key)
-            for key in expected_echo
-        }
-        if actual_echo != expected_echo:
-            raise ValueError(
-                f"generation_config did not echo the request exactly: "
-                f"expected={expected_echo!r} actual={actual_echo!r}"
+    current_raw = raw
+    batch: AuthoringScenarioResponse | None = None
+    expanded = None
+    validation_error: Exception | None = None
+    attempt_evidence: list[dict[str, object]] = []
+    for repair_index in range(args.repair_attempts + 1):
+        try:
+            batch = AuthoringScenarioResponse.model_validate(json.loads(current_raw))
+            if batch.generation_status != "COMPLETED":
+                raise ValueError(
+                    "generation quality gate failed: "
+                    + "; ".join(batch.known_open_questions)
+                )
+            expanded = compile_authoring_response(
+                batch,
+                case_id=required_case_id,
+                category=args.category,
+                provenance={
+                    "generator_id": "aihubmix",
+                    "generator_model_id": args.model,
+                    "generation_seed": args.seed,
+                    "batch_id": args.batch_id,
+                    "prompt_version": batch.prompt_version,
+                },
             )
-    except Exception as exc:
-        batch_json_path.write_text(raw, encoding="utf-8")
+            validation_error = None
+            break
+        except Exception as exc:
+            validation_error = exc
+            batch_json_path.write_text(current_raw, encoding="utf-8")
+            if repair_index >= args.repair_attempts:
+                break
+            repair_message = (
+                user_message
+                + "\n\n## 本地校验失败反馈\n"
+                + "上一次输出没有进入候选集。请根据以下错误重新生成一个完整的 "
+                + "ioa_scenario_generation_v7_authoring JSON 对象。不得只输出补丁，"
+                + "不得放宽业务或判分标准，也不要解释。\n\n"
+                + f"错误：{type(exc).__name__}: {str(exc)[:4000]}\n\n"
+                + "上一次完整输出：\n"
+                + current_raw
+            )
+            repair_dir = batch_dir / "repair_attempts" / f"attempt_{repair_index + 1:02d}"
+            repair_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                current_raw = client.generate_with_system(
+                    system_message,
+                    repair_message,
+                    response_format={"type": "json_object"},
+                    temperature=0.2,
+                    top_p=1.0,
+                    max_completion_tokens=args.max_completion_tokens,
+                    seed=(args.seed + repair_index + 1) if args.seed is not None else None,
+                    reasoning_effort=reasoning_effort,
+                )
+                (repair_dir / "request_raw.json").write_text(
+                    json.dumps(client.last_request_payload, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                (repair_dir / "response_raw.json").write_text(
+                    json.dumps(client.last_response_payload, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                (repair_dir / "candidate_batch.json").write_text(
+                    current_raw, encoding="utf-8"
+                )
+                attempt_evidence.append(
+                    {
+                        "attempt": repair_index + 1,
+                        "status": "RETURNED",
+                        "usage": client.last_usage,
+                        "latency_ms": client.last_latency_ms,
+                        "path": str(repair_dir),
+                    }
+                )
+            except Exception as repair_exc:
+                validation_error = repair_exc
+                (repair_dir / "error.json").write_text(
+                    json.dumps(
+                        {"error": str(repair_exc)}, ensure_ascii=False, indent=2
+                    ),
+                    encoding="utf-8",
+                )
+                attempt_evidence.append(
+                    {
+                        "attempt": repair_index + 1,
+                        "status": "CALL_FAILED",
+                        "error": str(repair_exc),
+                        "path": str(repair_dir),
+                    }
+                )
+                break
+
+    if validation_error is not None or batch is None or expanded is None:
         print(
             json.dumps(
                 {
                     "status": "INVALID_BATCH",
                     "model": args.model,
-                    "error": str(exc)[:2000],
+                    "error": (
+                        f"{type(validation_error).__name__}: {validation_error}"
+                        if validation_error is not None
+                        else "unknown validation failure"
+                    )[:4000],
+                    "repair_attempts": attempt_evidence,
                     "usage": client.last_usage,
                     "evidence": str(batch_dir),
                 },
@@ -296,9 +394,7 @@ def main() -> int:
         )
         return 1
 
-    batch_json_path.write_text(
-        batch.model_dump_json(indent=2), encoding="utf-8"
-    )
+    batch_json_path.write_text(batch.model_dump_json(indent=2), encoding="utf-8")
 
     result: dict[str, object] = {
         "model": args.model,
@@ -307,39 +403,24 @@ def main() -> int:
         "seed": args.seed,
         "reasoning_effort": reasoning_effort,
         "generation_status": batch.generation_status,
-        "case_count": len(batch.cases),
+        "case_count": 1 if batch.case is not None else 0,
         "usage": client.last_usage,
         "latency_ms": client.last_latency_ms,
         "response_metadata": client.last_response_metadata,
         "prompt_version": batch.prompt_version,
+        "repair_attempts": attempt_evidence,
     }
-
-    if batch.generation_status != "COMPLETED":
-        result.update(
+    expanded_lines = [
+        json.dumps(
             {
-                "status": "QUALITY_GATE_FAILED",
-                "known_open_questions": batch.batch_audit.known_open_questions,
-                "evidence": str(batch_dir),
-            }
+                "schema_version": "business_case_spec_v1",
+                "case": expanded.model_dump(mode="json"),
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
         )
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 1
-
-    expanded_lines: list[str] = []
-    case_ids: list[str] = []
-    for compact_case in batch.cases:
-        expanded = expand_compact_case(compact_case)
-        case_ids.append(expanded.case_id)
-        expanded_lines.append(
-            json.dumps(
-                {
-                    "schema_version": "business_case_spec_v1",
-                    "case": expanded.model_dump(mode="json"),
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-        )
+    ]
+    case_ids = [expanded.case_id]
     expanded_path = batch_dir / "expanded_cases.jsonl"
     expanded_path.write_text("\n".join(expanded_lines) + "\n", encoding="utf-8")
     load_business_cases_from_paths([expanded_path])

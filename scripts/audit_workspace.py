@@ -17,7 +17,7 @@ from src.evaluation.business_protocol.validation import validate_case_catalog  #
 from src.evaluation.catalog import load_evaluation_catalog  # noqa: E402
 
 
-CANONICAL_PROMPT = PROJECT_ROOT / "docs" / "十项测评场景生成Prompt.md"
+CANONICAL_PROMPT = PROJECT_ROOT / "docs" / "十项测评场景生成Prompt_作者版v3.md"
 ARCHIVE_ROOT = PROJECT_ROOT / "archive"
 
 

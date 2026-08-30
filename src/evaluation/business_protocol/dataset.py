@@ -24,7 +24,7 @@ from .validation import validate_generated_case
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 LEGACY_REFERENCE_MANIFEST_PATH = PROJECT_ROOT / "data" / "legacy_reference_manifest.json"
-DatasetProfile = Literal["legacy_reference", "generic_expandable"]
+DatasetProfile = Literal["legacy_reference", "generic_expandable", "unified"]
 
 
 class DatasetCompatibilityError(ValueError):
@@ -71,8 +71,21 @@ class EvaluationDataset:
 def case_fingerprint(case: BusinessCaseSpec) -> str:
     """Hash the normalized runtime model rather than source-file formatting."""
 
+    # The execution plan was added after the original reference manifest.  An
+    # omitted plan and its default value are semantically identical, so the
+    # default is excluded to preserve the old reference hashes.  Non-default
+    # plans remain part of the fingerprint once a case opts into them.
+    dumped = case.model_dump(mode="json")
+    if dumped.get("execution_plan") == {
+        "pairing": "independent",
+        "shared_prefix_step_ids": [],
+        "baseline_state_overrides": {},
+        "recovery_policy": "on_mechanism_unsafe",
+        "recovery_step_ids": None,
+    }:
+        dumped.pop("execution_plan", None)
     canonical = json.dumps(
-        case.model_dump(mode="json"),
+        dumped,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -146,6 +159,35 @@ def validate_evaluation_dataset(
             for case in cases.values()
             if case.scoring_contract is not None
         ).items()))
+    elif profile == "unified":
+        legacy_cases = {
+            case_id: case
+            for case_id, case in cases.items()
+            if case.scoring_contract is None
+        }
+        generic_cases = {
+            case_id: case
+            for case_id, case in cases.items()
+            if case.scoring_contract is not None
+        }
+        if legacy_cases:
+            _validate_legacy_reference_cases(legacy_cases, require_complete=False)
+        if generic_cases:
+            _validate_generic_expandable_cases(generic_cases)
+        versions = dict(
+            sorted(
+                {
+                    **({"legacy_fixed_rules_v1": len(legacy_cases)} if legacy_cases else {}),
+                    **dict(
+                        Counter(
+                            case.scoring_contract.contract_version
+                            for case in generic_cases.values()
+                            if case.scoring_contract is not None
+                        )
+                    ),
+                }.items()
+            )
+        )
     else:  # pragma: no cover - callers and CLI constrain this value
         raise DatasetCompatibilityError(f"unknown dataset profile: {profile}")
     catalog = load_evaluation_catalog()

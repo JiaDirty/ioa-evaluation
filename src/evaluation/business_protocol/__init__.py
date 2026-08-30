@@ -14,7 +14,13 @@ from .loader import (
     load_business_cases,
     load_business_cases_from_paths,
 )
-from .models import AgentBusinessResult, BusinessCaseSpec, PairedCaseRunResult, StepTrace
+from .models import (
+    AgentBusinessResult,
+    BusinessCaseSpec,
+    ExecutionPlan,
+    PairedCaseRunResult,
+    StepTrace,
+)
 from .prompt import AGENT_BUSINESS_RESULT_SCHEMA, COMMON_SYSTEM_MESSAGE
 from .runner import BusinessProtocolRunner
 
@@ -23,6 +29,7 @@ __all__ = [
     "COMMON_SYSTEM_MESSAGE",
     "AgentBusinessResult",
     "BusinessCaseSpec",
+    "ExecutionPlan",
     "BusinessProtocolRunner",
     "CaseDataLoadError",
     "DatasetCompatibilityError",

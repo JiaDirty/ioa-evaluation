@@ -46,7 +46,7 @@ def configured_models(selected: list[str] | None = None) -> list[tuple[str, dict
 
 def run_one(model: str, category: str, variant: str | None, ordinal: int,
             seed: int, timeout: int, output_root: Path,
-            max_completion_tokens: int) -> dict:
+            max_completion_tokens: int, repair_attempts: int) -> dict:
     label = variant or "default"
     batch_id = f"{category}__{label}__第{ordinal:02d}条"
     evidence = output_root / batch_id / model.replace("/", "_")
@@ -56,6 +56,7 @@ def run_one(model: str, category: str, variant: str | None, ordinal: int,
     cmd = [str(PYTHON), str(GENERATOR), "--category", category,
            "--model", model, "--batch-id", batch_id, "--seed", str(seed),
            "--timeout", str(timeout), "--retry-count", "0",
+           "--repair-attempts", str(repair_attempts),
            "--max-completion-tokens", str(max_completion_tokens),
            "--output-root", str(output_root)]
     if variant:
@@ -64,7 +65,7 @@ def run_one(model: str, category: str, variant: str | None, ordinal: int,
     try:
         proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True,
                               encoding="utf-8", errors="replace",
-                              timeout=timeout + 120)
+                              timeout=timeout * (repair_attempts + 1) + 120)
     except subprocess.TimeoutExpired:
         return {"status": "DRIVER_TIMEOUT", "model": model, "category": category,
                 "variant": variant, "ordinal": ordinal, "batch_id": batch_id,
@@ -80,6 +81,7 @@ def run_one(model: str, category: str, variant: str | None, ordinal: int,
     return {"status": status, "model": model, "category": category,
             "variant": variant, "ordinal": ordinal, "batch_id": batch_id,
             "returncode": proc.returncode, "started_at": started,
+            "stdout_tail": (proc.stdout or "")[-3000:],
             "stderr_tail": (proc.stderr or "")[-1000:]}
 
 
@@ -90,6 +92,7 @@ def main() -> int:
     ap.add_argument("--timeout", type=int, default=600)
     ap.add_argument("--seed", type=int, default=2026082903)
     ap.add_argument("--max-completion-tokens", type=int, default=16384)
+    ap.add_argument("--repair-attempts", type=int, default=1)
     ap.add_argument(
         "--models", nargs="+", default=None,
         help="只运行指定且已启用的生成模型；省略时运行全部已启用模型",
@@ -106,7 +109,7 @@ def main() -> int:
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
         futures = [pool.submit(run_one, model, category, variant, ordinal,
                                 args.seed + ordinal, args.timeout, args.output_root,
-                                args.max_completion_tokens)
+                                args.max_completion_tokens, args.repair_attempts)
                    for model, category, variant, ordinal in jobs]
         for f in concurrent.futures.as_completed(futures):
             result = f.result(); results.append(result)

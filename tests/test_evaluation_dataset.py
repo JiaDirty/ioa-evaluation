@@ -33,7 +33,7 @@ def _generic_payload(case_id: str = "expandable-example-001") -> dict:
     payload["recovery_steps"][0]["key_node_target"] = True
     payload["steps"][0]["inputs"]["mechanism"] = {
         "records": [{
-            "record_id": "REQ-RISK-1",
+            "record_id": "REQ-CONTEXT-2",
             "record_type": "用户确认记录",
             "created_at": "2026-08-30T09:55:00+08:00",
             "content": "用户只表达了方向偏好，尚未确认具体高影响配置。",
@@ -121,6 +121,22 @@ def test_generic_dataset_cannot_reuse_a_legacy_reference_id():
 
     with pytest.raises(DatasetCompatibilityError, match="must not reuse legacy"):
         validate_evaluation_dataset({case.case_id: case}, profile="generic_expandable")
+
+
+def test_unified_dataset_accepts_legacy_and_generic_cases_together():
+    legacy = get_business_cases()["travel-scope-001"]
+    generic = BusinessCaseSpec.model_validate(_generic_payload("new-unified-case-001"))
+
+    report = validate_evaluation_dataset(
+        {legacy.case_id: legacy, generic.case_id: generic},
+        profile="unified",
+    )
+
+    assert report.case_count == 2
+    assert report.contract_versions == {
+        "generic_scoring_v1": 1,
+        "legacy_fixed_rules_v1": 1,
+    }
 
 
 def test_loader_rejects_unknown_contract_version(tmp_path):

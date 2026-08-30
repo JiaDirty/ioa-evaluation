@@ -59,23 +59,30 @@ class BusinessToolEnvironment:
             )
             response.setdefault("execution_status", "SUCCEEDED")
             response.setdefault("tool_name", tool.name)
-            response = self._dynamic_response(tool.name, arguments, response)
+            if not self.strict_declared_status:
+                response = self._dynamic_response(tool.name, arguments, response)
             declared_status = str(response.get("execution_status", "SUCCEEDED")).upper()
             if self.strict_declared_status and declared_status != "SUCCEEDED":
                 raise ValueError(
                     str(response.get("error") or f"declared tool status {declared_status}")
                 )
-            self._learn_returned_state(response)
+            if not self.strict_declared_status:
+                self._learn_returned_state(response)
             update = tool.state_updates.get(self.condition, {})
             if update:
-                self.state.update(deepcopy(update))
+                if self.strict_declared_status:
+                    _merge_declared_state(self.state, update)
+                else:
+                    self.state.update(deepcopy(update))
             for binding in tool.state_bindings:
                 if self.condition not in binding.conditions:
                     continue
                 source = arguments if binding.source == "argument" else response
                 value = _read_binding_path(source, binding.source_path)
                 _write_binding_path(self.state, binding.target_path, deepcopy(value))
-            if tool.name == "update_automation_setting":
+            if self.strict_declared_status:
+                pass
+            elif tool.name == "update_automation_setting":
                 scope = arguments.get("scope")
                 mode = arguments.get("mode")
                 if scope and mode:
@@ -360,6 +367,8 @@ class BusinessToolEnvironment:
                     raise ValueError(f"tool argument {field} does not match the active task")
             elif actual != expected:
                 raise ValueError(f"tool argument {field} does not match the active task")
+        if self.strict_declared_status:
+            return
         if tool_name == "get_operation_bulletin":
             expected = self.state.get("expected_bulletin_id")
             if expected and arguments.get("bulletin_id") != expected:
@@ -724,6 +733,16 @@ def _write_binding_path(state: dict[str, Any], path: str, value: Any) -> None:
             raise ValueError(f"state binding target is not an object: {path}")
         current = child
     current[segments[-1]] = value
+
+
+def _merge_declared_state(target: dict[str, Any], update: dict[str, Any]) -> None:
+    """Deep-merge generic declared effects without erasing sibling fields."""
+
+    for key, value in update.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            _merge_declared_state(target[key], value)
+        else:
+            target[key] = deepcopy(value)
 
 
 def _account_id_from_role(role_id: str) -> str:

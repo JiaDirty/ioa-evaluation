@@ -370,18 +370,34 @@ class BusinessProtocolRunner:
         case: BusinessCaseSpec,
         run_level: RunLevel,
     ) -> PairedCaseRunResult:
-        baseline = await self.run_case(case, "baseline", run_level=run_level)
-        mechanism = await self.run_case(case, "mechanism", run_level=run_level)
-        if mechanism.impact_outcome != "UNSAFE" or not case.recovery_steps:
+        plan = case.execution_plan
+        if (
+            run_level == "full_chain"
+            and plan.pairing == "shared_prefix"
+            and plan.shared_prefix_step_ids
+        ):
+            baseline, mechanism = await self._run_generic_shared_prefix_pair(
+                case, plan.shared_prefix_step_ids, plan.baseline_state_overrides
+            )
+        else:
+            baseline = await self.run_case(case, "baseline", run_level=run_level)
+            mechanism = await self.run_case(case, "mechanism", run_level=run_level)
+
+        recovery_steps = self._planned_recovery_steps(case)
+        should_recover = plan.recovery_policy == "always" or (
+            plan.recovery_policy == "on_mechanism_unsafe"
+            and mechanism.impact_outcome == "UNSAFE"
+        )
+        if not should_recover or not recovery_steps:
             recovery = _empty_recovery(case, run_level, mechanism)
         elif run_level == "key_node":
-            recovery = await self._run_key_node_recovery(case, mechanism)
+            recovery = await self._run_key_node_recovery(case, mechanism, recovery_steps)
         else:
             recovery_context = _SequenceContext(state=deepcopy(mechanism.final_state))
             await self._run_full_sequence(
                 case,
                 "recovery",
-                list(enumerate(case.recovery_steps, start=len(case.steps))),
+                list(enumerate(recovery_steps, start=len(case.steps))),
                 recovery_context,
             )
             recovery = _result_from_context(case, "recovery", recovery_context)
@@ -392,18 +408,70 @@ class BusinessProtocolRunner:
             baseline=baseline,
             mechanism=mechanism,
             recovery=recovery,
+            shared_prefix_step_count=len(plan.shared_prefix_step_ids),
         )
+
+    async def _run_generic_shared_prefix_pair(
+        self,
+        case: BusinessCaseSpec,
+        prefix_step_ids: list[str],
+        baseline_state_overrides: dict[str, Any],
+    ) -> tuple[CaseRunResult, CaseRunResult]:
+        """Run a declared common history once, then fork baseline and mechanism."""
+        prefix_length = len(prefix_step_ids)
+        prefix = _SequenceContext(
+            state=deepcopy(case.initial_state.get("mechanism", {}))
+        )
+        await self._run_full_sequence(
+            case,
+            "mechanism",
+            list(enumerate(case.steps[:prefix_length])),
+            prefix,
+        )
+        for trace in prefix.traces:
+            trace.outcome_relevant = False
+
+        mechanism_context = deepcopy(prefix)
+        await self._run_full_sequence(
+            case,
+            "mechanism",
+            list(enumerate(case.steps[prefix_length:], start=prefix_length)),
+            mechanism_context,
+        )
+        mechanism = _result_from_context(case, "mechanism", mechanism_context)
+
+        baseline_context = deepcopy(prefix)
+        _deep_merge(baseline_context.state, baseline_state_overrides)
+        baseline_context.traces = _clone_traces_for_condition(
+            prefix.traces, "baseline"
+        )
+        await self._run_full_sequence(
+            case,
+            "baseline",
+            list(enumerate(case.steps[prefix_length:], start=prefix_length)),
+            baseline_context,
+        )
+        baseline = _result_from_context(case, "baseline", baseline_context)
+        return baseline, mechanism
+
+    def _planned_recovery_steps(self, case: BusinessCaseSpec) -> list[AgentStepSpec]:
+        selected_ids = case.execution_plan.recovery_step_ids
+        if selected_ids is None:
+            return list(case.recovery_steps)
+        steps_by_id = {step.step_id: step for step in case.recovery_steps}
+        return [steps_by_id[step_id] for step_id in selected_ids]
 
     async def _run_key_node_recovery(
         self,
         case: BusinessCaseSpec,
         mechanism: CaseRunResult,
+        recovery_steps: list[AgentStepSpec] | None = None,
     ) -> CaseRunResult:
         """Run dedicated recovery agents from matching mechanism snapshots."""
         mechanism_states = mechanism.final_state.get("key_node_states", {})
         recovery_state = {"key_node_states": {}}
         traces: list[StepTrace] = []
-        for step in case.recovery_steps:
+        for step in recovery_steps if recovery_steps is not None else case.recovery_steps:
             if not step.key_node_target:
                 continue
             source_step_ids = step.metadata.get("recovery_source_step_ids", [])
@@ -744,6 +812,15 @@ def _parse_arguments(raw: Any) -> dict[str, Any]:
     return parsed
 
 
+def _deep_merge(target: dict[str, Any], patch: dict[str, Any]) -> None:
+    """Merge declared baseline overrides without replacing sibling state."""
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            _deep_merge(target[key], value)
+        else:
+            target[key] = deepcopy(value)
+
+
 def _merge_key_node_states(
     base_state: dict[str, Any],
     source_states: list[dict[str, Any]],
@@ -859,6 +936,10 @@ def _clone_traces_for_condition(
     cloned = deepcopy(traces)
     for trace in cloned:
         trace.condition = condition
+        # A shared prefix is deliberately identical in both arms.  Its tool
+        # decisions must remain visible for audit, but must not decide the
+        # baseline/mechanism safety comparison a second time.
+        trace.outcome_relevant = False
     return cloned
 
 

@@ -27,6 +27,10 @@ GENERATED_FORBIDDEN_MARKERS = (
 CATEGORY_ID_PATTERN = re.compile(
     rf"(?<![A-Za-z0-9])({'|'.join(TEN_CATEGORY_CODES)})(?![A-Za-z0-9])"
 )
+CONDITION_IDENTIFIER_PATTERN = re.compile(
+    r"(?:^|[-_.])(baseline|mechanism|risk|safe|unsafe)(?:$|[-_.])",
+    re.IGNORECASE,
+)
 EXPECTED_CATEGORIES = set(TEN_CATEGORY_CODES)
 
 
@@ -76,6 +80,10 @@ def validate_generated_case(case: BusinessCaseSpec) -> None:
                         raise ValueError(
                             f"generated step {step.step_id}/{condition} has future-visible item {item.created_at}"
                         )
+                    _reject_condition_identifier(
+                        item.model_dump(mode="json"),
+                        f"{step.step_id}/{condition}/input",
+                    )
                 visible = build_user_message(step, condition)
                 _reject_generated_leak(visible, f"{step.step_id}/{condition}/prompt")
             for tool in step.tools:
@@ -86,6 +94,10 @@ def validate_generated_case(case: BusinessCaseSpec) -> None:
                 for condition, response in tool.responses.items():
                     _reject_generated_leak(
                         json.dumps(response, ensure_ascii=False),
+                        f"{step.step_id}/{tool.name}/{condition}/response",
+                    )
+                    _reject_condition_identifier(
+                        response,
                         f"{step.step_id}/{tool.name}/{condition}/response",
                     )
                     status = str(response.get("execution_status", "SUCCEEDED")).upper()
@@ -127,6 +139,32 @@ def _reject_generated_leak(value: str, location: str) -> None:
     for marker in GENERATED_FORBIDDEN_MARKERS:
         if marker.lower() in normalized:
             raise ValueError(f"generated model-visible leakage in {location}: {marker}")
+
+
+def _reject_condition_identifier(value: object, location: str, key: str = "") -> None:
+    if isinstance(value, dict):
+        for child_key, child in value.items():
+            _reject_condition_identifier(child, location, str(child_key))
+        return
+    if isinstance(value, list):
+        for child in value:
+            _reject_condition_identifier(child, location, key)
+        return
+    if not isinstance(value, str):
+        return
+    identifier_key = (
+        key.endswith(("_id", "_ids", "_refs"))
+        and key not in {"role_id", "producer_role_id"}
+    ) or key in {
+        "record_id",
+        "artifact_id",
+        "source_refs",
+        "evidence_refs",
+    }
+    if identifier_key and CONDITION_IDENTIFIER_PATTERN.search(value):
+        raise ValueError(
+            f"generated model-visible condition label in identifier at {location}: {value}"
+        )
 
 
 def _has_full_chain_causal_contrast(case: BusinessCaseSpec) -> bool:

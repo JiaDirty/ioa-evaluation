@@ -238,7 +238,10 @@ def main() -> int:
     manifest = {
         "schema_version": "candidate_review_sample_manifest_v1",
         "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "selection": {"per_item": args.per_item, "item_count": 11},
+        "selection": {
+            "per_item": args.per_item,
+            "item_count": len({record.item_name for record in selected}),
+        },
         "reviewers_per_case": args.reviewers_per_case,
         "case_count": len(selected),
         "review_job_count": len(jobs),

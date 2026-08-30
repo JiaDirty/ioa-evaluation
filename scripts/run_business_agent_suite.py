@@ -62,11 +62,12 @@ def build_parser(
     parser.add_argument("--case-id", default="all")
     parser.add_argument(
         "--dataset-profile",
-        choices=["legacy_reference", "generic_expandable"],
+        choices=["legacy_reference", "generic_expandable", "unified"],
         default=default_dataset_profile,
         help=(
             "legacy_reference accepts only the hash-locked original 11 cases; "
-            "generic_expandable requires a generic_scoring_v1 contract on every case."
+            "generic_expandable requires a generic_scoring_v1 contract on every case; "
+            "unified accepts a validated mixture during migration."
         ),
     )
     parser.add_argument(
