@@ -126,6 +126,10 @@ def main() -> int:
     )
     parser.add_argument("--timeout", type=int, default=None)
     parser.add_argument("--retry-count", type=int, default=2)
+    parser.add_argument(
+        "--max-completion-tokens", type=int, default=16384,
+        help="单次生成的输出上限；超长类别可提高到 32768",
+    )
     args = parser.parse_args()
 
     profile = load_generation_profile(args.model)
@@ -142,9 +146,9 @@ def main() -> int:
         base_url=base_config.base_url,
         temperature=0.3,
         top_p=1.0,
-        max_completion_tokens=16384,
+        max_completion_tokens=args.max_completion_tokens,
         context_window_tokens=base_config.context_window_tokens,
-        model_max_completion_tokens=16384,
+        model_max_completion_tokens=args.max_completion_tokens,
         retry_count=args.retry_count,
         retry_delay=2.0,
         timeout=timeout,
@@ -192,7 +196,7 @@ def main() -> int:
             response_format={"type": "json_object"},
             temperature=0.3,
             top_p=1.0,
-            max_completion_tokens=16384,
+            max_completion_tokens=args.max_completion_tokens,
             seed=args.seed,
             reasoning_effort=reasoning_effort,
         )

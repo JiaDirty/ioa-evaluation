@@ -120,6 +120,22 @@ class LLMClientConfigTest(unittest.TestCase):
         with self.assertRaisesRegex(LLMError, "model cap"):
             client.generate("short", max_completion_tokens=16385)
 
+    def test_configured_model_cap_can_exceed_default(self):
+        client = OpenAIClient(JudgeLLMConfig(
+            api_key="test-key",
+            model_max_completion_tokens=32768,
+        ))
+        completions = _CapturingCompletions()
+        client.client = SimpleNamespace(
+            chat=SimpleNamespace(completions=completions)
+        )
+
+        client.generate("short", max_completion_tokens=32768)
+
+        self.assertEqual(
+            completions.kwargs["max_completion_tokens"], 32768
+        )
+
     def test_recorded_provider_payload_redacts_credentials_and_headers(self):
         snapshot = _safe_payload_snapshot({
             "api_key": "plain-key",

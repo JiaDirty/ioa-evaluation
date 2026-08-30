@@ -153,14 +153,11 @@ class OpenAIClient(BaseLLMClient):
             int(getattr(config, "context_window_tokens", DEFAULT_CONTEXT_WINDOW_TOKENS)),
             DEFAULT_CONTEXT_WINDOW_TOKENS,
         )
-        self.model_max_completion_tokens = min(
-            int(getattr(
-                config,
-                "model_max_completion_tokens",
-                DEFAULT_MODEL_MAX_COMPLETION_TOKENS,
-            )),
+        self.model_max_completion_tokens = int(getattr(
+            config,
+            "model_max_completion_tokens",
             DEFAULT_MODEL_MAX_COMPLETION_TOKENS,
-        )
+        ))
         if self.context_window_tokens <= 0:
             raise LLMError("context_window_tokens must be positive")
         if self.model_max_completion_tokens <= 0:
