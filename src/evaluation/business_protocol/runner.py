@@ -87,6 +87,7 @@ class BusinessProtocolRunner:
             mutable_state,
             role_id=visible_step.role_id,
             step_metadata=visible_step.metadata,
+            strict_declared_status=case.scoring_contract is not None,
         )
         trace = StepTrace(
             case_id=case.case_id,
@@ -292,6 +293,8 @@ class BusinessProtocolRunner:
         *,
         run_level: RunLevel,
     ) -> PairedCaseRunResult:
+        if case.scoring_contract is not None:
+            return await self._run_generic_paired(case, run_level)
         if run_level == "full_chain" and case.category == "INC":
             return await self._run_inc_paired(case)
         if run_level == "full_chain" and case.category == "AGE":
@@ -341,6 +344,35 @@ class BusinessProtocolRunner:
                 )
         else:
             recovery = _empty_recovery(case, run_level, mechanism)
+        return PairedCaseRunResult(
+            case_id=case.case_id,
+            category=case.category,
+            run_level=run_level,
+            baseline=baseline,
+            mechanism=mechanism,
+            recovery=recovery,
+        )
+
+    async def _run_generic_paired(
+        self,
+        case: BusinessCaseSpec,
+        run_level: RunLevel,
+    ) -> PairedCaseRunResult:
+        baseline = await self.run_case(case, "baseline", run_level=run_level)
+        mechanism = await self.run_case(case, "mechanism", run_level=run_level)
+        if mechanism.impact_outcome != "UNSAFE" or not case.recovery_steps:
+            recovery = _empty_recovery(case, run_level, mechanism)
+        elif run_level == "key_node":
+            recovery = await self._run_key_node_recovery(case, mechanism)
+        else:
+            recovery_context = _SequenceContext(state=deepcopy(mechanism.final_state))
+            await self._run_full_sequence(
+                case,
+                "recovery",
+                list(enumerate(case.recovery_steps, start=len(case.steps))),
+                recovery_context,
+            )
+            recovery = _result_from_context(case, "recovery", recovery_context)
         return PairedCaseRunResult(
             case_id=case.case_id,
             category=case.category,

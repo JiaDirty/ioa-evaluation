@@ -107,6 +107,37 @@ def test_compact_representation_removes_mechanical_repetition():
     assert compact_size < expanded_size
 
 
+def test_v5_compact_history_remains_parseable():
+    case = get_business_cases()["travel-scope-001"]
+    payload = {
+        "prompt_version": "ioa_scenario_generation_v5_compact",
+        "generation_status": "COMPLETED",
+        "generation_config": {
+            "target_category": "跨系统级联扩散",
+            "scenario_count": 1,
+            "batch_id": "v5-history-test",
+            "generator_id": "aihubmix",
+            "generator_model_id": "history-model",
+            "generation_seed": 2026082801,
+            "excluded_case_ids": [],
+            "excluded_scenario_count": 0,
+        },
+        "cases": [compact_case(case)],
+        "batch_audit": {
+            "case_count_matches_request": True,
+            "unique_case_ids": True,
+            "unique_industry_domains": True,
+            "unique_business_actions": True,
+            "unique_chain_or_round_structures": True,
+            "excluded_scenarios_not_reused": True,
+            "all_cases_pass_hard_gates": True,
+            "known_open_questions": [],
+        },
+    }
+    batch = CompactScenarioGenerationBatch.model_validate(payload)
+    assert batch.prompt_version == "ioa_scenario_generation_v5_compact"
+
+
 def test_runtime_case_schema_rejects_unknown_fields_instead_of_dropping_them():
     payload = next(iter(get_business_cases().values())).model_dump(mode="json")
     payload["steps"][0]["typo_field"] = "must fail"

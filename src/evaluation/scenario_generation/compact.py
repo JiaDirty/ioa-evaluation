@@ -28,8 +28,12 @@ def _stable(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-def _collapse_conditions(value: dict[str, Any]) -> dict[str, Any]:
-    present = [value.get(c) for c in _CONDITIONS]
+def _collapse_conditions(
+    value: dict[str, Any],
+    *,
+    conditions: tuple[str, ...] = _CONDITIONS,
+) -> dict[str, Any]:
+    present = [value.get(c) for c in conditions]
     if all(item is not None for item in present) and all(
         _stable(item) == _stable(present[0]) for item in present[1:]
     ):
@@ -37,22 +41,33 @@ def _collapse_conditions(value: dict[str, Any]) -> dict[str, Any]:
     return deepcopy(value)
 
 
-def _expand_conditions(value: dict[str, Any], *, field: str) -> dict[str, Any]:
-    unknown = [key for key in value if key != "shared" and key not in _CONDITIONS]
+def _expand_conditions(
+    value: dict[str, Any],
+    *,
+    field: str,
+    conditions: tuple[str, ...] = _CONDITIONS,
+    allowed_conditions: tuple[str, ...] | None = None,
+) -> dict[str, Any]:
+    allowed = allowed_conditions or conditions
+    unknown = [key for key in value if key != "shared" and key not in allowed]
     if unknown:
         raise ValueError(f"compact {field} has unknown condition keys: {unknown}")
     shared = value.get("shared")
-    explicit = [condition for condition in _CONDITIONS if condition in value]
+    explicit = [condition for condition in allowed if condition in value]
     if shared is not None and explicit:
         raise ValueError(
             f"compact {field} must not mix 'shared' with explicit conditions: {explicit}"
         )
     if shared is not None:
-        return {condition: deepcopy(shared) for condition in _CONDITIONS}
-    missing = [condition for condition in _CONDITIONS if condition not in value]
+        return {condition: deepcopy(shared) for condition in conditions}
+    missing = [condition for condition in conditions if condition not in value]
     if missing:
         raise ValueError(f"compact {field} is missing conditions: {missing}")
-    return {condition: deepcopy(value[condition]) for condition in _CONDITIONS}
+    return {
+        condition: deepcopy(value[condition])
+        for condition in allowed
+        if condition in value
+    }
 
 
 def compact_case(case: BusinessCaseSpec | dict[str, Any]) -> dict[str, Any]:
@@ -62,34 +77,72 @@ def compact_case(case: BusinessCaseSpec | dict[str, Any]) -> dict[str, Any]:
         if isinstance(case, BusinessCaseSpec)
         else deepcopy(case)
     )
+    generic_scored = bool(source.get("scoring_contract"))
     for flow_name in ("steps", "recovery_steps"):
+        input_conditions = (
+            (("baseline", "mechanism") if flow_name == "steps" else ("recovery",))
+            if generic_scored
+            else _CONDITIONS
+        )
         for step in source.get(flow_name, []):
             for key, default in _STEP_OPTIONAL_DEFAULTS.items():
                 if step.get(key) == default:
                     step.pop(key, None)
-            step["inputs"] = _collapse_conditions(step["inputs"])
+            step["inputs"] = _collapse_conditions(
+                step["inputs"], conditions=input_conditions
+            )
             for tool in step.get("tools", []):
+                available = (
+                    tuple(tool.get("available_conditions", _CONDITIONS))
+                    if generic_scored
+                    else _CONDITIONS
+                )
                 if not tool.get("state_updates"):
                     tool.pop("state_updates", None)
                 if tool.get("available_conditions") == list(_CONDITIONS):
                     tool.pop("available_conditions", None)
                 responses = tool.get("responses", {})
                 if responses:
-                    tool["responses"] = _collapse_conditions(responses)
+                    tool["responses"] = _collapse_conditions(
+                        responses, conditions=available
+                    )
     return source
 
 
-def expand_compact_case(compact: dict[str, Any]) -> BusinessCaseSpec:
+def expand_compact_case(
+    compact: dict[str, Any],
+    *,
+    generic_scored: bool | None = None,
+) -> BusinessCaseSpec:
     """Expand and validate one compact case into the runtime contract."""
     source = deepcopy(compact)
+    if generic_scored is None:
+        generic_scored = bool(source.get("scoring_contract"))
     for flow_name in ("steps", "recovery_steps"):
+        input_conditions = (
+            (("baseline", "mechanism") if flow_name == "steps" else ("recovery",))
+            if generic_scored
+            else _CONDITIONS
+        )
         for step in source.get(flow_name, []):
-            step["inputs"] = _expand_conditions(step["inputs"], field=f"{flow_name}.inputs")
+            step["inputs"] = _expand_conditions(
+                step["inputs"],
+                field=f"{flow_name}.inputs",
+                conditions=input_conditions,
+                allowed_conditions=_CONDITIONS,
+            )
             for key, default in _STEP_OPTIONAL_DEFAULTS.items():
                 step.setdefault(key, deepcopy(default))
             for tool in step.get("tools", []):
+                available = (
+                    tuple(tool.get("available_conditions", _CONDITIONS))
+                    if generic_scored
+                    else _CONDITIONS
+                )
                 tool["responses"] = _expand_conditions(
-                    tool.get("responses", {}), field=f"{flow_name}.tools.responses"
+                    tool.get("responses", {}),
+                    field=f"{flow_name}.tools.responses",
+                    conditions=available,
                 )
                 tool.setdefault("state_updates", {})
                 tool.setdefault("available_conditions", list(_CONDITIONS))
@@ -106,4 +159,3 @@ def expand_envelope(payload: dict[str, Any]) -> BusinessCaseSpec:
     if not isinstance(payload.get("case"), dict):
         raise ValueError("compact payload must contain an object case")
     return expand_compact_case(payload["case"])
-

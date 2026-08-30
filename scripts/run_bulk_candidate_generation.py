@@ -29,9 +29,19 @@ ITEMS = [
 ]
 
 
-def configured_models() -> list[tuple[str, dict]]:
+def configured_models(selected: list[str] | None = None) -> list[tuple[str, dict]]:
     payload = yaml.safe_load(PROFILE_PATH.read_text(encoding="utf-8"))
-    return [(name, cfg) for name, cfg in payload.get("models", {}).items() if cfg.get("enabled")]
+    enabled = {
+        name: cfg
+        for name, cfg in payload.get("models", {}).items()
+        if cfg.get("enabled")
+    }
+    if not selected:
+        return list(enabled.items())
+    unknown = [name for name in selected if name not in enabled]
+    if unknown:
+        raise ValueError(f"models are not enabled or configured: {unknown}")
+    return [(name, enabled[name]) for name in selected]
 
 
 def run_one(model: str, category: str, variant: str | None, ordinal: int,
@@ -80,10 +90,14 @@ def main() -> int:
     ap.add_argument("--timeout", type=int, default=600)
     ap.add_argument("--seed", type=int, default=2026082903)
     ap.add_argument("--max-completion-tokens", type=int, default=16384)
+    ap.add_argument(
+        "--models", nargs="+", default=None,
+        help="只运行指定且已启用的生成模型；省略时运行全部已启用模型",
+    )
     ap.add_argument("--output-root", type=Path,
                     default=ROOT / "data" / "candidate_batches" / "批量生成-第01轮")
     args = ap.parse_args()
-    models = configured_models()
+    models = configured_models(args.models)
     jobs = [(model, category, variant, ordinal)
             for model, _cfg in models for category, variant in ITEMS
             for ordinal in range(1, args.repeats + 1)]

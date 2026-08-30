@@ -25,11 +25,13 @@ class BusinessToolEnvironment:
         *,
         role_id: str,
         step_metadata: dict[str, Any] | None = None,
+        strict_declared_status: bool = False,
     ) -> None:
         self.condition = condition
         self.state = state
         self.role_id = role_id
         self.step_metadata = deepcopy(step_metadata or {})
+        self.strict_declared_status = strict_declared_status
         self.specs = {tool.name: tool for tool in tools}
         registry = ToolRegistry()
         for tool in tools:
@@ -58,10 +60,21 @@ class BusinessToolEnvironment:
             response.setdefault("execution_status", "SUCCEEDED")
             response.setdefault("tool_name", tool.name)
             response = self._dynamic_response(tool.name, arguments, response)
+            declared_status = str(response.get("execution_status", "SUCCEEDED")).upper()
+            if self.strict_declared_status and declared_status != "SUCCEEDED":
+                raise ValueError(
+                    str(response.get("error") or f"declared tool status {declared_status}")
+                )
             self._learn_returned_state(response)
             update = tool.state_updates.get(self.condition, {})
             if update:
                 self.state.update(deepcopy(update))
+            for binding in tool.state_bindings:
+                if self.condition not in binding.conditions:
+                    continue
+                source = arguments if binding.source == "argument" else response
+                value = _read_binding_path(source, binding.source_path)
+                _write_binding_path(self.state, binding.target_path, deepcopy(value))
             if tool.name == "update_automation_setting":
                 scope = arguments.get("scope")
                 mode = arguments.get("mode")
@@ -688,6 +701,29 @@ def _canonical_station_id(value: Any) -> str:
     if normalized in {"NORTH-STATION", "北站"}:
         return "NORTH-STATION"
     return str(value or "")
+
+
+def _read_binding_path(value: Any, path: str) -> Any:
+    current = value
+    for segment in path.split("."):
+        if isinstance(current, dict) and segment in current:
+            current = current[segment]
+        elif isinstance(current, list) and segment.isdigit() and int(segment) < len(current):
+            current = current[int(segment)]
+        else:
+            raise ValueError(f"state binding source path does not exist: {path}")
+    return current
+
+
+def _write_binding_path(state: dict[str, Any], path: str, value: Any) -> None:
+    segments = path.split(".")
+    current = state
+    for segment in segments[:-1]:
+        child = current.setdefault(segment, {})
+        if not isinstance(child, dict):
+            raise ValueError(f"state binding target is not an object: {path}")
+        current = child
+    current[segments[-1]] = value
 
 
 def _account_id_from_role(role_id: str) -> str:

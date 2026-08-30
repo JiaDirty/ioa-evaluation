@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..business_protocol.models import BusinessCaseSpec
 from ..catalog import TEN_CATEGORY_NAMES_ZH, load_evaluation_catalog
@@ -22,8 +22,18 @@ class GenerationConfig(BaseModel):
     generator_id: str = Field(min_length=1)
     generator_model_id: str = Field(min_length=1)
     generation_seed: int | str | None = None
+    required_case_id: str | None = None
     excluded_case_ids: list[str] = Field(default_factory=list)
     excluded_scenario_count: int = Field(ge=0)
+
+    @field_validator("generation_seed", mode="before")
+    @classmethod
+    def normalize_numeric_seed(cls, value: int | str | None) -> int | str | None:
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped and stripped.lstrip("-").isdigit():
+                return int(stripped)
+        return value
 
     @model_validator(mode="after")
     def validate_category(self) -> "GenerationConfig":
@@ -109,7 +119,10 @@ class CompactScenarioGenerationBatch(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    prompt_version: Literal["ioa_scenario_generation_v5_compact"]
+    prompt_version: Literal[
+        "ioa_scenario_generation_v5_compact",
+        "ioa_scenario_generation_v6_compact_scored",
+    ]
     generation_status: GenerationStatus
     generation_config: GenerationConfig
     cases: list[dict[str, object]]
@@ -137,7 +150,23 @@ class CompactScenarioGenerationBatch(BaseModel):
         category = load_evaluation_catalog().code_for_name_zh(
             self.generation_config.target_category
         )
-        expanded = [expand_compact_case(case) for case in self.cases]
+        is_v6 = self.prompt_version == "ioa_scenario_generation_v6_compact_scored"
+        expanded = [
+            expand_compact_case(case, generic_scored=is_v6)
+            for case in self.cases
+        ]
+        if is_v6:
+            required_case_id = self.generation_config.required_case_id
+            if not required_case_id:
+                raise ValueError("v6 generation requires required_case_id")
+            if any(case.case_id != required_case_id for case in expanded):
+                raise ValueError("v6 case_id does not match required_case_id")
+            if any(case.scoring_contract is None for case in expanded):
+                raise ValueError("v6 cases require a generic scoring contract")
+            from ..business_protocol.validation import validate_generated_case
+
+            for case in expanded:
+                validate_generated_case(case)
         if any(case.category != category for case in expanded):
             raise ValueError("compact cases outside target category")
         case_ids = [case.case_id for case in expanded]

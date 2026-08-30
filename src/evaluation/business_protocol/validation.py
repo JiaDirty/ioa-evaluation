@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import json
 from datetime import datetime
 
 from ..catalog import TEN_CATEGORY_CODES
@@ -13,10 +14,146 @@ from .prompt import build_api_tools, build_user_message
 FORBIDDEN_VISIBLE_MARKERS = (
     "ground_truth", "hidden_truth", "judge_label", "安全测评", "风险标签",
 )
+GENERATED_FORBIDDEN_MARKERS = (
+    "ground_truth",
+    "hidden_truth",
+    "judge_label",
+    "baseline",
+    "mechanism",
+    "风险标签",
+    "标准答案",
+    "安全测评",
+)
 CATEGORY_ID_PATTERN = re.compile(
     rf"(?<![A-Za-z0-9])({'|'.join(TEN_CATEGORY_CODES)})(?![A-Za-z0-9])"
 )
 EXPECTED_CATEGORIES = set(TEN_CATEGORY_CODES)
+
+
+def validate_generated_case(case: BusinessCaseSpec) -> None:
+    """Strict gates that apply to newly generated, generically scored cases."""
+
+    if case.scoring_contract is None:
+        raise ValueError("generated cases require a generic scoring contract")
+    if case.category == "INC":
+        non_targets = [step.step_id for step in case.steps if not step.key_node_target]
+        if non_targets:
+            raise ValueError(
+                "generated incentive-misalignment rounds must all be key_node_target; "
+                f"got non-target steps {non_targets}"
+            )
+    all_steps = [*case.steps, *case.recovery_steps]
+    all_ids = [step.step_id for step in all_steps]
+    if len(all_ids) != len(set(all_ids)):
+        raise ValueError("generated case has duplicate step IDs")
+    for flow_name, flow, visible_conditions in (
+        ("steps", case.steps, ("baseline", "mechanism")),
+        ("recovery_steps", case.recovery_steps, ("recovery",)),
+    ):
+        positions = {step.step_id: index for index, step in enumerate(flow)}
+        for step in flow:
+            for dependency in step.upstream_step_ids:
+                if dependency not in positions or positions[dependency] >= positions[step.step_id]:
+                    raise ValueError(
+                        f"generated {flow_name} step {step.step_id} has invalid dependency {dependency}"
+                    )
+            tool_names = [tool.name for tool in step.tools]
+            if len(tool_names) != len(set(tool_names)):
+                raise ValueError(f"generated step {step.step_id} has duplicate tool names")
+            if step.reference:
+                missing = sorted(
+                    set(step.reference.objective_unsafe_tools) - set(tool_names)
+                )
+                if missing:
+                    raise ValueError(
+                        f"generated step {step.step_id} references unavailable unsafe tools: {missing}"
+                    )
+            for condition in visible_conditions:
+                current_time = datetime.fromisoformat(step.current_time_for(condition))
+                visible_input = step.input_for(condition)
+                for item in [*visible_input.records, *visible_input.upstream_artifacts]:
+                    if datetime.fromisoformat(item.created_at) > current_time:
+                        raise ValueError(
+                            f"generated step {step.step_id}/{condition} has future-visible item {item.created_at}"
+                        )
+                visible = build_user_message(step, condition)
+                _reject_generated_leak(visible, f"{step.step_id}/{condition}/prompt")
+            for tool in step.tools:
+                _reject_generated_leak(
+                    tool.description,
+                    f"{step.step_id}/{tool.name}",
+                )
+                for condition, response in tool.responses.items():
+                    _reject_generated_leak(
+                        json.dumps(response, ensure_ascii=False),
+                        f"{step.step_id}/{tool.name}/{condition}/response",
+                    )
+                    status = str(response.get("execution_status", "SUCCEEDED")).upper()
+                    if status != "SUCCEEDED":
+                        raise ValueError(
+                            f"generated tool {tool.name}/{condition} must use successful fixtures; "
+                            "runtime failures must come from schema or business preconditions"
+                        )
+                if tool.risk_level in {"high", "critical"}:
+                    baseline_response = tool.responses.get("baseline")
+                    mechanism_response = tool.responses.get("mechanism")
+                    if baseline_response != mechanism_response:
+                        raise ValueError(
+                            f"state-changing tool {tool.name} must not force a condition-dependent response"
+                        )
+                    if tool.state_updates.get("baseline", {}) != tool.state_updates.get("mechanism", {}):
+                        raise ValueError(
+                            f"state-changing tool {tool.name} must not force condition-dependent state"
+                        )
+            has_safety_relevant_write = any(
+                tool.risk_level in {"medium", "high", "critical"}
+                and (bool(tool.state_bindings) or any(tool.state_updates.values()))
+                for tool in step.tools
+            )
+            if has_safety_relevant_write and not step.key_node_target:
+                raise ValueError(
+                    f"generated step {step.step_id} contains a safety-relevant state write "
+                    "and must be a key_node_target with complete scoring rules"
+                )
+    if not _has_full_chain_causal_contrast(case):
+        raise ValueError(
+            "generated case has no baseline/mechanism contrast that survives "
+            "full-chain upstream replacement"
+        )
+
+
+def _reject_generated_leak(value: str, location: str) -> None:
+    normalized = value.lower()
+    for marker in GENERATED_FORBIDDEN_MARKERS:
+        if marker.lower() in normalized:
+            raise ValueError(f"generated model-visible leakage in {location}: {marker}")
+
+
+def _has_full_chain_causal_contrast(case: BusinessCaseSpec) -> bool:
+    if case.initial_state.get("baseline", {}) != case.initial_state.get("mechanism", {}):
+        return True
+    for step in case.steps:
+        projections = []
+        for condition in ("baseline", "mechanism"):
+            visible_input = step.input_for(condition).model_dump(mode="json")
+            if step.upstream_step_ids:
+                visible_input["upstream_artifacts"] = []
+            projections.append({
+                "input": visible_input,
+                "history": step.history_for(condition),
+                "current_time": step.current_time_for(condition),
+                "tools": [
+                    {
+                        "name": tool.name,
+                        "response": tool.responses.get(condition, {}),
+                        "state_update": tool.state_updates.get(condition, {}),
+                    }
+                    for tool in step.tools_for(condition)
+                ],
+            })
+        if projections[0] != projections[1]:
+            return True
+    return False
 
 
 def validate_case_catalog(cases: dict[str, BusinessCaseSpec]) -> None:

@@ -104,8 +104,11 @@ def _visible_input(step: AgentStepSpec, condition: str) -> dict[str, Any]:
 
 def _condition_projection(step: AgentStepSpec, condition: str) -> dict[str, Any]:
     """Return every fixture that can differ between experimental conditions."""
+    visible = _visible_input(step, condition)
+    if step.upstream_step_ids:
+        visible["input"]["upstream_artifacts"] = []
     return {
-        "visible": _visible_input(step, condition),
+        "visible": visible,
         "tools": [
             {
                 "name": tool.name,
@@ -129,9 +132,13 @@ def _all_visible_strings(value: Any, location: str = "") -> Iterable[tuple[str, 
             yield from _all_visible_strings(item, f"{location}[{index}]")
 
 
-def _check_step_times(step: AgentStepSpec, location: str) -> list[DeterministicFinding]:
+def _check_step_times(
+    step: AgentStepSpec,
+    location: str,
+    conditions: tuple[str, ...],
+) -> list[DeterministicFinding]:
     findings: list[DeterministicFinding] = []
-    for condition in CONDITIONS:
+    for condition in conditions:
         current = _parse_time(step.current_time_for(condition))
         if current is None:
             findings.append(
@@ -197,7 +204,10 @@ def _audit_one(record: CandidateRecord, catalog: EvaluationCatalog) -> Determini
         )
 
     seen: set[str] = set()
-    for flow_name, flow in (("steps", case.steps), ("recovery_steps", case.recovery_steps)):
+    for flow_name, flow, visible_conditions in (
+        ("steps", case.steps, ("baseline", "mechanism")),
+        ("recovery_steps", case.recovery_steps, ("recovery",)),
+    ):
         for index, step in enumerate(flow):
             location = f"{flow_name}[{index}]"
             unknown = sorted(set(step.upstream_step_ids) - seen)
@@ -212,7 +222,7 @@ def _audit_one(record: CandidateRecord, catalog: EvaluationCatalog) -> Determini
                     )
                 )
             seen.add(step.step_id)
-            findings.extend(_check_step_times(step, location))
+            findings.extend(_check_step_times(step, location, visible_conditions))
 
             tool_names = [tool.name for tool in step.tools]
             if len(tool_names) != len(set(tool_names)):
@@ -238,7 +248,7 @@ def _audit_one(record: CandidateRecord, catalog: EvaluationCatalog) -> Determini
                             *missing_tools,
                         )
                     )
-            for condition in CONDITIONS:
+            for condition in visible_conditions:
                 visible = _visible_input(step, condition)
                 for text_location, text in _all_visible_strings(visible):
                     marker = next(
@@ -312,7 +322,8 @@ def _audit_one(record: CandidateRecord, catalog: EvaluationCatalog) -> Determini
             )
     else:
         has_state_changing_risk_tool = any(
-            tool.risk_level in {"high", "critical"} and any(tool.state_updates.values())
+            tool.risk_level in {"high", "critical"}
+            and (any(tool.state_updates.values()) or bool(tool.state_bindings))
             for step in case.steps
             for tool in step.tools
         )
@@ -354,6 +365,21 @@ def _audit_one(record: CandidateRecord, catalog: EvaluationCatalog) -> Determini
             "key_target_count": len(target_steps),
             "differing_key_target_count": len(differing_targets),
             "differing_main_step_count": len(differing_main_steps),
+            "scoring_contract_version": (
+                case.scoring_contract.contract_version
+                if case.scoring_contract is not None
+                else "legacy"
+            ),
+            "step_scoring_rule_count": (
+                len(case.scoring_contract.step_rules)
+                if case.scoring_contract is not None
+                else 0
+            ),
+            "impact_scoring_rule_count": (
+                len(case.scoring_contract.impact_rules)
+                if case.scoring_contract is not None
+                else 0
+            ),
         },
     )
 

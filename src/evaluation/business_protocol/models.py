@@ -8,6 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..catalog import load_evaluation_catalog
+from .scoring_contract import GenericScoringContract, PATH_PATTERN
 
 
 Condition = Literal["baseline", "mechanism", "recovery"]
@@ -43,6 +44,29 @@ class AgentInput(BaseModel):
     upstream_artifacts: list[UpstreamArtifact] = Field(default_factory=list)
 
 
+class ToolStateBinding(BaseModel):
+    """Copy an actual tool argument or response value into business state."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target_path: str
+    source: Literal["argument", "response"]
+    source_path: str
+    conditions: list[Condition] = Field(
+        default_factory=lambda: ["baseline", "mechanism", "recovery"]
+    )
+
+    @model_validator(mode="after")
+    def validate_paths(self) -> "ToolStateBinding":
+        if not PATH_PATTERN.fullmatch(self.target_path):
+            raise ValueError("target_path must be a dotted state path")
+        if not PATH_PATTERN.fullmatch(self.source_path):
+            raise ValueError("source_path must be a dotted data path")
+        if not self.conditions or len(self.conditions) != len(set(self.conditions)):
+            raise ValueError("binding conditions must be non-empty and unique")
+        return self
+
+
 class BusinessToolSpec(BaseModel):
     """One provider-native tool plus deterministic per-condition fixtures."""
 
@@ -53,6 +77,7 @@ class BusinessToolSpec(BaseModel):
     parameters: dict[str, Any]
     responses: dict[Condition, dict[str, Any]] = Field(default_factory=dict)
     state_updates: dict[Condition, dict[str, Any]] = Field(default_factory=dict)
+    state_bindings: list[ToolStateBinding] = Field(default_factory=list)
     available_conditions: list[Condition] = Field(
         default_factory=lambda: ["baseline", "mechanism", "recovery"]
     )
@@ -67,10 +92,91 @@ class BusinessToolSpec(BaseModel):
         if len(self.available_conditions) != len(set(self.available_conditions)):
             raise ValueError(f"tool {self.name} has duplicate available conditions")
         self.parameters.setdefault("additionalProperties", False)
+        bindings_by_condition: dict[str, list[ToolStateBinding]] = {
+            condition: [] for condition in self.available_conditions
+        }
+        for binding in self.state_bindings:
+            if binding.source == "argument":
+                if not _schema_has_path(self.parameters, binding.source_path):
+                    raise ValueError(
+                        f"tool {self.name} binding references unknown argument path "
+                        f"{binding.source_path}"
+                    )
+            for condition in binding.conditions:
+                if condition not in self.available_conditions:
+                    raise ValueError(
+                        f"tool {self.name} binding uses unavailable condition {condition}"
+                    )
+                if binding.source == "response" and not _value_has_path(
+                    self.responses.get(condition, {}), binding.source_path
+                ):
+                    raise ValueError(
+                        f"tool {self.name} binding references unknown response path "
+                        f"{binding.source_path} in {condition}"
+                    )
+                update_paths = _leaf_paths(self.state_updates.get(condition, {}))
+                if any(
+                    _paths_overlap(binding.target_path, update_path)
+                    for update_path in update_paths
+                ):
+                    raise ValueError(
+                        f"tool {self.name} writes {binding.target_path} through both "
+                        "state_updates and state_bindings"
+                    )
+                for existing in bindings_by_condition[condition]:
+                    if _paths_overlap(binding.target_path, existing.target_path):
+                        raise ValueError(
+                            f"tool {self.name} has overlapping state bindings "
+                            f"{existing.target_path} and {binding.target_path} in {condition}"
+                        )
+                bindings_by_condition[condition].append(binding)
         return self
 
     def is_available(self, condition: Condition) -> bool:
         return condition in self.available_conditions
+
+
+def _schema_has_path(schema: dict[str, Any], path: str) -> bool:
+    current = schema
+    for segment in path.split("."):
+        if segment.isdigit():
+            current = current.get("items", {}) if isinstance(current, dict) else {}
+            continue
+        properties = current.get("properties", {}) if isinstance(current, dict) else {}
+        if segment not in properties:
+            return False
+        current = properties[segment]
+    return True
+
+
+def _value_has_path(value: Any, path: str) -> bool:
+    current = value
+    for segment in path.split("."):
+        if isinstance(current, dict) and segment in current:
+            current = current[segment]
+        elif isinstance(current, list) and segment.isdigit() and int(segment) < len(current):
+            current = current[int(segment)]
+        else:
+            return False
+    return True
+
+
+def _leaf_paths(value: Any, prefix: str = "") -> set[str]:
+    if isinstance(value, dict) and value:
+        paths: set[str] = set()
+        for key, item in value.items():
+            child = f"{prefix}.{key}" if prefix else str(key)
+            paths.update(_leaf_paths(item, child))
+        return paths
+    return {prefix} if prefix else set()
+
+
+def _paths_overlap(first: str, second: str) -> bool:
+    return (
+        first == second
+        or first.startswith(f"{second}.")
+        or second.startswith(f"{first}.")
+    )
 
 
 class ReferenceBehavior(BaseModel):
@@ -131,6 +237,7 @@ class BusinessCaseSpec(BaseModel):
     steps: list[AgentStepSpec]
     recovery_steps: list[AgentStepSpec] = Field(default_factory=list)
     initial_state: dict[Condition, dict[str, Any]] = Field(default_factory=dict)
+    scoring_contract: GenericScoringContract | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("category", mode="before")
@@ -142,6 +249,13 @@ class BusinessCaseSpec(BaseModel):
         if value not in catalog.category_codes:
             raise ValueError("unknown evaluation category")
         return value
+
+    @model_validator(mode="after")
+    def validate_scoring_contract(self) -> "BusinessCaseSpec":
+        from .scoring_contract import validate_scoring_contract_for_case
+
+        validate_scoring_contract_for_case(self)
+        return self
 
 
 class AgentBusinessResult(BaseModel):
