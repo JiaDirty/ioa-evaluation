@@ -19,7 +19,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.evaluation.business_protocol.cases import get_business_cases
+from src.evaluation.business_protocol.dataset import (
+    DatasetCompatibilityError,
+    DatasetValidationReport,
+    load_evaluation_dataset,
+)
+from src.evaluation.business_protocol.loader import CaseDataLoadError
 from src.evaluation.business_protocol.prompt import (
     AGENT_BUSINESS_RESULT_SCHEMA,
     COMMON_SYSTEM_MESSAGE,
@@ -38,8 +43,11 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Ten-category neutral business Agent evaluation")
+def build_parser(
+    *,
+    default_dataset_profile: str = "legacy_reference",
+) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Neutral business Agent evaluation dataset runner")
     parser.add_argument("--validate-only", action="store_true")
     parser.add_argument(
         "--execution-mode",
@@ -53,8 +61,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--case-id", default="all")
     parser.add_argument(
+        "--dataset-profile",
+        choices=["legacy_reference", "generic_expandable"],
+        default=default_dataset_profile,
+        help=(
+            "legacy_reference accepts only the hash-locked original 11 cases; "
+            "generic_expandable requires a generic_scoring_v1 contract on every case."
+        ),
+    )
+    parser.add_argument(
+        "--data",
+        action="append",
+        help="Scenario JSON/JSONL file or directory; repeat for multiple sources.",
+    )
+    parser.add_argument(
         "--data-dir",
-        help="Scenario JSON/JSONL directory; defaults to data/scenarios.",
+        help="Compatibility alias for one scenario directory.",
+    )
+    parser.add_argument(
+        "--recursive",
+        action="store_true",
+        help="Discover supported scenario files recursively below supplied directories.",
     )
     parser.add_argument(
         "--condition",
@@ -99,6 +126,43 @@ def _run_levels(value: str) -> list[str]:
     return ["key_node", "full_chain"] if value == "both" else [value]
 
 
+def _load_dataset(
+    args: argparse.Namespace,
+    *,
+    require_data: bool,
+) -> tuple[dict[str, Any], DatasetValidationReport, list[str]]:
+    if args.data and args.data_dir:
+        raise SystemExit("use --data or --data-dir, not both")
+    sources = list(args.data or [])
+    if args.data_dir:
+        sources.append(args.data_dir)
+    if not sources:
+        if require_data:
+            raise SystemExit("the expandable dataset runner requires at least one --data source")
+        if args.dataset_profile != "legacy_reference":
+            raise SystemExit("generic_expandable requires at least one --data source")
+        dataset = load_evaluation_dataset(
+            [PROJECT_ROOT / "data" / "scenarios"],
+            profile="legacy_reference",
+            require_complete_legacy=True,
+        )
+        cases = dataset.cases
+        report = dataset.report
+        validate_case_catalog(cases)
+        return cases, report, [str(path.resolve()) for path in dataset.source_files]
+
+    dataset = load_evaluation_dataset(
+        sources,
+        profile=args.dataset_profile,
+        recursive=args.recursive,
+    )
+    return (
+        dataset.cases,
+        dataset.report,
+        [str(path.resolve()) for path in dataset.source_files],
+    )
+
+
 def export_prompts(path: Path, cases: list[Any], conditions: list[str]) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
     count = 0
@@ -134,9 +198,8 @@ def _build_live_client():
     return OpenAIClient(get_agent_llm_config())
 
 
-async def async_main(args: argparse.Namespace) -> int:
-    cases = get_business_cases(args.data_dir)
-    validate_case_catalog(cases)
+async def async_main(args: argparse.Namespace, *, require_data: bool = False) -> int:
+    cases, dataset_report, source_files = _load_dataset(args, require_data=require_data)
     selected = _selected_cases(args, cases)
     conditions = _conditions(args.condition)
     levels = _run_levels(args.run_level)
@@ -151,8 +214,10 @@ async def async_main(args: argparse.Namespace) -> int:
             results_per_repeat *= len(conditions)
         print(json.dumps({
             "status": "VALID",
-            "case_count": len(selected),
+            **dataset_report.as_dict(),
+            "selected_case_count": len(selected),
             "step_count": sum(len(case.steps) + len(case.recovery_steps) for case in selected),
+            "source_file_count": len(source_files),
             "repeat_count": args.repeat_count,
             "planned_result_count": results_per_repeat * args.repeat_count,
             "prompt_snapshots_exported": exported,
@@ -183,6 +248,10 @@ async def async_main(args: argparse.Namespace) -> int:
                         result_repeat_indexes.append(repeat_index)
     payload = {
         "run_id": run_id,
+        "dataset": {
+            **dataset_report.as_dict(),
+            "source_files": source_files,
+        },
         "execution_mode": args.execution_mode,
         "repeat_count": args.repeat_count,
         "result_repeat_indexes": result_repeat_indexes,
@@ -202,6 +271,7 @@ async def async_main(args: argparse.Namespace) -> int:
     result_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({
         "status": "COMPLETED",
+        "dataset_profile": dataset_report.profile,
         "execution_mode": args.execution_mode,
         "result_count": len(results),
         "repeat_count": args.repeat_count,
@@ -212,8 +282,22 @@ async def async_main(args: argparse.Namespace) -> int:
     return 0
 
 
-def main() -> int:
-    return asyncio.run(async_main(build_parser().parse_args()))
+def main(
+    *,
+    default_dataset_profile: str = "legacy_reference",
+    require_data: bool = False,
+) -> int:
+    args = build_parser(default_dataset_profile=default_dataset_profile).parse_args()
+    try:
+        return asyncio.run(async_main(args, require_data=require_data))
+    except (CaseDataLoadError, DatasetCompatibilityError) as exc:
+        print(json.dumps({
+            "status": "INVALID_DATASET",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "provider_calls": 0,
+        }, ensure_ascii=False, indent=2), file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

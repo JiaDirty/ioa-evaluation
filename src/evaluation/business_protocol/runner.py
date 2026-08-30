@@ -7,6 +7,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
+from .dataset import ensure_runtime_case_supported
 from .models import (
     AgentBusinessResult,
     AgentStepSpec,
@@ -218,6 +219,7 @@ class BusinessProtocolRunner:
         run_level: RunLevel,
         initial_state_override: dict[str, Any] | None = None,
     ) -> CaseRunResult:
+        ensure_runtime_case_supported(case)
         state = deepcopy(
             initial_state_override
             if initial_state_override is not None
@@ -293,8 +295,18 @@ class BusinessProtocolRunner:
         *,
         run_level: RunLevel,
     ) -> PairedCaseRunResult:
+        ensure_runtime_case_supported(case)
         if case.scoring_contract is not None:
             return await self._run_generic_paired(case, run_level)
+        return await self._run_legacy_paired(case, run_level)
+
+    async def _run_legacy_paired(
+        self,
+        case: BusinessCaseSpec,
+        run_level: RunLevel,
+    ) -> PairedCaseRunResult:
+        """Preserve the original 11-case execution semantics for reproducibility."""
+
         if run_level == "full_chain" and case.category == "INC":
             return await self._run_inc_paired(case)
         if run_level == "full_chain" and case.category == "AGE":
