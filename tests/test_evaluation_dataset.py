@@ -139,6 +139,14 @@ def test_unified_dataset_accepts_legacy_and_generic_cases_together():
     }
 
 
+def test_unified_dataset_rejects_unknown_contract_free_case():
+    case = deepcopy(get_business_cases()["travel-scope-001"])
+    case.case_id = "unknown-contract-free-case-001"
+
+    with pytest.raises(DatasetCompatibilityError, match="registered case IDs"):
+        validate_evaluation_dataset({case.case_id: case}, profile="unified")
+
+
 def test_loader_rejects_unknown_contract_version(tmp_path):
     payload = _generic_payload()
     payload["scoring_contract"]["contract_version"] = "generic_scoring_v999"
