@@ -17,6 +17,7 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Callable
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -25,17 +26,35 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.evaluation.business_protocol.loader import load_business_cases_from_paths  # noqa: E402
 from src.evaluation.catalog import load_evaluation_catalog  # noqa: E402
 from src.evaluation.scenario_generation import (  # noqa: E402
+    AuthoringScenarioResponse,
+    compile_authoring_response,
     BlueprintScenarioResponse,
     compile_blueprint_response,
 )
 from src.llm.client import OpenAIClient  # noqa: E402
 from src.llm.config import AgentLLMConfig, load_agent_llm_config  # noqa: E402
 
-PROMPT_PATH = PROJECT_ROOT / "docs" / "十项测评场景生成Prompt_蓝图版v5.md"
+PROMPT_PATH = PROJECT_ROOT / "docs" / "十项测评场景生成Prompt_作者版v3.md"
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "data" / "candidate_batches"
 USER_MESSAGE_START = "## 本次请求参数"
 USER_MESSAGE_STOP = "## 本地验收"
 PROFILE_PATH = PROJECT_ROOT / "config" / "generation_model_profiles.yaml"
+
+
+def response_handler_for_version(
+    prompt_version: str,
+) -> tuple[type[AuthoringScenarioResponse | BlueprintScenarioResponse], Callable[..., Any]]:
+    """Return the response model and compiler for a saved generation version."""
+    if prompt_version == "ioa_scenario_generation_v7_authoring":
+        return AuthoringScenarioResponse, compile_authoring_response
+    if prompt_version in {
+        "ioa_scenario_generation_v8_blueprint",
+        "ioa_scenario_generation_v9_blueprint_sequences",
+    }:
+        return BlueprintScenarioResponse, compile_blueprint_response
+    raise ValueError(
+        "不支持的 prompt_version；当前仅支持作者版 v7 和蓝图版 v8/v9"
+    )
 
 
 def load_generation_profile(model_id: str) -> dict:
@@ -290,20 +309,24 @@ def main() -> int:
     )
 
     current_raw = raw
-    batch: BlueprintScenarioResponse | None = None
+    batch: AuthoringScenarioResponse | BlueprintScenarioResponse | None = None
     expanded = None
     validation_error: Exception | None = None
     validation_failures: list[dict[str, object]] = []
     attempt_evidence: list[dict[str, object]] = []
     for repair_index in range(args.repair_attempts + 1):
         try:
-            batch = BlueprintScenarioResponse.model_validate(json.loads(current_raw))
+            raw_payload = json.loads(current_raw)
+            response_model, compiler = response_handler_for_version(
+                str(raw_payload.get("prompt_version", ""))
+            )
+            batch = response_model.model_validate(raw_payload)
             if batch.generation_status != "COMPLETED":
                 raise ValueError(
                     "generation quality gate failed: "
                     + "; ".join(batch.known_open_questions)
                 )
-            expanded = compile_blueprint_response(
+            expanded = compiler(
                 batch,
                 case_id=required_case_id,
                 category=args.category,
@@ -333,7 +356,7 @@ def main() -> int:
                 user_message
                 + "\n\n## 本地校验失败反馈\n"
                 + "上一次输出没有进入候选集。请根据以下错误重新生成一个完整的 "
-                + "ioa_scenario_generation_v9_blueprint_sequences JSON 对象。不得只输出补丁，"
+                + "当前 Prompt 规定的完整 JSON 对象。不得只输出补丁，"
                 + "不得放宽业务或判分标准，也不要解释。\n\n"
                 + f"错误：{type(exc).__name__}: {str(exc)[:4000]}\n\n"
                 + "上一次完整输出：\n"

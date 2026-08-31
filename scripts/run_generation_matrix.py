@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Run the expandable blueprint generator for a resumable model/category matrix."""
+"""Run the expandable authoring generator for a resumable model/category matrix."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_OUTPUT = ROOT / "data" / "candidate_batches" / "批量生成-第10轮-蓝图v9.2全量矩阵"
+DEFAULT_OUTPUT = ROOT / "data" / "candidate_batches" / "批量生成-第13轮-作者格式v3全量矩阵"
 MODELS = (
     "gpt-5.6-luna",
     "deepseek-v4-flash",
@@ -53,6 +53,7 @@ def _run_job(
     max_completion_tokens: int,
     repair_attempts: int,
     prompt_path: Path,
+    reasoning_effort: str | None,
 ) -> dict[str, object]:
     batch_id = f"{category}__{variant or 'default'}__第{number:02d}条"
     command = [
@@ -73,6 +74,8 @@ def _run_job(
         "--prompt-path",
         str(prompt_path),
     ]
+    if reasoning_effort:
+        command.extend(["--reasoning-effort", reasoning_effort])
     if variant:
         command.extend(["--variant", variant])
     started = datetime.now().astimezone().isoformat(timespec="seconds")
@@ -119,10 +122,16 @@ def main() -> int:
     parser.add_argument("--max-completion-tokens", type=int, default=32768)
     parser.add_argument("--repair-attempts", type=int, default=2)
     parser.add_argument(
+        "--reasoning-effort",
+        choices=["none", "low", "medium", "high", "xhigh", "max", "ultra"],
+        default=None,
+        help="覆盖各模型配置中的思考档位；省略时使用 config/generation_model_profiles.yaml。",
+    )
+    parser.add_argument(
         "--prompt-path",
         type=Path,
-        default=ROOT / "docs" / "十项测评场景生成Prompt_蓝图版v5.md",
-        help="覆盖默认场景生成 Prompt，并写入每个任务的生成证据。",
+        default=ROOT / "docs" / "十项测评场景生成Prompt_作者版v3.md",
+        help="覆盖默认场景生成 Prompt，并写入每个任务的生成证据。作者版会由本地编译器展开为完整运行数据。",
     )
     parser.add_argument("--model", action="append", dest="models")
     parser.add_argument("--category", action="append", dest="categories")
@@ -180,6 +189,7 @@ def main() -> int:
                 max_completion_tokens=args.max_completion_tokens,
                 repair_attempts=args.repair_attempts,
                 prompt_path=args.prompt_path,
+                reasoning_effort=args.reasoning_effort,
             ): _job_key(category, variant, model, number)
             for category, variant, model, number in pending
         }

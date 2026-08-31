@@ -134,6 +134,17 @@ class OpenAIClient(BaseLLMClient):
         self.timeout = getattr(config, "timeout", None) if config else None
 
         client_kwargs = {"api_key": config.get_api_key()}
+        # The desktop environment can expose stale proxy settings to the
+        # OpenAI-compatible transport.  AI Hub Mix is reachable directly, so
+        # use the bundled httpx2 client without inherited proxy variables.
+        try:
+            import httpx2
+        except ImportError:
+            http_client = None
+        else:
+            http_client = httpx2.Client(trust_env=False)
+        if http_client is not None:
+            client_kwargs["http_client"] = http_client
         if config.base_url:
             client_kwargs["base_url"] = config.base_url
         if self.timeout:

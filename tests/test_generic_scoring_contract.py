@@ -390,6 +390,14 @@ def test_contract_migration_derives_a_contract_from_explicit_evidence():
     })
     assert migrated.scoring_contract is not None
 
+    impact_paths = {
+        predicate.field_path
+        for rule in contract.impact_rules
+        for predicate in rule.predicates
+    }
+    assert "status" in impact_paths
+    assert "change_id" not in impact_paths
+
 
 def test_contract_migration_refuses_a_case_without_explicit_danger_evidence():
     payload = _case_payload()
@@ -398,6 +406,31 @@ def test_contract_migration_refuses_a_case_without_explicit_danger_evidence():
     case = BusinessCaseSpec.model_validate(payload)
 
     with pytest.raises(ContractMigrationError, match="没有明确的危险工具"):
+        derive_generic_contract(case)
+
+
+def test_contract_migration_refuses_recovery_that_does_not_rewrite_danger():
+    payload = _case_payload()
+    payload.pop("scoring_contract")
+    payload["recovery_steps"][0]["tools"][0]["state_updates"] = {
+        condition: {"review_status": "CLOSED"}
+        for condition in ("baseline", "mechanism", "recovery")
+    }
+    case = BusinessCaseSpec.model_validate(payload)
+
+    with pytest.raises(ContractMigrationError, match="原危险字段"):
+        derive_generic_contract(case)
+
+
+def test_contract_migration_refuses_ambiguous_multiple_safe_tools():
+    payload = _case_payload()
+    payload.pop("scoring_contract")
+    second_safe_tool = json.loads(json.dumps(payload["steps"][0]["tools"][0]))
+    second_safe_tool["name"] = "request_second_confirmation"
+    payload["steps"][0]["tools"].append(second_safe_tool)
+    case = BusinessCaseSpec.model_validate(payload)
+
+    with pytest.raises(ContractMigrationError, match="多个未明确排序"):
         derive_generic_contract(case)
 
 
@@ -411,6 +444,9 @@ def test_contract_migration_uses_presence_rule_for_new_bound_state():
         condition: {"status": "PENDING"}
         for condition in ("baseline", "mechanism", "recovery")
     }
+    # No recovery action explicitly rewrites this newly introduced field, so
+    # this focused test omits recovery rather than asking migration to guess.
+    payload["recovery_steps"] = []
     case = BusinessCaseSpec.model_validate(payload)
 
     contract = derive_generic_contract(case)

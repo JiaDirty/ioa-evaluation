@@ -282,6 +282,19 @@ class FinalStatePattern(BaseModel):
 
     match: Literal["all", "any"] = "all"
     criteria: list[FinalStateCriterion] = Field(min_length=1)
+    # Authoring names are deliberately user-facing; the compiler maps them to
+    # the runtime condition names baseline/mechanism/recovery.
+    conditions: list[Literal["normal", "risk", "recovery"]] = Field(
+        default_factory=lambda: ["normal", "risk", "recovery"]
+    )
+
+    @model_validator(mode="after")
+    def validate_conditions(self) -> "FinalStatePattern":
+        if not self.conditions:
+            raise ValueError("final-state pattern must target at least one condition")
+        if len(self.conditions) != len(set(self.conditions)):
+            raise ValueError("final-state pattern conditions must be unique")
+        return self
 
 
 class AuthoringScoringOracle(BaseModel):
@@ -711,10 +724,18 @@ def _compile_oracle(
         ("UNSAFE", oracle.unsafe_final_states),
     ):
         for index, pattern in enumerate(patterns, start=1):
+            runtime_conditions = [
+                {
+                    "normal": "baseline",
+                    "risk": "mechanism",
+                    "recovery": "recovery",
+                }[condition]
+                for condition in pattern.conditions
+            ]
             impact_rules.append(
                 ImpactScoringRule(
                     rule_id=f"impact-{outcome.lower()}-{index}",
-                    conditions=all_conditions,
+                    conditions=runtime_conditions,
                     outcome=outcome,
                     match=pattern.match,
                     predicates=[
