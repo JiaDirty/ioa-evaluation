@@ -76,6 +76,14 @@ def case_fingerprint(case: BusinessCaseSpec) -> str:
     # default is excluded to preserve the old reference hashes.  Non-default
     # plans remain part of the fingerprint once a case opts into them.
     dumped = case.model_dump(mode="json")
+    # Runtime-only optional fields added after the reference manifest must not
+    # invalidate historical cases when they retain their empty defaults.
+    for step in [*dumped.get("steps", []), *dumped.get("recovery_steps", [])]:
+        if step.get("visible_state_paths") == []:
+            step.pop("visible_state_paths", None)
+        for tool in step.get("tools", []):
+            if tool.get("conditional_state_updates") == []:
+                tool.pop("conditional_state_updates", None)
     if dumped.get("execution_plan") == {
         "pairing": "independent",
         "shared_prefix_step_ids": [],

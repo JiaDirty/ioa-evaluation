@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Recompile saved v7 authoring responses with the current local compiler."""
+"""Recompile saved authoring or blueprint responses locally."""
 
 from __future__ import annotations
 
@@ -18,7 +18,9 @@ from scripts.generate_candidate_batch import required_case_id_for  # noqa: E402
 from src.evaluation.business_protocol.loader import load_business_cases_from_paths  # noqa: E402
 from src.evaluation.scenario_generation import (  # noqa: E402
     AuthoringScenarioResponse,
+    BlueprintScenarioResponse,
     compile_authoring_response,
+    compile_blueprint_response,
 )
 
 
@@ -70,16 +72,27 @@ def _load_context(batch_path: Path) -> dict[str, object]:
 def recompile(source: Path, *, overwrite: bool = False) -> dict[str, object]:
     results: list[dict[str, object]] = []
     for batch_path in sorted(source.rglob("candidate_batch.json")):
+        if "repair_attempts" in batch_path.relative_to(source).parts:
+            continue
         expanded_path = batch_path.parent / "expanded_cases.jsonl"
         if expanded_path.exists() and not overwrite:
             results.append({"status": "SKIPPED_EXISTING", "path": str(batch_path)})
             continue
         try:
             raw = json.loads(batch_path.read_text(encoding="utf-8"))
-            if raw.get("prompt_version") != "ioa_scenario_generation_v7_authoring":
+            version = raw.get("prompt_version")
+            if version not in {
+                "ioa_scenario_generation_v7_authoring",
+                "ioa_scenario_generation_v8_blueprint",
+                "ioa_scenario_generation_v9_blueprint_sequences",
+            }:
                 results.append({"status": "SKIPPED_OTHER_VERSION", "path": str(batch_path)})
                 continue
-            response = AuthoringScenarioResponse.model_validate(raw)
+            response = (
+                AuthoringScenarioResponse.model_validate(raw)
+                if version == "ioa_scenario_generation_v7_authoring"
+                else BlueprintScenarioResponse.model_validate(raw)
+            )
             if response.generation_status != "COMPLETED":
                 results.append({"status": "SKIPPED_QUALITY_GATE", "path": str(batch_path)})
                 continue
@@ -91,7 +104,12 @@ def recompile(source: Path, *, overwrite: bool = False) -> dict[str, object]:
                 "batch_id": context["batch_id"],
                 "prompt_version": response.prompt_version,
             }
-            case = compile_authoring_response(
+            compiler = (
+                compile_authoring_response
+                if version == "ioa_scenario_generation_v7_authoring"
+                else compile_blueprint_response
+            )
+            case = compiler(
                 response,
                 case_id=str(context["required_case_id"]),
                 category=str(context["target_category"]),

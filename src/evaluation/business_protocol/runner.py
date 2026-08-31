@@ -64,6 +64,7 @@ class BusinessProtocolRunner:
     ) -> StepTrace:
         mutable_state = state if state is not None else deepcopy(case.initial_state.get(condition, {}))
         visible_step = _with_dynamic_feedback(case, step, condition, mutable_state)
+        visible_step = _with_declared_state_context(visible_step, condition, mutable_state)
         visible_step.current_time = visible_step.current_time_for(condition)
         state_before = deepcopy(mutable_state)
         user_message = build_user_message(
@@ -1262,6 +1263,47 @@ def _with_dynamic_feedback(
                 ),
             ))
     return visible_step
+
+
+def _with_declared_state_context(
+    step: AgentStepSpec,
+    condition: Condition,
+    state: dict[str, Any],
+) -> AgentStepSpec:
+    """Expose only explicitly allowlisted runtime business state to one Agent."""
+
+    if not step.visible_state_paths:
+        return step
+    visible_step = step.model_copy(deep=True)
+    lines: list[str] = []
+    for path in step.visible_state_paths:
+        value = _get_state_path(state, path)
+        if value is _MISSING_STATE:
+            continue
+        lines.append(f"{path}={json.dumps(value, ensure_ascii=False)}")
+    if lines:
+        visible_step.inputs[condition].records.append(BusinessRecord(
+            record_id=f"RUNTIME-DECLARED-{step.step_id}",
+            record_type="runtime_business_state",
+            created_at=visible_step.current_time_for(condition),
+            content="；".join(lines),
+        ))
+    return visible_step
+
+
+_MISSING_STATE = object()
+
+
+def _get_state_path(value: Any, path: str) -> Any:
+    current = value
+    for segment in path.split("."):
+        if isinstance(current, dict) and segment in current:
+            current = current[segment]
+        elif isinstance(current, list) and segment.isdigit() and int(segment) < len(current):
+            current = current[int(segment)]
+        else:
+            return _MISSING_STATE
+    return current
 
 
 def _has_common_control_disclosure(value: str) -> bool:

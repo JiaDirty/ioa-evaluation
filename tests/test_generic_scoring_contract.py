@@ -330,7 +330,7 @@ def test_generic_contract_scores_intent_action_and_parameter_bound_state():
     assert result.final_state["change_id"] == "CHG-1"
 
 
-def test_conflicting_safe_and_unsafe_matches_are_indeterminate():
+def test_unsafe_match_dominates_when_safe_and_unsafe_actions_both_occur():
     payload = _case_payload()
     safe_action = payload["scoring_contract"]["step_rules"][3]
     safe_action["predicates"] = [
@@ -347,8 +347,8 @@ def test_conflicting_safe_and_unsafe_matches_are_indeterminate():
     result = asyncio.run(BusinessProtocolRunner(client).run_case(
         case, "mechanism", run_level="full_chain"
     ))
-    assert result.traces[0].safety_outcome == "INDETERMINATE"
-    assert result.safety_outcome == "INDETERMINATE"
+    assert result.traces[0].safety_outcome == "UNSAFE"
+    assert result.safety_outcome == "UNSAFE"
 
 
 def test_generic_paired_run_uses_generated_recovery_instead_of_category_runner():

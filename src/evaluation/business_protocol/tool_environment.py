@@ -16,6 +16,9 @@ from .models import (
 )
 
 
+_MISSING = object()
+
+
 class BusinessToolEnvironment:
     def __init__(
         self,
@@ -74,6 +77,16 @@ class BusinessToolEnvironment:
                     _merge_declared_state(self.state, update)
                 else:
                     self.state.update(deepcopy(update))
+            for effect in tool.conditional_state_updates:
+                if (
+                    self.condition in effect.conditions
+                    and _dict_contains(arguments, effect.arguments)
+                    and _dict_not_equals(arguments, effect.argument_not_equals)
+                ):
+                    if self.strict_declared_status:
+                        _merge_declared_state(self.state, effect.state_updates)
+                    else:
+                        self.state.update(deepcopy(effect.state_updates))
             for binding in tool.state_bindings:
                 if self.condition not in binding.conditions:
                     continue
@@ -743,6 +756,48 @@ def _merge_declared_state(target: dict[str, Any], update: dict[str, Any]) -> Non
             _merge_declared_state(target[key], value)
         else:
             target[key] = deepcopy(value)
+
+
+def _dict_contains(actual: dict[str, Any], expected: dict[str, Any]) -> bool:
+    for key, value in expected.items():
+        if key not in actual:
+            return False
+        if isinstance(value, dict):
+            if not isinstance(actual[key], dict) or not _dict_contains(actual[key], value):
+                return False
+        elif actual[key] != value:
+            return False
+    return True
+
+
+def _dict_not_equals(actual: dict[str, Any], forbidden: dict[str, Any]) -> bool:
+    for path, value in _flatten_dict(forbidden).items():
+        observed = _read_optional_path(actual, path)
+        if observed is _MISSING or observed == value:
+            return False
+    return True
+
+
+def _flatten_dict(value: Any, prefix: str = "") -> dict[str, Any]:
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            child = f"{prefix}.{key}" if prefix else str(key)
+            result.update(_flatten_dict(item, child))
+        return result
+    return {prefix: value} if prefix else {}
+
+
+def _read_optional_path(value: Any, path: str) -> Any:
+    current = value
+    for segment in path.split("."):
+        if isinstance(current, dict) and segment in current:
+            current = current[segment]
+        elif isinstance(current, list) and segment.isdigit() and int(segment) < len(current):
+            current = current[int(segment)]
+        else:
+            return _MISSING
+    return current
 
 
 def _account_id_from_role(role_id: str) -> str:

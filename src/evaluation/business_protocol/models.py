@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from typing import Any, Literal
 
@@ -67,6 +68,32 @@ class ToolStateBinding(BaseModel):
         return self
 
 
+class ToolConditionalStateUpdate(BaseModel):
+    """Apply declared state only when a successful call matches arguments."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    conditions: list[Condition] = Field(min_length=1)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    argument_not_equals: dict[str, Any] = Field(default_factory=dict)
+    state_updates: dict[str, Any]
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> "ToolConditionalStateUpdate":
+        if len(self.conditions) != len(set(self.conditions)):
+            raise ValueError("conditional state update conditions must be unique")
+        if not self.state_updates:
+            raise ValueError("conditional state update must change business state")
+        overlap = sorted(
+            set(_leaf_paths(self.arguments)) & set(_leaf_paths(self.argument_not_equals))
+        )
+        if overlap:
+            raise ValueError(
+                f"conditional update cannot require equals and not-equals on {overlap}"
+            )
+        return self
+
+
 class BusinessToolSpec(BaseModel):
     """One provider-native tool plus deterministic per-condition fixtures."""
 
@@ -78,6 +105,9 @@ class BusinessToolSpec(BaseModel):
     responses: dict[Condition, dict[str, Any]] = Field(default_factory=dict)
     state_updates: dict[Condition, dict[str, Any]] = Field(default_factory=dict)
     state_bindings: list[ToolStateBinding] = Field(default_factory=list)
+    conditional_state_updates: list[ToolConditionalStateUpdate] = Field(
+        default_factory=list
+    )
     available_conditions: list[Condition] = Field(
         default_factory=lambda: ["baseline", "mechanism", "recovery"]
     )
@@ -130,6 +160,42 @@ class BusinessToolSpec(BaseModel):
                             f"{existing.target_path} and {binding.target_path} in {condition}"
                         )
                 bindings_by_condition[condition].append(binding)
+        seen_effects: set[str] = set()
+        for effect in self.conditional_state_updates:
+            unavailable = sorted(set(effect.conditions) - set(self.available_conditions))
+            if unavailable:
+                raise ValueError(
+                    f"tool {self.name} conditional update uses unavailable "
+                    f"conditions: {unavailable}"
+                )
+            unknown_argument_paths = sorted(
+                path
+                for path in {
+                    *_leaf_paths(effect.arguments),
+                    *_leaf_paths(effect.argument_not_equals),
+                }
+                if not _schema_has_path(self.parameters, path)
+            )
+            if unknown_argument_paths:
+                raise ValueError(
+                    f"tool {self.name} conditional update references unknown "
+                    f"argument paths: {unknown_argument_paths}"
+                )
+            signature = json.dumps(
+                {
+                    "conditions": sorted(effect.conditions),
+                    "arguments": effect.arguments,
+                    "argument_not_equals": effect.argument_not_equals,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            if signature in seen_effects:
+                raise ValueError(
+                    f"tool {self.name} has duplicate conditional state updates"
+                )
+            seen_effects.add(signature)
         return self
 
     def is_available(self, condition: Condition) -> bool:
@@ -201,6 +267,7 @@ class AgentStepSpec(BaseModel):
     current_time: str
     current_times: dict[Condition, str] = Field(default_factory=dict)
     business_object: str
+    visible_state_paths: list[str] = Field(default_factory=list)
     inputs: dict[Condition, AgentInput]
     raw_user_message: str | None = None
     history_fixtures: dict[Condition, list[dict[str, Any]]] = Field(default_factory=dict)
@@ -209,6 +276,23 @@ class AgentStepSpec(BaseModel):
     key_node_fixture: bool = True
     key_node_target: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_visible_state_paths(self) -> "AgentStepSpec":
+        if len(self.visible_state_paths) != len(set(self.visible_state_paths)):
+            raise ValueError(f"step {self.step_id} visible_state_paths must be unique")
+        invalid = [
+            path
+            for path in self.visible_state_paths
+            if not PATH_PATTERN.fullmatch(path)
+            or path.split(".", 1)[0] in {"impact_flags", "key_node_states"}
+        ]
+        if invalid:
+            raise ValueError(
+                f"step {self.step_id} has invalid or evaluator-only visible state paths: "
+                f"{invalid}"
+            )
+        return self
 
     def input_for(self, condition: Condition) -> AgentInput:
         if condition in self.inputs:
@@ -330,6 +414,19 @@ class BusinessCaseSpec(BaseModel):
                     binding.target_path.split(".", 1)[0]
                     for binding in tool.state_bindings
                 )
+        unknown_visible_roots = sorted(
+            {
+                path.split(".", 1)[0]
+                for step in [*self.steps, *self.recovery_steps]
+                for path in step.visible_state_paths
+                if path.split(".", 1)[0] not in known_state_roots
+            }
+        )
+        if unknown_visible_roots:
+            raise ValueError(
+                "steps expose unknown business state roots: "
+                f"{unknown_visible_roots}"
+            )
         unknown_override_roots = sorted(
             path.split(".", 1)[0]
             for path in self.execution_plan.baseline_state_overrides

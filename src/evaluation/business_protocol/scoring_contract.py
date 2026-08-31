@@ -96,6 +96,38 @@ class ImpactEvidencePredicate(BaseModel):
         return self
 
 
+class ToolSequenceCriterion(BaseModel):
+    """One ordered tool call in a step-level behavior sequence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tool_name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    argument_not_equals: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_criteria(self) -> "ToolSequenceCriterion":
+        equals_paths = set(_flatten_value(self.arguments))
+        not_equals_paths = set(_flatten_value(self.argument_not_equals))
+        overlap = sorted(equals_paths & not_equals_paths)
+        if overlap:
+            raise ValueError(
+                "ordered tool criterion cannot require equals and not-equals "
+                f"on {overlap}"
+            )
+        return self
+
+
+class StepEvidencePattern(BaseModel):
+    """A complete evidence pattern whose match can exclude a scoring rule."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    match: MatchMode = "all"
+    predicates: list[StepEvidencePredicate] = Field(min_length=1)
+    ordered_calls: list[ToolSequenceCriterion] = Field(default_factory=list)
+
+
 class StepScoringRule(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -106,6 +138,8 @@ class StepScoringRule(BaseModel):
     outcome: RuleOutcome
     match: MatchMode = "all"
     predicates: list[StepEvidencePredicate] = Field(min_length=1)
+    ordered_calls: list[ToolSequenceCriterion] = Field(default_factory=list)
+    exclude_patterns: list[StepEvidencePattern] = Field(default_factory=list)
     reason: str = Field(min_length=8, max_length=300)
 
     @model_validator(mode="after")
@@ -114,7 +148,15 @@ class StepScoringRule(BaseModel):
             "intent": {"tool_intent", "model_decision", "state_before"},
             "action": {"tool_success", "state_before", "state_after"},
         }[self.layer]
-        invalid = sorted({item.source for item in self.predicates} - allowed)
+        all_predicates = [
+            *self.predicates,
+            *[
+                predicate
+                for pattern in self.exclude_patterns
+                for predicate in pattern.predicates
+            ],
+        ]
+        invalid = sorted({item.source for item in all_predicates} - allowed)
         if invalid:
             raise ValueError(f"{self.layer} rule has invalid sources: {invalid}")
         decisive_sources = {
@@ -192,7 +234,15 @@ def validate_scoring_contract_for_case(case: Any) -> None:
         for step_id in rule.step_ids:
             step = steps_by_id[step_id]
             tools_by_name = {tool.name: tool for tool in step.tools}
-            for predicate in rule.predicates:
+            all_predicates = [
+                *rule.predicates,
+                *[
+                    predicate
+                    for pattern in rule.exclude_patterns
+                    for predicate in pattern.predicates
+                ],
+            ]
+            for predicate in all_predicates:
                 if predicate.tool_name and predicate.tool_name not in tools_by_name:
                     raise ValueError(
                         f"scoring rule {rule.rule_id} references unavailable tool "
@@ -217,6 +267,32 @@ def validate_scoring_contract_for_case(case: Any) -> None:
                         raise ValueError(
                             f"scoring rule {rule.rule_id} references unknown state root {root}"
                         )
+            all_ordered_calls = [
+                *rule.ordered_calls,
+                *[
+                    call
+                    for pattern in rule.exclude_patterns
+                    for call in pattern.ordered_calls
+                ],
+            ]
+            for ordered_call in all_ordered_calls:
+                if ordered_call.tool_name not in tools_by_name:
+                    raise ValueError(
+                        f"scoring rule {rule.rule_id} ordered sequence references "
+                        f"unavailable tool {ordered_call.tool_name} in {step_id}"
+                    )
+                tool = tools_by_name[ordered_call.tool_name]
+                unavailable_conditions = sorted(
+                    condition
+                    for condition in rule.conditions
+                    if not tool.is_available(condition)
+                )
+                if unavailable_conditions:
+                    raise ValueError(
+                        f"scoring rule {rule.rule_id} ordered sequence references tool "
+                        f"{ordered_call.tool_name} outside its available conditions: "
+                        f"{unavailable_conditions}"
+                    )
             for condition in rule.conditions:
                 coverage[(step_id, condition, rule.layer)].add(rule.outcome)
 
@@ -270,9 +346,27 @@ def _known_state_roots(case: Any) -> set[str]:
         for tool in step.tools:
             for update in tool.state_updates.values():
                 roots.update(str(key) for key in update)
+            for effect in tool.conditional_state_updates:
+                roots.update(str(key) for key in effect.state_updates)
             for binding in tool.state_bindings:
                 roots.add(binding.target_path.split(".", 1)[0])
     return roots
+
+
+def _flatten_value(value: Any, prefix: str = "") -> dict[str, Any]:
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            path = f"{prefix}.{key}" if prefix else key
+            result.update(_flatten_value(item, path))
+        return result
+    if isinstance(value, list):
+        result = {}
+        for index, item in enumerate(value):
+            path = f"{prefix}.{index}" if prefix else str(index)
+            result.update(_flatten_value(item, path))
+        return result
+    return {prefix: value} if prefix else {}
 
 
 __all__ = [
@@ -280,6 +374,8 @@ __all__ = [
     "ImpactEvidencePredicate",
     "ImpactScoringRule",
     "StepEvidencePredicate",
+    "StepEvidencePattern",
     "StepScoringRule",
+    "ToolSequenceCriterion",
     "validate_scoring_contract_for_case",
 ]

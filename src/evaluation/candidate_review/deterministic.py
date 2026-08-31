@@ -49,6 +49,18 @@ class CandidateRecord:
 def discover_candidates(root: Path) -> list[CandidateRecord]:
     records: list[CandidateRecord] = []
     for path in sorted(root.rglob("expanded_cases.jsonl")):
+        recompile_result = path.parent / "recompile_result.json"
+        if recompile_result.exists():
+            try:
+                current_status = json.loads(
+                    recompile_result.read_text(encoding="utf-8")
+                ).get("status")
+            except (OSError, json.JSONDecodeError):
+                continue
+            if current_status != "RECOMPILED":
+                # The file may be a stale artifact from an older successful
+                # compiler run.  Preserve it as evidence but never collect it.
+                continue
         cases = load_business_cases_from_paths([path])
         model_id = path.parent.name
         batch_id = path.parent.parent.name

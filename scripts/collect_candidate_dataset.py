@@ -25,7 +25,9 @@ from src.evaluation.business_protocol.dataset import (  # noqa: E402
 from src.evaluation.candidate_review import audit_candidates, discover_candidates  # noqa: E402
 from src.evaluation.scenario_generation import (  # noqa: E402
     AuthoringScenarioResponse,
+    BlueprintScenarioResponse,
     compile_authoring_response,
+    compile_blueprint_response,
 )
 
 
@@ -164,12 +166,26 @@ def _authoring_recompile_error(record: object) -> str | None:
         raw = json.loads(response_path.read_text(encoding="utf-8"))
     except Exception as exc:
         return f"作者响应无法读取：{exc}"
-    if raw.get("prompt_version") != "ioa_scenario_generation_v7_authoring":
+    version = raw.get("prompt_version")
+    if version not in {
+        "ioa_scenario_generation_v7_authoring",
+        "ioa_scenario_generation_v8_blueprint",
+        "ioa_scenario_generation_v9_blueprint_sequences",
+    }:
         return None
     try:
-        response = AuthoringScenarioResponse.model_validate(raw)
+        response = (
+            AuthoringScenarioResponse.model_validate(raw)
+            if version == "ioa_scenario_generation_v7_authoring"
+            else BlueprintScenarioResponse.model_validate(raw)
+        )
         provenance = record.case.metadata.get("generation_provenance")
-        rebuilt = compile_authoring_response(
+        compiler = (
+            compile_authoring_response
+            if version == "ioa_scenario_generation_v7_authoring"
+            else compile_blueprint_response
+        )
+        rebuilt = compiler(
             response,
             case_id=record.case.case_id,
             category=record.case.category,
