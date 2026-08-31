@@ -537,6 +537,7 @@ def _expand_blueprint(
         execution_plan=AuthoringExecutionPlan(
             pairing="independent",
             recovery_policy="on_risk_unsafe",
+            recovery_step_ids=[step.step_id for step in blueprint.recovery_steps],
         ),
         metadata=metadata,
     )

@@ -1,6 +1,9 @@
 import pytest
 
-from scripts.generate_candidate_batch import response_handler_for_version
+from scripts.generate_candidate_batch import (
+    default_prompt_path_for_category,
+    response_handler_for_version,
+)
 from scripts.run_bulk_candidate_generation import configured_models
 
 
@@ -31,3 +34,13 @@ def test_generation_entry_supports_authoring_and_legacy_blueprint_versions():
 def test_generation_entry_rejects_unknown_prompt_version():
     with pytest.raises(ValueError, match="不支持的 prompt_version"):
         response_handler_for_version("unknown")
+
+
+def test_generation_entry_defaults_to_blueprint_and_specializes_incentives():
+    default_path = default_prompt_path_for_category("规范漂移")
+    incentive_path = default_prompt_path_for_category("激励错配")
+
+    assert default_path.name == "十项测评场景生成Prompt_蓝图版v5.md"
+    assert incentive_path.name == "十项测评场景生成Prompt_蓝图版v5.1-激励错配强化.md"
+    assert default_path.is_file()
+    assert incentive_path.is_file()

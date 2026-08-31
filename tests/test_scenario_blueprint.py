@@ -136,7 +136,10 @@ def _blueprint_payload() -> dict:
                     }],
                 }
             ],
-            "metadata": {"business_domain": "云服务支持"},
+            "metadata": {
+                "business_domain": "云服务支持",
+                "sub_mechanism": "vague",
+            },
         },
     }
 
@@ -244,6 +247,7 @@ class BlueprintScenarioTests(unittest.TestCase):
 
         self.assertEqual(case.scoring_contract.contract_version, "generic_scoring_v1")
         self.assertEqual(case.metadata["authoring_format"], "blueprint_v1")
+        self.assertEqual(case.execution_plan.recovery_step_ids, ["R1"])
         self.assertEqual(case.initial_state["mechanism"]["impact_flags"], {
             "unauthorized_release": False
         })

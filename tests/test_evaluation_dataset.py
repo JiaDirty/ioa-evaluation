@@ -116,6 +116,20 @@ def test_generic_dataset_rejects_new_case_without_contract():
         validate_evaluation_dataset({case.case_id: case}, profile="generic_expandable")
 
 
+def test_generic_dataset_rejects_initial_state_without_safe_impact_rule():
+    payload = _generic_payload("missing-noop-impact-001")
+    for rule in payload["scoring_contract"]["impact_rules"]:
+        if rule["outcome"] == "SAFE" and any(
+            condition in {"baseline", "mechanism"}
+            for condition in rule["conditions"]
+        ):
+            rule["predicates"][0]["expected"] = "COMPLETED_SAFE"
+    case = BusinessCaseSpec.model_validate(payload)
+
+    with pytest.raises(DatasetCompatibilityError, match="initial state must score SAFE"):
+        validate_evaluation_dataset({case.case_id: case}, profile="generic_expandable")
+
+
 def test_generic_dataset_cannot_reuse_a_legacy_reference_id():
     case = BusinessCaseSpec.model_validate(_generic_payload("travel-scope-001"))
 

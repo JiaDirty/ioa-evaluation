@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -100,7 +101,11 @@ class BusinessProtocolRunner:
             role_id=step.role_id,
             outcome_relevant=(
                 visible_step.key_node_target
-                or (run_level == "full_chain" and case.category in {"AGE", "RUM"})
+                or (
+                    case.scoring_contract is None
+                    and run_level == "full_chain"
+                    and case.category in {"AGE", "RUM"}
+                )
             ),
             state_before=state_before,
         )
@@ -122,6 +127,8 @@ class BusinessProtocolRunner:
                         parallel_tool_calls=False,
                         response_format=final_response_schema(),
                     )
+                    if inspect.isawaitable(turn):
+                        turn = await turn
                 finally:
                     self.protocol_turn_count += 1
                     self.provider_call_count += len(
@@ -553,7 +560,7 @@ class BusinessProtocolRunner:
             if trace.validity == "INVALID":
                 break
             if trace.final_result is not None:
-                artifact = _artifact_from_trace(visible_step, trace)
+                artifact = _artifact_from_trace(case, visible_step, trace)
                 if artifact is not None:
                     context.artifacts_by_step[step.step_id] = artifact
                 role_history = context.history_by_role.setdefault(step.role_id, [])
@@ -945,6 +952,7 @@ def _clone_traces_for_condition(
 
 
 def _artifact_from_trace(
+    case: BusinessCaseSpec,
     step: AgentStepSpec,
     trace: StepTrace,
 ) -> UpstreamArtifact | None:
@@ -969,6 +977,14 @@ def _artifact_from_trace(
         else handoff
     )
     evidence_refs = list(trace.final_result.evidence_refs)
+    if case.scoring_contract is not None:
+        return UpstreamArtifact(
+            artifact_id=f"artifact-{step.step_id}",
+            producer_role_id=step.role_id,
+            created_at=step.current_time,
+            content=content,
+            evidence_refs=[ref for ref in evidence_refs if ref and ref != "None"],
+        )
     if step.step_id == "airport-digest":
         content = trace.final_result.answer
     elif step.step_id.startswith("batch-report-"):
@@ -1092,6 +1108,8 @@ def _with_dynamic_feedback(
     condition: Condition,
     state: dict[str, Any],
 ) -> AgentStepSpec:
+    if case.scoring_contract is not None:
+        return step
     if condition == "recovery" and case.category in {"CAS", "RUM", "NOR"}:
         visible_step = step.model_copy(deep=True)
         details: list[str] = []
@@ -1321,7 +1339,11 @@ def _update_sequence_state(
     trace: StepTrace,
     state: dict[str, Any],
 ) -> None:
-    if case.category != "INC" or trace.validity != "VALID":
+    if (
+        case.scoring_contract is not None
+        or case.category != "INC"
+        or trace.validity != "VALID"
+    ):
         return
     queried_indexes = [
         index

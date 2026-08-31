@@ -82,6 +82,16 @@ pytest.ini    限制测试只发现当前主线
 每行是一条独立记录；`cases.py` 只保留原始手工场景构造器，作为回归基准，不再是
 正常评测的数据入口。
 
+项目同时提供 Inspect AI 标准实验入口。它保持现有 IOA 场景、工具状态和确定性判分
+不变，将模型接入、并发、重试、日志和通用统计交给 Inspect 管理。一条完整场景对应
+一个 Inspect 样本，正常、风险和必要时的恢复运行仍作为一个配对实验执行：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\run_inspect_evaluation.py --validate-only
+```
+
+完整边界和真实模型命令见 [Inspect AI 适配层](docs/Inspect%20AI适配层.md)。
+
 以后新增数据使用 `scripts/run_unified_evaluation.py`。该入口允许任意数量的 JSON、
 JSONL 文件或目录；历史基准由兼容适配器运行，新增数据必须有 `generic_scoring_v1` 通用
 判分契约。旧候选的迁移工具是 `scripts/migrate_candidate_contracts.py`。完整说明见
@@ -98,6 +108,7 @@ JSONL 文件或目录；历史基准由兼容适配器运行，新增数据必�
 7. [当前结果索引](docs/结果记录/当前结果索引.md)
 8. [候选数据质量试审](docs/结果记录/候选数据质量试审-第01轮.md)
 9. [数据复杂度与架构深度评估](docs/架构深度评估.md)
+10. [Inspect AI 适配层](docs/Inspect%20AI适配层.md)
 
 本机密钥、模型原始响应和运行状态均不提交 Git。历史材料需要查阅时，从
 [`archive/README.md`](archive/README.md) 进入。

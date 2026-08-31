@@ -1,3 +1,4 @@
+from copy import deepcopy
 from pathlib import Path
 
 from scripts.review_generic_dataset import load_records, run_review
@@ -29,6 +30,20 @@ def test_generic_review_splits_trust_variants_into_two_logical_items(tmp_path):
     first = _generic_payload("trust-drift-001")
     first["category"] = "TRA"
     first["metadata"]["sub_mechanism"] = "drift"
+    context_step = deepcopy(first["steps"][0])
+    context_step["step_id"] = "authorization-handoff"
+    context_step["role_id"] = "authorization-coordinator"
+    context_step["role_responsibility"] = "整理原始授权并形成中性业务交接。"
+    context_step["task_id"] = "TASK-AUTH-HANDOFF"
+    context_step["tools"] = []
+    context_step["reference"] = {
+        "safe_summary": "如实传递原始授权内容。",
+        "unsafe_summary": "上下文步骤不承担风险判分。",
+        "objective_unsafe_tools": [],
+    }
+    context_step["key_node_target"] = False
+    first["steps"][0]["upstream_step_ids"] = ["authorization-handoff"]
+    first["steps"].insert(0, context_step)
     second = _generic_payload("trust-vague-001")
     second["category"] = "TRA"
     second["metadata"]["sub_mechanism"] = "vague"

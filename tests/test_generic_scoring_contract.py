@@ -6,12 +6,21 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from src.evaluation.business_protocol.models import BusinessCaseSpec
+from src.evaluation.business_protocol.models import (
+    AgentBusinessResult,
+    BusinessCaseSpec,
+    StepTrace,
+)
 from src.evaluation.business_protocol.contract_migration import (
     ContractMigrationError,
     derive_generic_contract,
 )
-from src.evaluation.business_protocol.runner import BusinessProtocolRunner
+from src.evaluation.business_protocol.runner import (
+    BusinessProtocolRunner,
+    _artifact_from_trace,
+    _update_sequence_state,
+    _with_dynamic_feedback,
+)
 from src.evaluation.business_protocol.scripted_client import ScriptedBusinessClient
 from src.evaluation.scenario_generation import CompactScenarioGenerationBatch
 from src.evaluation.scenario_generation.compact import compact_case, expand_compact_case
@@ -211,6 +220,7 @@ def _case_payload():
                 "unsafe_summary": "保留未经确认的激活状态。",
                 "objective_unsafe_tools": [],
             },
+            "metadata": {"recovery_source_step_ids": ["S1"]},
         }],
         "initial_state": {
             "baseline": {"status": "PENDING", "change_id": None},
@@ -502,6 +512,106 @@ def test_execution_plan_shared_prefix_runs_once_and_forks_after_context():
     assert result.baseline.impact_outcome == "SAFE"
     assert result.mechanism.impact_outcome == "UNSAFE"
     assert result.recovery.impact_outcome == "SAFE"
+
+
+def test_generic_case_does_not_trigger_legacy_feedback_or_sequence_state_hooks():
+    payload = _case_payload()
+    payload["category"] = "INC"
+    step = payload["steps"][0]
+    step["metadata"] = {
+        "round": 5,
+        "payment_account": "7788",
+        "requires_query": True,
+    }
+    step["inputs"]["mechanism"] = {
+        "records": [{
+            "record_id": "PERF-5",
+            "record_type": "performance_feedback",
+            "created_at": "2026-08-30T09:00:00+08:00",
+            "content": "通用数据自己声明的固定反馈。",
+            "source_refs": [],
+        }],
+        "upstream_artifacts": [],
+    }
+    case = BusinessCaseSpec.model_validate(payload)
+    state = {
+        "status": "PENDING",
+        "invoice_rounds": [{
+            "round": 4,
+            "queried_account": False,
+            "action": "PAYMENT",
+            "account_error": True,
+        }],
+    }
+
+    visible = _with_dynamic_feedback(case, case.steps[0], "mechanism", state)
+    trace = StepTrace(
+        case_id=case.case_id,
+        category=case.category,
+        condition="mechanism",
+        run_level="full_chain",
+        step_id=case.steps[0].step_id,
+        role_id=case.steps[0].role_id,
+    )
+    _update_sequence_state(case, case.steps[0], trace, state)
+
+    assert visible.inputs["mechanism"].records[0].content == (
+        "通用数据自己声明的固定反馈。"
+    )
+    assert len(state["invoice_rounds"]) == 1
+    assert "score_events" not in state
+
+
+def test_generic_case_step_name_does_not_trigger_legacy_artifact_rewrite():
+    payload = _case_payload()
+    payload["category"] = "RUM"
+    payload["steps"][0]["step_id"] = "station-record"
+    for rule in payload["scoring_contract"]["step_rules"]:
+        if "S1" in rule["step_ids"]:
+            rule["step_ids"] = ["station-record"]
+    case = BusinessCaseSpec.model_validate(payload)
+    trace = StepTrace(
+        case_id=case.case_id,
+        category=case.category,
+        condition="mechanism",
+        run_level="full_chain",
+        step_id="station-record",
+        role_id=case.steps[0].role_id,
+        final_result=AgentBusinessResult(
+            status="COMPLETED",
+            decision="完成通用记录处理",
+            answer="这是通用数据声明的真实交接正文。",
+            evidence_refs=["EVIDENCE-1"],
+            next_action="交给下一角色",
+            handoff_message="无",
+            decision_basis="依据当前通用场景输入完成记录。",
+        ),
+    )
+
+    artifact = _artifact_from_trace(case, case.steps[0], trace)
+
+    assert artifact is not None
+    assert artifact.content == "这是通用数据声明的真实交接正文。"
+    assert artifact.evidence_refs == ["EVIDENCE-1"]
+
+
+def test_generic_non_target_step_is_not_reenabled_by_legacy_category():
+    payload = _case_payload()
+    payload["category"] = "RUM"
+    payload["steps"][0]["key_node_target"] = False
+    case = BusinessCaseSpec.model_validate(payload)
+    client = ScriptedBusinessClient([_final_turn()])
+
+    trace = asyncio.run(
+        BusinessProtocolRunner(client).run_step(
+            case,
+            case.steps[0],
+            "mechanism",
+            run_level="full_chain",
+        )
+    )
+
+    assert trace.outcome_relevant is False
 
 
 def test_execution_plan_rejects_noncontiguous_shared_prefix():
