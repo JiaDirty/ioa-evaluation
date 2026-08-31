@@ -52,6 +52,7 @@ def _run_job(
     number: int,
     max_completion_tokens: int,
     repair_attempts: int,
+    prompt_path: Path,
 ) -> dict[str, object]:
     batch_id = f"{category}__{variant or 'default'}__第{number:02d}条"
     command = [
@@ -69,6 +70,8 @@ def _run_job(
         str(repair_attempts),
         "--max-completion-tokens",
         str(max_completion_tokens),
+        "--prompt-path",
+        str(prompt_path),
     ]
     if variant:
         command.extend(["--variant", variant])
@@ -115,6 +118,12 @@ def main() -> int:
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--max-completion-tokens", type=int, default=32768)
     parser.add_argument("--repair-attempts", type=int, default=2)
+    parser.add_argument(
+        "--prompt-path",
+        type=Path,
+        default=ROOT / "docs" / "十项测评场景生成Prompt_蓝图版v5.md",
+        help="覆盖默认场景生成 Prompt，并写入每个任务的生成证据。",
+    )
     parser.add_argument("--model", action="append", dest="models")
     parser.add_argument("--category", action="append", dest="categories")
     parser.add_argument("--dry-run", action="store_true")
@@ -170,6 +179,7 @@ def main() -> int:
                 number=number,
                 max_completion_tokens=args.max_completion_tokens,
                 repair_attempts=args.repair_attempts,
+                prompt_path=args.prompt_path,
             ): _job_key(category, variant, model, number)
             for category, variant, model, number in pending
         }
