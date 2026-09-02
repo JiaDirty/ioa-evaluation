@@ -13,14 +13,25 @@
 实验。首轮质量试审还发现跨批次编号重复、因果对照缺失、未来信息和工具定义冲突等问题。
 它们作为历史候选保留，不会自动落入原 11 条的固定判分规则。
 
+旧的两阶段目录 `data/scenario_pipeline/场景生产流水线-第01轮/` 保留为历史迁移证据，
+不再作为新数据的生产入口。当前生产入口只有 `PipelineOrchestrator`：它把所有来源先
+转换为 `ScenarioTask`，再生成 `ScenarioKernel`、`EffectSpec` 和 `CompiledCase`。
+
 当前代码已经提供统一评测入口。以后新增场景必须携带声明式通用判分契约，运行器据此
 读取场景自己的工具、状态绑定和判分规则，不再要求为每条数据增加 Python 分支。原 11
-条则作为哈希锁定的回归基准保留，继续复现此前实验口径；两类数据可以通过同一个入口
-混合加载和运行。
+条在迁移完成前作为哈希锁定的回归基准保留；正式生产数据不再按来源分支运行。
+
+场景生产侧现在也只有一个规范入口：`PipelineOrchestrator`。所有来源先迁移为
+`ScenarioTask`，再依次生成 `ScenarioKernel`、`EffectSpec` 和 `CompiledCase`；状态、版本、
+文件和依赖统一写入每个生产根目录下的 `registry.json`。一次性迁移 11 条历史数据和 440 条
+候选的命令见 `scripts/migrate_to_unified_tasks.py`，日常提交、处理和续跑由
+`scripts/run_canonical_pipeline.py` 完成。
 
 新数据不再要求生成模型直接手写完整运行结构。模型输出简洁作者格式，本地编译器自动
 展开工具条件、状态绑定及意图/动作规则，并演算正常、风险和恢复的六条典型路径。完整
 运行数据继续保留科研所需信息，但机械复杂度不再由模型承担。
+编译阶段先记录 `COMPILED`，只有独立六路径演算返回 `PASS` 才会晋级
+`SIX_PATH_VALID`；格式可解析、编译成功和质量合格是三个不同状态。
 
 ## 十项测评
 
@@ -97,6 +108,27 @@ JSONL 文件或目录；历史基准由兼容适配器运行，新增数据必�
 判分契约。旧候选的迁移工具是 `scripts/migrate_candidate_contracts.py`。完整说明见
 [可扩充评测数据架构](docs/可扩充评测数据架构.md)。
 
+两阶段管线命令：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\run_scenario_pipeline.py `
+  --stage all --source data\candidate_batches\批量生成-第01轮 --source-kind legacy `
+  --output data\scenario_pipeline\场景生产流水线-第01轮 --display-summary
+```
+
+统一任务迁移和编排命令：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\migrate_to_unified_tasks.py `
+  --output data\unified_cases
+.\.venv\Scripts\python.exe scripts\run_canonical_pipeline.py `
+  --root data\unified_cases --process-all --process
+```
+
+先做 22 条试点可加 `--sample-per-item 2`。真实生成阶段见
+[两阶段场景生产流水线](docs/两阶段场景生产流水线.md)；两个 API 脚本只有显式传入
+`--allow-live-api` 才会调用 AI Hub Mix。
+
 ## 阅读入口
 
 1. [十项测评总览](docs/十项测评总览.md)
@@ -109,6 +141,10 @@ JSONL 文件或目录；历史基准由兼容适配器运行，新增数据必�
 8. [候选数据质量试审](docs/结果记录/候选数据质量试审-第01轮.md)
 9. [数据复杂度与架构深度评估](docs/架构深度评估.md)
 10. [Inspect AI 适配层](docs/Inspect%20AI适配层.md)
+11. [ScenarioKernel 与 EffectSpec 规范](docs/ScenarioKernel与EffectSpec规范.md)
+12. [两阶段场景生产流水线](docs/两阶段场景生产流水线.md)
+13. [交接说明（2026-09-01）](docs/交接说明_20260901.md)
+14. [统一数据格式与端到端生成流程](docs/统一数据格式与端到端生成流程.md)
 
 本机密钥、模型原始响应和运行状态均不提交 Git。历史材料需要查阅时，从
 [`archive/README.md`](archive/README.md) 进入。
