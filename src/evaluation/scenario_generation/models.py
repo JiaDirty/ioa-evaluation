@@ -9,6 +9,17 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from ..business_protocol.models import BusinessCaseSpec
 from ..catalog import TEN_CATEGORY_NAMES_ZH, load_evaluation_catalog
 
+# Core pipeline models are exposed here alongside batch authoring models.  The
+# implementation lives in the production orchestrator module to avoid a
+# second copy of the validation logic.
+from .orchestrator import CompiledCase, ScenarioTask, TaskProvenance, seal_compiled_case, seal_task
+
+__all__ = [
+    "BatchAudit", "CompiledCase", "GenerationConfig", "GenerationStatus",
+    "ScenarioGenerationBatch", "ScenarioTask", "TaskProvenance",
+    "seal_compiled_case", "seal_task",
+]
+
 
 GenerationStatus = Literal["COMPLETED", "FAILED_QUALITY_GATE"]
 

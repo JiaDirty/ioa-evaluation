@@ -84,7 +84,7 @@ def _portable_pipeline_snapshot(pipeline_root: Path) -> dict[str, Any]:
 
     return {
         "schema_version": "source_package_pipeline_snapshot_v1",
-        "canonical_entrypoint": "scripts/run_canonical_pipeline.py",
+        "canonical_entrypoint": "scripts/run_pipeline.py",
         "canonical_schema": [
             "ScenarioTask",
             "ScenarioKernel",

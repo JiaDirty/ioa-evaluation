@@ -88,7 +88,7 @@ from .repair import (
 # ``unified_pipeline`` and ``pipeline_runner`` are retained as importable
 # historical evidence only.  They are deliberately not re-exported: formal
 # code enters through PipelineOrchestrator below.
-from .unified_architecture import (
+from .orchestrator import (
     ArtifactRef,
     CompiledCase,
     PipelineOrchestrator,
@@ -101,11 +101,11 @@ from .unified_architecture import (
     TaskProvenance,
     seal_compiled_case,
     seal_task,
-    validate_transition as validate_canonical_transition,
+    validate_transition as validate_pipeline_transition,
+    PipelineStage,
     verify_compiled_case_hash,
     verify_task_hash,
 )
-from .legacy_conversion import canonicalize_legacy_case, effect_from_canonical_case
 
 __all__ = [
     "AuthoringCaseSpec",
@@ -206,9 +206,8 @@ __all__ = [
     "TaskProvenance",
     "seal_compiled_case",
     "seal_task",
-    "validate_canonical_transition",
+    "validate_pipeline_transition",
+    "PipelineStage",
     "verify_compiled_case_hash",
     "verify_task_hash",
-    "canonicalize_legacy_case",
-    "effect_from_canonical_case",
 ]

@@ -84,7 +84,7 @@ def test_orchestrator_writes_one_case_directory_and_single_registry(tmp_path):
     first = orchestrator.submit(task)
     assert first.stage == "TASK_CREATED"
     processed = orchestrator.process(task.task_id)
-    assert processed.stage == "EFFECT_READY"
+    assert processed.stage == "EFFECT_DRAFT"
     assert (tmp_path / "unified" / "registry.json").exists()
     case_dirs = list((tmp_path / "unified" / "cases").iterdir())
     assert len(case_dirs) == 1
@@ -120,7 +120,7 @@ def test_kernel_change_invalidates_downstream_artifacts(tmp_path):
     assert invalidated.stage == "INVALIDATED"
     assert set(["kernel", "effect", "compiled"]).issubset(invalidated.invalidated_artifacts)
     resumed = orchestrator.resume(task.task_id)
-    assert resumed.stage == "EFFECT_READY"
+    assert resumed.stage == "EFFECT_DRAFT"
     assert resumed.generation == 2
 
 
@@ -218,5 +218,5 @@ def test_generated_artifacts_and_retry_use_the_same_registry(tmp_path):
         reason="effect needs model revision",
     ).stage == "CHECK_FAILED"
     resumed = target.resume(task.task_id)
-    assert resumed.stage == "EFFECT_READY"
+    assert resumed.stage == "EFFECT_DRAFT"
     assert resumed.generation == 2

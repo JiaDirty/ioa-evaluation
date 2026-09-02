@@ -12,8 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.migrate_to_unified_tasks import _candidate_tasks, _historical_tasks  # noqa: E402
-from src.evaluation.scenario_generation.unified_architecture import PipelineOrchestrator  # noqa: E402
+from scripts.migrations.migrate_scenario_tasks_v1 import _candidate_tasks, _historical_tasks  # noqa: E402
+from src.evaluation.scenario_generation.orchestrator import PipelineOrchestrator  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:

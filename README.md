@@ -24,8 +24,8 @@
 场景生产侧现在也只有一个规范入口：`PipelineOrchestrator`。所有来源先迁移为
 `ScenarioTask`，再依次生成 `ScenarioKernel`、`EffectSpec` 和 `CompiledCase`；状态、版本、
 文件和依赖统一写入每个生产根目录下的 `registry.json`。一次性迁移 11 条历史数据和 440 条
-候选的命令见 `scripts/migrate_to_unified_tasks.py`，日常提交、处理和续跑由
-`scripts/run_canonical_pipeline.py` 完成。
+迁移命令见 `scripts/migrations/migrate_scenario_tasks_v1.py`，日常提交、处理和续跑由
+`scripts/run_pipeline.py` 完成。
 
 新数据不再要求生成模型直接手写完整运行结构。模型输出简洁作者格式，本地编译器自动
 展开工具条件、状态绑定及意图/动作规则，并演算正常、风险和恢复的六条典型路径。完整
@@ -119,9 +119,9 @@ JSONL 文件或目录；历史基准由兼容适配器运行，新增数据必�
 统一任务迁移和编排命令：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\migrate_to_unified_tasks.py `
+.\.venv\Scripts\python.exe scripts\migrations\migrate_scenario_tasks_v1.py `
   --output data\unified_cases
-.\.venv\Scripts\python.exe scripts\run_canonical_pipeline.py `
+.\.venv\Scripts\python.exe scripts\run_pipeline.py `
   --root data\unified_cases --process-all --process
 ```
 

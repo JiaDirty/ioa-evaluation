@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.evaluation.scenario_generation.unified_architecture import (  # noqa: E402
+from src.evaluation.scenario_generation.orchestrator import (  # noqa: E402
     PipelineOrchestrator,
     ScenarioTask,
 )
