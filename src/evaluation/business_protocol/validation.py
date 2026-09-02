@@ -6,7 +6,7 @@ import re
 import json
 from datetime import datetime
 
-from ..catalog import TEN_CATEGORY_CODES
+from ..scenario_generation.catalog import TEN_CATEGORY_CODES
 from .generic_scoring import score_generic_impact
 from .models import BusinessCaseSpec
 from .prompt import build_api_tools, build_user_message

@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from ..catalog import load_evaluation_catalog
+from ..scenario_generation.catalog import load_evaluation_catalog
 from .scoring_contract import GenericScoringContract, PATH_PATTERN
 
 

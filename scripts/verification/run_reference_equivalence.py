@@ -17,7 +17,6 @@ if str(ROOT) not in sys.path:
 from src.evaluation.business_protocol.loader import load_business_cases  # noqa: E402
 from src.evaluation.business_protocol.models import StepTrace, ToolIntentEvidence, ToolResultEvidence  # noqa: E402
 from src.evaluation.business_protocol.scoring import score_step  # noqa: E402
-from src.evaluation.scenario_generation.pipeline import sha256_case  # noqa: E402
 
 
 _VECTORS: dict[str, tuple[str, dict[str, Any]]] = {
@@ -106,15 +105,21 @@ def _trace(case: Any, step_id: str, tool_name: str, arguments: dict[str, Any]) -
     return trace
 
 
-def run(original_root: Path, pipeline_root: Path) -> dict[str, Any]:
+def run(original_root: Path, workspace_root: Path) -> dict[str, Any]:
     originals = load_business_cases(original_root)
-    registry = json.loads((pipeline_root / "registry.json").read_text(encoding="utf-8"))
+    registry = json.loads((workspace_root / "registry.json").read_text(encoding="utf-8"))
     structural_pass = 0
     vector_pass = 0
     failures: list[str] = []
     for case_id, original in sorted(originals.items()):
-        task_id = next(item for item, entry in registry["entries"].items() if entry["case_id"] == case_id)
-        compiled_path = pipeline_root / registry["entries"][task_id]["artifacts"]["compiled"]["path"]
+        task_id = next(
+            (tid for tid, entry in registry["entries"].items() if entry.get("case_id") == case_id),
+            None,
+        )
+        if task_id is None:
+            failures.append(f"{case_id}: not found in registry")
+            continue
+        compiled_path = workspace_root / registry["entries"][task_id]["artifacts"]["compiled"]["path"]
         migrated = json.loads(compiled_path.read_text(encoding="utf-8"))["case"]
         if _strip_migration_fields(original.model_dump(mode="json")) != _strip_migration_fields(migrated):
             failures.append(f"{case_id}: business fields changed during reference conversion")
@@ -128,15 +133,21 @@ def run(original_root: Path, pipeline_root: Path) -> dict[str, Any]:
             vector_pass += 1
         else:
             failures.append(f"{case_id}: migrated unsafe vector was {migrated_trace.safety_outcome}/{migrated_trace.model_intent_outcome}")
-    return {"case_count": len(originals), "structural_pass": structural_pass, "unsafe_vector_pass": vector_pass, "status": "PASS" if not failures else "FAIL", "failures": failures}
+    return {
+        "case_count": len(originals),
+        "structural_pass": structural_pass,
+        "unsafe_vector_pass": vector_pass,
+        "status": "PASS" if not failures else "FAIL",
+        "failures": failures,
+    }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--original", type=Path, default=ROOT / "data" / "scenarios")
-    parser.add_argument("--pipeline-root", type=Path, required=True)
+    parser.add_argument("--original", type=Path, default=ROOT / "data" / "raw" / "reference_sources")
+    parser.add_argument("--workspace", type=Path, default=ROOT / "data" / "workspace")
     args = parser.parse_args()
-    print(json.dumps(run(args.original.resolve(), args.pipeline_root.resolve()), ensure_ascii=False, indent=2))
+    print(json.dumps(run(args.original.resolve(), args.workspace.resolve()), ensure_ascii=False, indent=2))
     return 0
 
 

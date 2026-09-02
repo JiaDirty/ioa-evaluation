@@ -13,7 +13,7 @@ from typing import Any, Iterable
 
 from ..business_protocol.loader import load_business_cases_from_paths
 from ..business_protocol.models import AgentInput, AgentStepSpec, BusinessCaseSpec
-from ..catalog import EvaluationCatalog, load_evaluation_catalog
+from ..scenario_generation.catalog import EvaluationCatalog, load_evaluation_catalog
 from .models import DeterministicFinding, DeterministicReview
 
 

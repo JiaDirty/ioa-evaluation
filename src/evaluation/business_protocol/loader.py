@@ -17,7 +17,7 @@ from .models import BusinessCaseSpec
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_SCENARIO_DATA_DIR = PROJECT_ROOT / "data" / "scenarios"
+DEFAULT_SCENARIO_DATA_DIR = PROJECT_ROOT / "data" / "raw" / "reference_sources"
 SUPPORTED_SUFFIXES = {".json", ".jsonl", ".ndjson"}
 
 

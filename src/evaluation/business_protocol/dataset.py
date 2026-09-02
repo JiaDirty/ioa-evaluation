@@ -12,7 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..catalog import load_evaluation_catalog
+from ..scenario_generation.catalog import load_evaluation_catalog
 from .loader import (
     SUPPORTED_SUFFIXES,
     CaseDataLoadError,
@@ -23,7 +23,7 @@ from .validation import validate_generated_case
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-REFERENCE_SOURCE_MANIFEST_PATH = PROJECT_ROOT / "data" / "legacy_reference_manifest.json"
+REFERENCE_SOURCE_MANIFEST_PATH = PROJECT_ROOT / "data" / "raw" / "reference_sources" / "legacy_reference_manifest.json"
 DatasetProfile = Literal["reference_source", "generic_expandable", "mixed"]
 
 
