@@ -380,7 +380,7 @@ def _audit_one(record: CandidateRecord, catalog: EvaluationCatalog) -> Determini
             "scoring_contract_version": (
                 case.scoring_contract.contract_version
                 if case.scoring_contract is not None
-                else "legacy"
+                else "reference_source"
             ),
             "step_scoring_rule_count": (
                 len(case.scoring_contract.step_rules)

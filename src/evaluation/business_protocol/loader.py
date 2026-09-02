@@ -19,6 +19,7 @@ from .models import BusinessCaseSpec
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_SCENARIO_DATA_DIR = PROJECT_ROOT / "data" / "raw" / "reference_sources"
 SUPPORTED_SUFFIXES = {".json", ".jsonl", ".ndjson"}
+SOURCE_METADATA_FILENAMES = {"reference_source_manifest.json"}
 
 
 class CaseDataLoadError(ValueError):
@@ -145,7 +146,11 @@ def load_business_cases(
     paths = [
         path
         for path in directory.iterdir()
-        if path.is_file() and path.suffix.lower() in SUPPORTED_SUFFIXES
+        if (
+            path.is_file()
+            and path.suffix.lower() in SUPPORTED_SUFFIXES
+            and path.name not in SOURCE_METADATA_FILENAMES
+        )
     ]
     return load_business_cases_from_paths(paths)
 
@@ -153,6 +158,7 @@ def load_business_cases(
 __all__ = [
     "CaseDataLoadError",
     "DEFAULT_SCENARIO_DATA_DIR",
+    "SOURCE_METADATA_FILENAMES",
     "load_business_cases",
     "load_business_cases_from_paths",
 ]

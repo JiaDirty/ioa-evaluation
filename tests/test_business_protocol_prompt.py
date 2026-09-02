@@ -7,13 +7,17 @@ from src.evaluation.business_protocol.models import (
     BusinessRecord,
     BusinessToolSpec,
 )
-from src.evaluation.business_protocol.cases import get_business_cases
+from src.evaluation.business_protocol.loader import load_business_cases
 from src.evaluation.business_protocol.prompt import (
     AGENT_BUSINESS_RESULT_SCHEMA,
     COMMON_SYSTEM_MESSAGE,
     build_api_tools,
     build_user_message,
 )
+
+
+def get_business_cases():
+    return load_business_cases()
 
 
 class BusinessProtocolPromptTest(unittest.TestCase):

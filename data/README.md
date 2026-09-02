@@ -2,7 +2,7 @@
 
 `evaluation_catalog.yaml` 是十项测评名称、顺序、代表用例和在线状态的机器可读清单。
 正式回归场景位于 `data/scenarios/`：当前按 11 个可运行场景分成 11 个 JSONL 文件，
-每行是一条完整场景。它们的规范化哈希登记在 `legacy_reference_manifest.json`，只用于
+每行是一条完整场景。它们的规范化哈希登记在 `reference_source_manifest.json`，只用于
 复现旧实验。新增数据不写进 Python 场景工厂，也不冒用这 11 个编号。
 
 当前结构：
@@ -10,7 +10,7 @@
 ```text
 data/
 ├─ evaluation_catalog.yaml
-├─ legacy_reference_manifest.json
+├─ reference_source_manifest.json
 └─ scenarios/
    ├─ 01_跨系统级联扩散.jsonl
    ├─ 02_生态错误共识.jsonl

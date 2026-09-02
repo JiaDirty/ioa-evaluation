@@ -155,6 +155,7 @@ class PipelineOrchestrator:
         compiled = CompiledCase.model_validate_json(
             self.store.read_text(entry.artifacts["compiled"])
         )
+        compiled = compiled.model_copy(update={"case": BusinessCaseSpec.model_validate(compiled.case)})
         verify_compiled_case_hash(compiled)
         return compiled
 
@@ -212,7 +213,16 @@ class PipelineOrchestrator:
         if task_path.exists():
             existing = ScenarioTask.model_validate_json(task_path.read_text(encoding="utf-8"))
             if existing.content_sha256 != task.content_sha256:
-                raise ValueError(f"task {task.task_id} already exists with different content")
+                normalized_existing = existing.model_copy(
+                    update={
+                        "content_sha256": None,
+                        "provenance": existing.provenance.model_copy(
+                            update={"created_at": task.provenance.created_at}
+                        ),
+                    }
+                )
+                if seal_task(normalized_existing).content_sha256 != task.content_sha256:
+                    raise ValueError(f"task {task.task_id} already exists with different content")
         else:
             self.store.write_model(task_path, task, depends_on=[])
         entry = self.registry.register(task.task_id, task.metadata.get("source_case_id", ""))
@@ -280,12 +290,17 @@ class PipelineOrchestrator:
         parsed = seal_effect_spec(parsed)
         verify_effect_spec_hash(parsed)
         case_dir = self._case_dir(task)
+        # Remove the old effect and its dependents before adding the
+        # replacement.  This keeps the registry at KERNEL_READY while the new
+        # effect is classified, so a DRAFT cannot be accidentally recorded as
+        # EFFECT_READY merely because an effect file exists.
+        if "effect" in self.registry.get(task_id).artifacts:
+            self.registry.invalidate_artifact(task_id, "effect", reason="effect replaced")
         self.store.write_model(case_dir / "effect_spec.json", parsed, depends_on=["task", "kernel"])
         self.registry.add_artifact(
             task_id, "effect",
             self.store.reference(case_dir / "effect_spec.json", schema_version="effect_spec_v1", depends_on=["task", "kernel"]),
         )
-        self.registry.invalidate_downstream(task_id, "effect", reason="effect replaced")
         target: PipelineStage = "EFFECT_READY" if parsed.status == "READY_FOR_COMPILE" else "EFFECT_DRAFT"
         current = self.registry.get(task_id).stage
         if current != target:
@@ -352,6 +367,8 @@ class PipelineOrchestrator:
             )
         )
         case_dir = self._case_dir(task)
+        if "compiled" in self.registry.get(task_id).artifacts:
+            self.registry.invalidate_artifact(task_id, "compiled", reason="compiled case rebuilt")
         self.store.write_model(
             case_dir / "compiled_case.json",
             compiled,
@@ -363,8 +380,9 @@ class PipelineOrchestrator:
         )
         if entry.case_id != case_id:
             entry.case_id = case_id
-        self.registry.invalidate_downstream(task_id, "compiled", reason="compiled case rebuilt")
-        self.registry.transition(task_id, "COMPILED", reason="CompiledCase created")
+        current = self.registry.get(task_id).stage
+        if current != "COMPILED":
+            self.registry.transition(task_id, "COMPILED", reason="CompiledCase created")
         self._write_lineage(task, self.registry.get(task_id))
         return self.registry.get(task_id)
 
@@ -499,7 +517,7 @@ class PipelineOrchestrator:
         entry = self.registry.get(task_id)
         case_dir = self._case_dir(task)
 
-        if entry.stage in {"TASK_READY", "KERNEL_DRAFT", "KERNEL_NEEDS_REVISION"}:
+        if entry.stage in {"TASK_READY", "KERNEL_DRAFT"}:
             if self._reference_case(task) is not None:
                 self.extract_kernel_from_reference(task_id)
                 entry = self.registry.get(task_id)
@@ -516,6 +534,18 @@ class PipelineOrchestrator:
                     reason="kernel generation requires live API and none is enabled",
                 )
                 entry = self.registry.get(task_id)
+                self._write_lineage(task, entry)
+                return entry
+
+        if entry.stage == "KERNEL_NEEDS_REVISION":
+            if allow_live_api and generation_config is not None:
+                self.generate_kernel(task_id, config=generation_config, allow_live_api=True)
+                entry = self.registry.get(task_id)
+            else:
+                self.registry.record_note(
+                    task_id,
+                    "kernel revision requires a live provider (--allow-live-api); state preserved for resume",
+                )
                 self._write_lineage(task, entry)
                 return entry
 
@@ -536,7 +566,14 @@ class PipelineOrchestrator:
                 return entry
 
         if entry.stage == "EFFECT_READY":
-            self.compile(task_id)
+            try:
+                self.compile(task_id)
+            except Exception as exc:  # noqa: BLE001 - persist an explicit gate failure
+                self.registry.record_error(task_id, f"compile failed: {type(exc).__name__}: {exc}")
+                if self.registry.get(task_id).stage != "VALIDATION_FAILED":
+                    self.registry.transition(task_id, "VALIDATION_FAILED", reason="deterministic compile failed")
+                self._write_lineage(task, self.registry.get(task_id))
+                return self.registry.get(task_id)
             entry = self.registry.get(task_id)
 
         if entry.stage == "EFFECT_DRAFT":
@@ -556,11 +593,25 @@ class PipelineOrchestrator:
                 return entry
 
         if entry.stage == "COMPILED":
-            self.validate_paths(task_id)
+            try:
+                self.validate_paths(task_id)
+            except Exception as exc:  # noqa: BLE001
+                self.registry.record_error(task_id, f"path validation failed: {type(exc).__name__}: {exc}")
+                if self.registry.get(task_id).stage == "COMPILED":
+                    self.registry.transition(task_id, "VALIDATION_FAILED", reason="path validation failed")
+                self._write_lineage(task, self.registry.get(task_id))
+                return self.registry.get(task_id)
             entry = self.registry.get(task_id)
 
         if entry.stage == "PATH_VALID":
-            self.validate_runtime(task_id)
+            try:
+                self.validate_runtime(task_id)
+            except Exception as exc:  # noqa: BLE001
+                self.registry.record_error(task_id, f"runtime validation failed: {type(exc).__name__}: {exc}")
+                if self.registry.get(task_id).stage == "PATH_VALID":
+                    self.registry.transition(task_id, "VALIDATION_FAILED", reason="runtime validation failed")
+                self._write_lineage(task, self.registry.get(task_id))
+                return self.registry.get(task_id)
             entry = self.registry.get(task_id)
 
         if entry.stage == "RUNTIME_VALID":
@@ -624,6 +675,15 @@ class PipelineOrchestrator:
         self.store.write_model(case_dir / "repair_plan.json", plan)
 
         if kernel_findings:
+            # An extracted effect is no longer trustworthy when the kernel
+            # itself needs revision.  Drop only the effect and its downstream
+            # artifacts, preserving the validated task and kernel material.
+            if self.registry.get(task_id).stage == "EFFECT_DRAFT":
+                self.registry.invalidate_artifact(
+                    task_id,
+                    "effect",
+                    reason="kernel findings invalidate extracted effect",
+                )
             self.registry.record_error(task_id, f"kernel findings: {kernel_findings[:5]}")
             self.registry.transition(task_id, "KERNEL_NEEDS_REVISION", reason="kernel requires revision/rewrite")
         elif allow_live_api and generation_config is not None:
@@ -738,10 +798,7 @@ class PipelineOrchestrator:
                 self.registry.transition(task_id, "KERNEL_NEEDS_REVISION", reason="resume after failed validation")
             entry = self.registry.get(task_id)
         elif entry.stage == "KERNEL_NEEDS_REVISION":
-            if self._reference_case(task) is not None:
-                self.extract_kernel_from_reference(task_id)
-                entry = self.registry.get(task_id)
-            elif allow_live_api and generation_config is not None:
+            if allow_live_api and generation_config is not None:
                 self.generate_kernel(task_id, config=generation_config, allow_live_api=True)
                 entry = self.registry.get(task_id)
             else:

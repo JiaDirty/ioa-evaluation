@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..scenario_generation.catalog import load_evaluation_catalog
 from .loader import (
+    SOURCE_METADATA_FILENAMES,
     SUPPORTED_SUFFIXES,
     CaseDataLoadError,
     load_business_cases_from_paths,
@@ -23,7 +24,7 @@ from .validation import validate_generated_case
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-REFERENCE_SOURCE_MANIFEST_PATH = PROJECT_ROOT / "data" / "raw" / "reference_sources" / "legacy_reference_manifest.json"
+REFERENCE_SOURCE_MANIFEST_PATH = PROJECT_ROOT / "data" / "raw" / "reference_sources" / "reference_source_manifest.json"
 DatasetProfile = Literal["reference_source", "generic_expandable", "mixed"]
 
 
@@ -41,7 +42,7 @@ class ReferenceSourceEntry(BaseModel):
 class ReferenceSourceManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["legacy_reference_manifest_v1"]
+    schema_version: Literal["reference_source_manifest_v1"]
     cases: dict[str, ReferenceSourceEntry]
 
 
@@ -92,13 +93,13 @@ def case_fingerprint(case: BusinessCaseSpec) -> str:
         "recovery_step_ids": None,
     }:
         dumped.pop("execution_plan", None)
-    canonical = json.dumps(
+    normalized = json.dumps(
         dumped,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest()
+    return hashlib.sha256(normalized).hexdigest()
 
 
 @lru_cache(maxsize=1)
@@ -132,7 +133,11 @@ def discover_scenario_files(
         if source.is_dir():
             iterator = source.rglob("*") if recursive else source.iterdir()
             for path in iterator:
-                if path.is_file() and path.suffix.lower() in SUPPORTED_SUFFIXES:
+                if (
+                    path.is_file()
+                    and path.suffix.lower() in SUPPORTED_SUFFIXES
+                    and path.name not in SOURCE_METADATA_FILENAMES
+                ):
                     discovered[path.resolve()] = path
             continue
         raise CaseDataLoadError(f"scenario source does not exist: {source}")

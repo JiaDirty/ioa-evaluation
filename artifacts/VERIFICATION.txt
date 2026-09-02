@@ -1,0 +1,37 @@
+changed branch/field: formal scenario pipeline / source loading, idempotent import, status transitions, package build, and documentation layout
+
+MODIFIED_FILE: artifacts/MODIFIED_FILE
+DIFF_FILE: artifacts/DIFF_FILE
+VERIFICATION: artifacts/VERIFICATION.txt
+ROLLBACK: artifacts/ROLLBACK.sh
+
+BASELINE
+command: Get-FileHash README.md -Algorithm SHA256
+literal output: 87F679280A6546486FB374758BD8639BD0230A0F004CA011BE71EF16D8928D8E
+exit status: 0
+
+MODIFIED
+command: Get-FileHash artifacts/MODIFIED_FILE -Algorithm SHA256
+literal output: B0CB572A1B0D86BE67AA8EFEB79B1F85ED11F253B73A99010EDEEF52D7E98C35
+exit status: 0
+
+DIFF
+command: git diff --no-index -- README.md artifacts/MODIFIED_FILE
+literal output/result: non-empty diff written to artifacts/DIFF_FILE; DIFF_EXIT=1 (expected difference)
+exit status: 1
+
+ROLLBACK
+command: bash artifacts/ROLLBACK.sh .local/closeout/ROLLBACK_COPY .local/closeout/BASELINE_COPY
+literal output/result: RESTORED .local/closeout/ROLLBACK_COPY FROM .local/closeout/BASELINE_COPY
+exit status: 0
+restored behavior/status: rollback copy SHA-256 equals baseline copy SHA-256; artifacts/MODIFIED_FILE remains changed.
+
+PACKAGE
+command: .venv\\Scripts\\python.exe scripts/build_source_package.py --output-root .local/package-build --name IOA_closeout_20260902_final
+literal output/result: file_count=3282; file_hash_mismatches=[]; zip_test=PASS; zip_sha256=3fb653c26e1c0f54d1a4e4c54ca8b12c836cdaa7921a3576a2ac642bb6ffbec2
+exit status: 0
+
+PACKAGE_TEST
+command: D:\\个人文件\\学习文件\\实习\\IOA测评搭建\\.venv\\Scripts\\python.exe -m pytest -q (from extracted ZIP directory)
+literal output: 67 passed, 3 subtests passed in 19.26s
+exit status: 0

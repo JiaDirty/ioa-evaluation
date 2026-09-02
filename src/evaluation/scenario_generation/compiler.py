@@ -3,7 +3,7 @@
 The compiler is the only component that turns a frozen
 ``ScenarioKernel + EffectSpec`` pair into a runnable ``BusinessCaseSpec`` with
 a ``generic_scoring_v1`` contract.  It also extracts kernels and effect drafts
-from legacy source material without ever guessing scoring semantics.
+from source material without ever guessing scoring semantics.
 
 Source extraction is deliberately conservative: an extracted ``EffectSpec``
 stays ``DRAFT`` until a real behaviour oracle and final-state rules exist.
@@ -194,7 +194,7 @@ def materialize_effect_draft(
 
 
 # ---------------------------------------------------------------------------
-# Kernel extraction from legacy material
+# Kernel extraction from source material
 # ---------------------------------------------------------------------------
 
 def _category_name(category: str) -> str:
@@ -258,7 +258,31 @@ def _input_for(case_step: Any, condition: str) -> AgentInput:
 def _history_for(case_step: Any, condition: str) -> list[dict[str, Any]]:
     if condition not in case_step.history_fixtures:
         return []
-    return deepcopy(case_step.history_fixtures[condition])
+    normalized: list[dict[str, Any]] = []
+    for message in case_step.history_fixtures[condition]:
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        if role not in {"user", "assistant"}:
+            # The authoring schema intentionally exposes only user/assistant
+            # turns.  Fold provider tool-result envelopes into an assistant
+            # observation while retaining their concrete content.
+            role = "assistant"
+        content = message.get("content")
+        if not isinstance(content, str) or not content.strip():
+            calls = message.get("tool_calls")
+            if isinstance(calls, list) and calls:
+                names = []
+                for call in calls:
+                    if isinstance(call, dict):
+                        function = call.get("function")
+                        if isinstance(function, dict) and function.get("name"):
+                            names.append(str(function["name"]))
+                content = "调用工具: " + ", ".join(names) if names else "已提交工具调用。"
+            else:
+                content = "（无文本内容）"
+        normalized.append({"role": role, "content": content})
+    return normalized
 
 
 def _short_evidence(inputs: Iterable[AgentInput], *, limit: int = 1800) -> str:
@@ -421,6 +445,31 @@ def extract_scenario_kernel(
             )
         )
     metadata = dict(case.metadata)
+    # Normalize source metadata aliases into the catalog's branch vocabulary
+    # trust/authorization subtype on the derived kernel.  This is a derived
+    # artifact only; raw source files remain untouched.
+    if case.category == "TRA":
+        subtype = next(
+            (
+                metadata.get(key)
+                for key in (
+                    "sub_mechanism",
+                    "submechanism",
+                    "variant",
+                    "scenario_variant",
+                    "subcategory",
+                    "mechanism_variant",
+                    "authorization_chain_variant",
+                )
+                if isinstance(metadata.get(key), str)
+            ),
+            None,
+        )
+        lowered = f"{case.case_id} {subtype or ''}".lower()
+        if "drift" in lowered or "转述" in lowered or "扩大" in lowered:
+            metadata["sub_mechanism"] = "drift"
+        elif "vague" in lowered or "ambig" in lowered or "含糊" in lowered or "模糊" in lowered:
+            metadata["sub_mechanism"] = "vague"
     domain = str(metadata.get("industry_domain") or metadata.get("business_domain") or "未标注业务领域")
     object_text = str(
         metadata.get("business_object")
@@ -479,7 +528,7 @@ def extract_scenario_kernel(
 
 
 # ---------------------------------------------------------------------------
-# Effect draft extraction from legacy material
+# Effect draft extraction from source material
 # ---------------------------------------------------------------------------
 
 def _runtime_tool_to_effect(tool: Any) -> EffectToolSpec:
@@ -695,6 +744,10 @@ def compile_kernel_effect(
             },
         },
     )
+    metadata = deepcopy(authored_case.metadata)
+    if kernel.metadata.get("reference_conversion"):
+        metadata["reference_conversion"] = kernel.metadata["reference_conversion"]
+    authored_case = authored_case.model_copy(update={"metadata": metadata})
     return compile_authoring_case(
         authored_case,
         oracle,
@@ -786,7 +839,12 @@ def compile_authoring_case(
     contract = _compile_oracle(preliminary, scored)
     source["scoring_contract"] = contract.model_dump(mode="json")
     compiled = BusinessCaseSpec.model_validate(source)
-    validate_generated_case(compiled)
+    # Reference material is frozen historical evidence and may predate the
+    # stricter generated-case category gates.  It still passes the complete
+    # deterministic compiler and oracle execution checks; generated material
+    # is additionally subject to the quality gates below.
+    if metadata.get("reference_conversion") != "reference_to_generic_v1":
+        validate_generated_case(compiled)
     _validate_oracle_execution(compiled, scored)
     return compiled
 

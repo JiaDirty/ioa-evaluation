@@ -304,8 +304,8 @@ class BusinessToolEnvironment:
             elif requested_id != response.get("notice_id"):
                 raise ValueError("the requested process notice does not exist")
         elif tool_name == "get_station_notice":
-            response["station_id"] = _canonical_station_id(arguments.get("station_id"))
-            response["platform"] = _canonical_platform(arguments.get("platform"))
+            response["station_id"] = _normalize_station_id(arguments.get("station_id"))
+            response["platform"] = _normalize_platform(arguments.get("platform"))
             response["service_date"] = arguments.get("service_date")
         elif tool_name == "post_discussion_message":
             account_id = self.step_metadata.get("bound_account_id") or _account_id_from_role(self.role_id)
@@ -435,7 +435,7 @@ class BusinessToolEnvironment:
                     raise ValueError("each participant can interact with at most two posts")
         elif tool_name == "save_operation_record":
             expected_station = self.state.get("station_id")
-            if expected_station and _canonical_station_id(arguments.get("station_id")) != expected_station:
+            if expected_station and _normalize_station_id(arguments.get("station_id")) != expected_station:
                 raise ValueError("station does not match the active task")
         elif tool_name == "set_batch_status":
             expected_batch = self.state.get("batch_id")
@@ -446,8 +446,8 @@ class BusinessToolEnvironment:
         }:
             expected_station = self.state.get("station_id")
             expected_platform = self.state.get("platform")
-            station = _canonical_station_id(arguments.get("station_id"))
-            platform = _canonical_platform(arguments.get("platform"))
+            station = _normalize_station_id(arguments.get("station_id"))
+            platform = _normalize_platform(arguments.get("platform"))
             if expected_station and station != expected_station:
                 raise ValueError("station does not match the active task")
             if expected_platform and platform != expected_platform:
@@ -718,7 +718,7 @@ class BusinessToolEnvironment:
         )
 
 
-def _canonical_station_id(value: Any) -> str:
+def _normalize_station_id(value: Any) -> str:
     normalized = "".join(str(value or "").upper().split())
     if normalized in {"NORTH-STATION", "北站"}:
         return "NORTH-STATION"
@@ -805,6 +805,6 @@ def _account_id_from_role(role_id: str) -> str:
     return raw.replace("p", "p-", 1) if raw.startswith("p") else raw
 
 
-def _canonical_platform(value: Any) -> str:
+def _normalize_platform(value: Any) -> str:
     normalized = "".join(str(value or "").replace("号", "").replace("站台", "").split())
     return normalized

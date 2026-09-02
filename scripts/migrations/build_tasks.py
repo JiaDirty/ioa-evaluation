@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -55,7 +56,7 @@ def _derive_subtype(case_id: str, category: str, declared: str | None) -> str | 
     """Resolve the trust-authorization sub-mechanism when metadata omits it."""
 
     if category != "TRA":
-        return declared
+        return None
     if declared in {"drift", "vague"}:
         return declared
     lowered = case_id.lower()
@@ -63,6 +64,17 @@ def _derive_subtype(case_id: str, category: str, declared: str | None) -> str | 
         return "drift"
     if "vague" in lowered:
         return "vague"
+    # Candidate batches use several historical metadata keys for the same
+    # branch.  Normalize their values here so branch selection remains a
+    # catalog operation rather than a source-specific path.
+    for value in (declared,):
+        if not isinstance(value, str):
+            continue
+        lowered_value = value.lower()
+        if "drift" in lowered_value or "转述" in value or "扩大" in value:
+            return "drift"
+        if "vague" in lowered_value or "ambig" in lowered_value or "含糊" in value or "模糊" in value:
+            return "vague"
     return None
 
 
@@ -80,6 +92,7 @@ def _build_task(
     seed: str | None,
     prompt_version: str | None,
     subtype: str | None,
+    created_at: str,
 ) -> ScenarioTask:
     catalog = load_evaluation_catalog()
     branch = catalog.branch_for_id(branch_id)
@@ -114,6 +127,7 @@ def _build_task(
             model_id=model_id,
             seed=seed,
             prompt_version=prompt_version,
+            created_at=created_at,
         ),
         reference_material=[material],
         lineage={"ancestors": [rel_path]},
@@ -137,7 +151,22 @@ def build_reference_tasks(reference_dir: Path, raw_root: Path) -> list[ScenarioT
             raise ValueError(f"reference case {case_id} has no source jsonl")
         rel_path = source_file.relative_to(raw_root).as_posix()
         metadata = case.metadata or {}
-        subtype = metadata.get("sub_mechanism") if isinstance(metadata.get("sub_mechanism"), str) else None
+        subtype = next(
+            (
+                metadata.get(key)
+                for key in (
+                    "sub_mechanism",
+                    "submechanism",
+                    "variant",
+                    "scenario_variant",
+                    "subcategory",
+                    "mechanism_variant",
+                    "authorization_chain_variant",
+                )
+                if isinstance(metadata.get(key), str)
+            ),
+            None,
+        )
         subtype = _derive_subtype(case_id, case.category, subtype)
         branch = catalog.branch_for_case(case.category, subtype)
         tasks.append(
@@ -154,6 +183,7 @@ def build_reference_tasks(reference_dir: Path, raw_root: Path) -> list[ScenarioT
                 seed=None,
                 prompt_version=None,
                 subtype=subtype,
+                created_at=datetime.fromtimestamp(source_file.stat().st_mtime, timezone.utc).isoformat(),
             )
         )
     return tasks
@@ -169,7 +199,22 @@ def build_candidate_tasks(candidate_dir: Path, raw_root: Path) -> list[ScenarioT
         rel_path = record.source_path.relative_to(raw_root).as_posix()
         metadata = record.case.metadata or {}
         generation = metadata.get("generation_provenance", {}) if isinstance(metadata.get("generation_provenance"), dict) else {}
-        subtype = metadata.get("sub_mechanism") if isinstance(metadata.get("sub_mechanism"), str) else None
+        subtype = next(
+            (
+                metadata.get(key)
+                for key in (
+                    "sub_mechanism",
+                    "submechanism",
+                    "variant",
+                    "scenario_variant",
+                    "subcategory",
+                    "mechanism_variant",
+                    "authorization_chain_variant",
+                )
+                if isinstance(metadata.get(key), str)
+            ),
+            None,
+        )
         subtype = _derive_subtype(record.case.case_id, record.case.category, subtype)
         branch = catalog.branch_for_case(record.case.category, subtype)
         seed = generation.get("generation_seed")
@@ -188,6 +233,7 @@ def build_candidate_tasks(candidate_dir: Path, raw_root: Path) -> list[ScenarioT
                 seed=str(seed) if seed is not None else None,
                 prompt_version=prompt_version,
                 subtype=subtype,
+                created_at=datetime.fromtimestamp(record.source_path.stat().st_mtime, timezone.utc).isoformat(),
             )
         )
     return tasks

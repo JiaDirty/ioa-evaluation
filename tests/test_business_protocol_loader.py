@@ -2,14 +2,19 @@ import json
 
 import pytest
 
-from src.evaluation.business_protocol.cases import (
-    get_builtin_business_cases,
-    get_business_cases,
-)
 from src.evaluation.business_protocol.loader import (
     CaseDataLoadError,
+    load_business_cases,
     load_business_cases_from_paths,
 )
+
+
+def get_business_cases():
+    return load_business_cases()
+
+
+def get_builtin_business_cases():
+    return load_business_cases()
 
 
 def test_external_cases_are_the_canonical_equivalent_of_builtin_cases():

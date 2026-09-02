@@ -43,6 +43,7 @@ from src.evaluation.scenario_generation import (  # noqa: E402
     verify_compiled_case_hash,
 )
 from src.evaluation.scenario_generation.evaluation import run_offline_case  # noqa: E402
+from src.evaluation.business_protocol.models import BusinessCaseSpec  # noqa: E402
 
 DATA_ROOT = PROJECT_ROOT / "data"
 CATALOG_DIR = DATA_ROOT / "catalog"
@@ -105,6 +106,11 @@ def cmd_import(args: argparse.Namespace) -> int:
     for task in reference_tasks:
         if args.dry_run:
             continue
+        existing_entry = orchestrator.registry.get(task.task_id)
+        if existing_entry.stage not in {
+            "TASK_READY", "KERNEL_DRAFT", "KERNEL_NEEDS_REVISION", "GENERATION_FAILED"
+        }:
+            continue
         case = orchestrator._reference_case(task)
         if case is None:
             raise SystemExit(f"reference task {task.task_id} has no extractable case")
@@ -156,8 +162,19 @@ def cmd_process(args: argparse.Namespace) -> int:
             failed.append(task_id)
             results.append({"task_id": task_id, "error": f"{type(exc).__name__}: {exc}"})
     counts = Counter(item.get("stage", item.get("error", "?")) for item in results)
+    blocked_stages = {
+        "TASK_READY",
+        "KERNEL_DRAFT",
+        "KERNEL_NEEDS_REVISION",
+        "KERNEL_READY",
+        "EFFECT_DRAFT",
+        "EFFECT_NEEDS_REVISION",
+        "GENERATION_FAILED",
+        "VALIDATION_FAILED",
+    }
+    has_blocked = any(item.get("stage") in blocked_stages for item in results)
     payload: dict[str, Any] = {
-        "status": "PIPELINE_COMPLETED" if not failed else "PIPELINE_PARTIAL",
+        "status": "PIPELINE_COMPLETED" if not failed and not has_blocked else "PIPELINE_PARTIAL",
         "task_count": len(task_ids),
         "failed_count": len(failed),
         "failed_tasks": failed,
@@ -165,7 +182,7 @@ def cmd_process(args: argparse.Namespace) -> int:
         "dry_run": bool(args.dry_run),
     }
     _json_out(payload)
-    return 0 if not failed else 3
+    return 0 if not failed and not has_blocked else 3
 
 
 def cmd_resume(args: argparse.Namespace) -> int:
@@ -221,15 +238,22 @@ def cmd_validate(args: argparse.Namespace) -> int:
         except Exception as exc:  # noqa: BLE001
             failed.append(task_id)
             orchestrator.registry.record_error(task_id, f"validate failed: {type(exc).__name__}: {exc}")
+    blocked = sum(
+        1
+        for task_id in task_ids
+        if orchestrator.registry.get(task_id).stage
+        in {"TASK_READY", "KERNEL_DRAFT", "KERNEL_NEEDS_REVISION", "KERNEL_READY", "EFFECT_DRAFT", "EFFECT_NEEDS_REVISION", "GENERATION_FAILED", "VALIDATION_FAILED"}
+    )
     _json_out(
         {
-            "status": "VALIDATED",
+            "status": "VALIDATED" if not failed and blocked == 0 else "VALIDATION_PARTIAL",
             "advanced": advanced,
+            "blocked_count": blocked,
             "failed_tasks": failed,
             "dry_run": bool(args.dry_run),
         }
     )
-    return 0
+    return 0 if not failed and blocked == 0 else 3
 
 
 def cmd_evaluate(args: argparse.Namespace) -> int:
@@ -244,6 +268,7 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
         if "compiled" not in entry.artifacts:
             continue
         compiled = CompiledCase.model_validate_json(store.read_text(entry.artifacts["compiled"]))
+        compiled = compiled.model_copy(update={"case": BusinessCaseSpec.model_validate(compiled.case)})
         verify_compiled_case_hash(compiled)
         if args.validate_only:
             results.append(
@@ -258,7 +283,14 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
             {
                 "task_id": task_id,
                 "case_id": compiled.case_id,
-                "validity": [item.validity for item in paired],
+                "validity": [
+                    {
+                        "baseline": item.baseline.validity,
+                        "mechanism": item.mechanism.validity,
+                        "recovery": item.recovery.validity,
+                    }
+                    for item in paired
+                ],
                 "baseline_safety": [item.baseline.safety_outcome for item in paired],
                 "mechanism_safety": [item.mechanism.safety_outcome for item in paired],
                 "recovery_safety": [item.recovery.safety_outcome for item in paired],
@@ -295,6 +327,7 @@ def cmd_human(args: argparse.Namespace) -> int:
     if "compiled" not in entry.artifacts:
         raise SystemExit(f"task {args.task} has no compiled case")
     compiled = CompiledCase.model_validate_json(store.read_text(entry.artifacts["compiled"]))
+    compiled = compiled.model_copy(update={"case": BusinessCaseSpec.model_validate(compiled.case)})
     decision = HumanDecisionRecord(
         task_id=args.task,
         decision=args.decision.upper(),

@@ -209,11 +209,11 @@ def reset_configs():
 
 
 def _token_setting(
-    data: dict, new_name: str, legacy_name: str, default: int
+    data: dict, new_name: str, fallback_name: str, default: int
 ) -> int:
     """Read the current setting while accepting older local YAML files."""
     if new_name in data:
         return int(data[new_name])
-    if legacy_name in data:
-        return int(data[legacy_name])
+    if fallback_name in data:
+        return int(data[fallback_name])
     return default

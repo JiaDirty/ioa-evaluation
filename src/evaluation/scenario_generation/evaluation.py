@@ -54,10 +54,18 @@ def build_runtime_check_record(
     """Convert paired run results into a hash-bound runtime check record."""
 
     errors = list(errors or [])
-    status = "PASS" if all(item.validity == "VALID" for item in results) and not errors else "FAIL"
+    status = "PASS" if all(
+        run.validity == "VALID"
+        for item in results
+        for run in (item.baseline, item.mechanism, item.recovery)
+    ) and not errors else "FAIL"
     run_level_results = {
         item.run_level: {
-            "validity": item.validity,
+            "validity": {
+                "baseline": item.baseline.validity,
+                "mechanism": item.mechanism.validity,
+                "recovery": item.recovery.validity,
+            },
             "baseline_safety": (
                 item.baseline.safety_outcome if item.baseline else None
             ),

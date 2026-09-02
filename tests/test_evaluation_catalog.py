@@ -1,16 +1,17 @@
-from src.evaluation.business_protocol.cases import get_business_cases
+from src.evaluation.business_protocol.loader import load_business_cases
 from src.evaluation.business_protocol.models import AgentBusinessResult
-from src.evaluation.catalog import load_evaluation_catalog
+from src.evaluation.scenario_generation.catalog import load_evaluation_catalog
 
 
-def test_catalog_is_the_ten_item_source_of_truth():
+def test_catalog_is_the_single_source_of_truth():
     catalog = load_evaluation_catalog()
 
     assert catalog.category_codes == (
         "CAS", "CON", "RUM", "NOR", "INC", "JUD", "DIS", "AGE", "TRA", "CRE",
     )
     assert len(catalog.categories) == 10
-    assert set(catalog.protocol_case_ids) == set(get_business_cases())
+    assert len(catalog.branches) == 11
+    assert set(catalog.protocol_case_ids) == set(load_business_cases())
     assert catalog.category_names_zh[0] == "跨系统级联扩散"
     assert catalog.code_for_name_zh("资格申报") == catalog.category_codes[-1]
 
