@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Run an expandable dataset whose cases carry generic scoring contracts."""
+"""Run cases that carry the production declarative scoring contract."""
 
 from run_business_agent_suite import main
 

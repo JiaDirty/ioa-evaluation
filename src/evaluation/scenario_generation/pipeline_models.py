@@ -45,29 +45,8 @@ SCENARIO_KERNEL_VERSION = "scenario_kernel_v1"
 EFFECT_SPEC_VERSION = "effect_spec_v1"
 SCENARIO_KERNEL_DRAFT_VERSION = "scenario_kernel_draft_v1"
 EFFECT_SPEC_DRAFT_VERSION = "effect_spec_draft_v1"
-PIPELINE_MANIFEST_VERSION = "scenario_pipeline_manifest_v2"
-PIPELINE_IMPLEMENTATION_VERSION = "scenario_pipeline_v2"
 REPAIR_PLAN_VERSION = "scenario_repair_plan_v1"
 REPAIR_RESULT_VERSION = "scenario_repair_result_v1"
-
-
-PipelineStatus = Literal[
-    "RAW",
-    "KERNEL_VALID",
-    "EFFECT_SPEC_VALID",
-    "COMPILED",
-    "SIX_PATH_VALID",
-    "RUNTIME_VALID",
-    "SEMANTIC_ACCEPTED",
-    "HUMAN_ACCEPTED",
-    "FORMAL_ACCEPTED",
-    "REPAIR_PENDING",
-    "REPAIR_VALID",
-    "ADAPTED_PENDING_REVIEW",
-    "REVISE_REQUIRED",
-    "REWRITE_REQUIRED",
-    "QUARANTINED",
-]
 
 
 class KernelSource(BaseModel):
@@ -75,7 +54,7 @@ class KernelSource(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    source_kind: Literal["generated", "legacy_extracted", "manual"]
+    source_kind: Literal["generated", "reference_extracted", "manual"]
     source_candidate_uid: str | None = None
     source_case_id: str | None = None
     source_path: str | None = None
@@ -178,7 +157,7 @@ class ScenarioKernel(BaseModel):
     business_object: str = Field(min_length=1, max_length=500)
     roles: list[KernelRole] = Field(min_length=1)
     steps: list[KernelStep] = Field(min_length=1)
-    # A legacy candidate may have omitted recovery entirely.  Keeping the
+    # A source candidate may have omitted recovery entirely.  Keeping the
     # list optional lets us preserve and classify that material instead of
     # losing it during extraction; newly generated kernels are still required
     # to declare recovery sources when they include recovery steps.
@@ -227,18 +206,18 @@ class ScenarioKernel(BaseModel):
                     f"recovery kernel step {step.step_id} references unknown risk sources: "
                     f"{unknown_sources}"
                 )
-            # Legacy extraction is allowed to retain an unbound recovery step;
+            # Reference extraction is allowed to retain an unbound recovery step;
             # the runner will classify it as needing semantic repair.  A new
             # authoring payload must provide an explicit source binding.
-            if not step.recovery_source_step_ids and self.source.source_kind != "legacy_extracted":
+            if not step.recovery_source_step_ids and self.source.source_kind != "reference_extracted":
                 raise ValueError(
                     f"recovery kernel step {step.step_id} must reference a main risk source"
                 )
         if set(self.initial_state) != {"normal", "risk", "recovery"}:
             raise ValueError("kernel initial_state must contain normal, risk and recovery")
-        if self.source.source_kind != "legacy_extracted":
+        if self.source.source_kind != "reference_extracted":
             if not self.recovery_steps:
-                raise ValueError("new ScenarioKernel must declare at least one recovery step")
+                raise ValueError("generated ScenarioKernel must declare at least one recovery step")
             for step in [*self.steps, *self.recovery_steps]:
                 if len(step.role_responsibility.strip()) < 4:
                     raise ValueError(
@@ -349,20 +328,20 @@ class EffectToolSpec(BaseModel):
     state_bindings: list[ToolStateBinding] = Field(default_factory=list)
     conditional_state_updates: list[ToolConditionalStateUpdate] = Field(default_factory=list)
     risk_level: Literal["low", "medium", "high", "critical"] = "low"
-    # Legacy extraction may preserve condition-specific effects which cannot be
-    # safely compressed into the canonical authoring representation.  Such an
+    # Reference extraction may preserve condition-specific effects which cannot be
+    # safely compressed into the normalized authoring representation.  Such an
     # EffectSpec is explicitly draft-only and cannot be compiled.
-    legacy_condition_effects: dict[str, Any] | None = None
+    condition_effects: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def validate_paths(self) -> "EffectToolSpec":
         if self.parameters.get("type") != "object":
             raise ValueError(f"effect tool {self.name} parameters must be an object schema")
-        # Legacy extraction may intentionally retain provider-specific keys
+        # Reference extraction may intentionally retain provider-specific keys
         # (for example an ID embedded in a map key) that are not legal dotted
         # paths in the authoring language.  Those effects live in the draft
         # escape hatch and are rejected when a caller tries to compile them.
-        if self.legacy_condition_effects is not None:
+        if self.condition_effects is not None:
             return self
         targets = [*self.fixed_state, *self.state_from_arguments, *self.state_from_response]
         invalid_targets = [path for path in targets if not PATH_PATTERN.fullmatch(path)]
@@ -387,14 +366,14 @@ class EffectToolSpec(BaseModel):
         return self
 
     def to_authoring_tool(self) -> AuthoringToolSpec:
-        if self.legacy_condition_effects is not None:
+        if self.condition_effects is not None:
             raise ValueError(
-                f"legacy effect tool {self.name} must be semantically repaired before compile"
+                f"source effect tool {self.name} must be semantically repaired before compile"
             )
         return AuthoringToolSpec.model_validate(
             self.model_dump(
                 mode="json",
-                exclude={"legacy_condition_effects", "kind"},
+                exclude={"condition_effects", "kind"},
             )
         )
 
@@ -405,7 +384,7 @@ class EffectStepSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     step_id: str = Field(min_length=1, max_length=100)
-    # Empty tool lists can occur in malformed legacy candidates.  They remain
+    # Empty tool lists can occur in malformed source candidates.  They remain
     # representable as DRAFT material; READY_FOR_COMPILE validation rejects
     # them explicitly.
     tools: list[EffectToolSpec] = Field(default_factory=list)
@@ -416,7 +395,7 @@ class EffectStepSpec(BaseModel):
     @model_validator(mode="after")
     def validate_tool_names(self) -> "EffectStepSpec":
         names = [tool.name for tool in self.tools]
-        # Duplicate names are retained in legacy DRAFT material so the
+        # Duplicate names are retained in source DRAFT material so the
         # migration record can point to the original defect.  READY_FOR_COMPILE
         # performs the blocking check at the parent EffectSpec level.
         unknown_unsafe = sorted(set(self.objective_unsafe_tools) - set(names))
@@ -464,16 +443,16 @@ class EffectSpec(BaseModel):
                     "ready effect spec cannot contain duplicate tool names: "
                     f"{duplicate_steps}"
                 )
-            legacy_tools = [
+            source_tools = [
                 tool.name
                 for step in self.steps
                 for tool in step.tools
-                if tool.legacy_condition_effects is not None
+                if tool.condition_effects is not None
             ]
-            if legacy_tools:
+            if source_tools:
                 raise ValueError(
-                    "ready effect spec cannot contain legacy condition effects: "
-                    f"{legacy_tools}"
+                    "ready effect spec cannot contain unresolved condition effects: "
+                    f"{source_tools}"
                 )
             empty_steps = [step.step_id for step in self.steps if not step.tools]
             if empty_steps:
@@ -499,81 +478,8 @@ class EffectSpec(BaseModel):
         return self
 
 
-class PipelineError(BaseModel):
-    model_config = ConfigDict(extra="forbid")
 
-    stage: str = Field(min_length=1, max_length=80)
-    code: str = Field(min_length=1, max_length=100)
-    message: str = Field(min_length=1, max_length=4000)
-    retryable: bool = False
-    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-
-
-class PipelineManifestEntry(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    candidate_uid: str = Field(min_length=1)
-    source_case_id: str = Field(min_length=1)
-    source_path: str = Field(min_length=1)
-    source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    source_hash_verified: bool = False
-    category: str = Field(min_length=2)
-    evaluation_item: str | None = None
-    subtype: str | None = None
-    # The registry distinguishes legacy material from future generated or
-    # manually authored inputs.  A default keeps older v1/v2 manifests
-    # readable without rewriting their evidence.
-    source_kind: Literal["legacy", "generated", "manual"] = "legacy"
-    generator_model_id: str = Field(min_length=1)
-    batch_id: str = Field(min_length=1)
-    status: PipelineStatus = "RAW"
-    kernel_id: str | None = None
-    kernel_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
-    effect_id: str | None = None
-    effect_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
-    effect_status: Literal["DRAFT", "READY_FOR_COMPILE"] | None = None
-    repair_status: Literal[
-        "PENDING",
-        "MODEL_REPAIR_REQUIRED",
-        "READY_FOR_COMPILE",
-        "FAILED",
-        "HUMAN_REVIEW_REQUIRED",
-    ] | None = None
-    repair_attempts: int = Field(default=0, ge=0)
-    stage_paths: dict[str, str] = Field(default_factory=dict)
-    attempts: dict[str, int] = Field(default_factory=dict)
-    errors: list[PipelineError] = Field(default_factory=list)
-    terminal_reason: str | None = None
-    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-
-
-class PipelineManifest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    # v1 manifests remain readable so an interrupted earlier run can be
-    # resumed and upgraded in place by the v2 runner.
-    schema_version: Literal[
-        "scenario_pipeline_manifest_v1", "scenario_pipeline_manifest_v2"
-    ] = PIPELINE_MANIFEST_VERSION
-    pipeline_version: Literal["scenario_pipeline_v1", "scenario_pipeline_v2"] = (
-        PIPELINE_IMPLEMENTATION_VERSION
-    )
-    source_root: str
-    output_root: str
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    entries: list[PipelineManifestEntry] = Field(default_factory=list)
-    summary: dict[str, Any] = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def validate_unique_entries(self) -> "PipelineManifest":
-        ids = [entry.candidate_uid for entry in self.entries]
-        if len(ids) != len(set(ids)):
-            raise ValueError("pipeline manifest candidate_uid values must be unique")
-        return self
-
-
-def canonical_json(value: Any) -> str:
+def stable_json(value: Any) -> str:
     """Serialize a model/value deterministically for content hashing."""
 
     if isinstance(value, BaseModel):
@@ -593,7 +499,7 @@ def _paths_overlap(first: str, second: str) -> bool:
 
 def _content_hash(model: BaseModel, excluded: set[str]) -> str:
     payload = model.model_dump(mode="json", exclude=excluded)
-    return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
+    return hashlib.sha256(stable_json(payload).encode("utf-8")).hexdigest()
 
 
 def seal_kernel(kernel: ScenarioKernel) -> ScenarioKernel:
@@ -669,12 +575,6 @@ __all__ = [
     "EFFECT_SPEC_DRAFT_VERSION",
     "REPAIR_PLAN_VERSION",
     "REPAIR_RESULT_VERSION",
-    "PIPELINE_IMPLEMENTATION_VERSION",
-    "PIPELINE_MANIFEST_VERSION",
-    "PipelineError",
-    "PipelineManifest",
-    "PipelineManifestEntry",
-    "PipelineStatus",
     "SCENARIO_KERNEL_VERSION",
     "SCENARIO_KERNEL_DRAFT_VERSION",
     "EffectSpec",
@@ -686,7 +586,7 @@ __all__ = [
     "KernelStep",
     "ScenarioKernel",
     "ScenarioKernelDraft",
-    "canonical_json",
+    "stable_json",
     "seal_effect_spec",
     "seal_kernel",
     "upgrade_effect_spec_payload",

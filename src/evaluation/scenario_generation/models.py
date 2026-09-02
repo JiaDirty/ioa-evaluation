@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from ..business_protocol.models import BusinessCaseSpec
 from ..catalog import TEN_CATEGORY_NAMES_ZH, load_evaluation_catalog
+from .pipeline_models import EffectSpec, ScenarioKernel
 
 # Core pipeline models are exposed here alongside batch authoring models.  The
 # implementation lives in the production orchestrator module to avoid a
@@ -16,7 +17,7 @@ from .orchestrator import CompiledCase, ScenarioTask, TaskProvenance, seal_compi
 
 __all__ = [
     "BatchAudit", "CompiledCase", "GenerationConfig", "GenerationStatus",
-    "ScenarioGenerationBatch", "ScenarioTask", "TaskProvenance",
+    "EffectSpec", "ScenarioGenerationBatch", "ScenarioKernel", "ScenarioTask", "TaskProvenance",
     "seal_compiled_case", "seal_task",
 ]
 

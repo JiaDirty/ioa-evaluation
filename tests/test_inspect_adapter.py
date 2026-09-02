@@ -6,6 +6,8 @@ from inspect_ai.log import read_eval_log
 from inspect_ai.model import ModelOutput, get_model
 
 from src.evaluation.business_protocol.dataset import load_evaluation_dataset
+from src.evaluation.business_protocol.dataset import DatasetValidationReport, EvaluationDataset
+from scripts.migrations.reference_case_conversion import convert_reference_case
 from src.evaluation.inspect_adapter import (
     RESULT_STORE_KEY,
     build_inspect_samples,
@@ -31,10 +33,21 @@ FINAL_RESULT = json.dumps(
 
 
 def _legacy_dataset():
-    return load_evaluation_dataset(
+    source = load_evaluation_dataset(
         [SCENARIO_DIR],
-        profile="legacy_reference",
-        require_complete_legacy=True,
+        profile="reference_source",
+        require_complete_reference=True,
+    )
+    cases = {case_id: convert_reference_case(case) for case_id, case in source.cases.items()}
+    return EvaluationDataset(
+        cases=cases,
+        source_files=source.source_files,
+        report=DatasetValidationReport(
+            profile="generic_expandable",
+            case_count=len(cases),
+            category_counts={},
+            contract_versions={"generic_scoring_v1": len(cases)},
+        ),
     )
 
 

@@ -1,6 +1,6 @@
 """Production task-to-case orchestration for every scenario source.
 
-This module is the single control plane for new production work.  Historical
+This module is the single control plane for production work.  Historical
 and generated inputs are normalized into :class:`ScenarioTask`; origin is
 traceability metadata only and never selects a runtime branch.
 """
@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from ..business_protocol.models import BusinessCaseSpec
 from ..catalog import load_evaluation_catalog
 from .pipeline import compile_kernel_effect, extract_effect_spec, extract_scenario_kernel
-from scripts.migrations.reference_case_conversion import canonicalize_legacy_case, effect_from_canonical_case
+from .compiler import effect_from_case
 from .path_validation import SixPathValidationReport
 from .quality_records import HumanDecisionRecord, RuntimeCheckRecord, SemanticReviewRecord
 from .pipeline_models import (
@@ -94,14 +94,14 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _canonical(value: Any) -> str:
+def _stable_serialize(value: Any) -> str:
     if isinstance(value, BaseModel):
         value = value.model_dump(mode="json")
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def _digest(value: Any) -> str:
-    return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()
+    return hashlib.sha256(_stable_serialize(value).encode("utf-8")).hexdigest()
 
 
 def _file_digest(path: Path) -> str:
@@ -131,7 +131,7 @@ class TaskProvenance(BaseModel):
 
 
 class ScenarioTask(BaseModel):
-    """The only accepted input envelope for the canonical pipeline."""
+    """The only accepted input envelope for the production pipeline."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -190,7 +190,7 @@ class ScenarioTask(BaseModel):
 
 
 class CompiledCase(BaseModel):
-    """Executable case plus immutable dependencies from the canonical chain."""
+    """Executable case plus immutable dependencies from the production chain."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -291,11 +291,11 @@ def verify_compiled_case_hash(case: CompiledCase) -> str:
 
 def validate_transition(current: PipelineStage | None, target: PipelineStage) -> None:
     if target not in _ALLOWED_TRANSITIONS.get(current, set()):
-        raise ValueError(f"invalid canonical transition: {current} -> {target}")
+        raise ValueError(f"invalid pipeline transition: {current} -> {target}")
 
 
-class Registry:
-    """Single durable status center for the canonical pipeline."""
+class PipelineRegistry:
+    """Single durable status center for the production pipeline."""
 
     def __init__(self, root: str | Path):
         self.root = Path(root).expanduser().resolve()
@@ -417,7 +417,7 @@ class PipelineOrchestrator:
         self.root = Path(root).expanduser().resolve()
         self.cases_root = self.root / "cases"
         self.cases_root.mkdir(parents=True, exist_ok=True)
-        self.registry = Registry(self.root)
+        self.registry = PipelineRegistry(self.root)
 
     def _case_dir(self, task: ScenarioTask) -> Path:
         return self.cases_root / _safe_case_dir(task.case_id, task.task_id)
@@ -639,7 +639,7 @@ class PipelineOrchestrator:
         return SimpleNamespace(
             case=case,
             source_path=Path(provenance.source_path or task.task_id),
-            generator_model_id=provenance.model_id or "canonical-task",
+            generator_model_id=provenance.model_id or "pipeline-task",
             item_name=task.category,
             batch_id=task.task_id,
             candidate_uid=task.task_id,
@@ -668,7 +668,7 @@ class PipelineOrchestrator:
             self.registry.transition(task_id, "TASK_CREATED", reason="resume new generation after invalidation")
             entry = self.registry.get(task_id)
         record = self._record_for_task(task)
-        canonical_case = BusinessCaseSpec.model_validate(task.case_payload)
+        case = BusinessCaseSpec.model_validate(task.case_payload)
         case_dir = self._case_dir(task)
         if entry.stage == "TASK_CREATED":
             kernel = extract_scenario_kernel(record, source_sha256=task.provenance.source_sha256)
@@ -678,8 +678,8 @@ class PipelineOrchestrator:
             self._write_lineage(task, entry)
         if entry.stage == "KERNEL_READY":
             kernel = ScenarioKernel.model_validate_json((case_dir / "scenario_kernel.json").read_text(encoding="utf-8"))
-            if canonical_case.scoring_contract is not None:
-                effect = effect_from_canonical_case(canonical_case, kernel)
+            if case.scoring_contract is not None:
+                effect = effect_from_case(case, kernel)
             else:
                 effect = extract_effect_spec(record, kernel)
                 effect = seal_effect_spec(effect)
@@ -693,8 +693,8 @@ class PipelineOrchestrator:
             if effect.status != "READY_FOR_COMPILE":
                 self._write_lineage(task, entry)
                 return entry
-            if canonical_case.scoring_contract is not None:
-                compiled = canonical_case
+            if case.scoring_contract is not None:
+                compiled = case
             else:
                 compiled = compile_kernel_effect(
                     kernel,
@@ -828,7 +828,7 @@ __all__ = [
     "PipelineStage",
     "CompiledCase",
     "PipelineOrchestrator",
-    "Registry",
+    "PipelineRegistry",
     "RegistryEntry",
     "RegistryEvent",
     "ScenarioRegistry",

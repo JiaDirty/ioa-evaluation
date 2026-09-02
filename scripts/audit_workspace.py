@@ -41,10 +41,10 @@ def main() -> int:
     )
 
     checks["canonical_prompt_exists"] = CANONICAL_PROMPT.is_file()
-    checks["legacy_runner_absent_from_mainline"] = not (
+    checks["obsolete_runner_absent_from_mainline"] = not (
         PROJECT_ROOT / "scripts" / "run_agent_model_suite.py"
     ).exists()
-    checks["legacy_dataset_absent_from_mainline"] = not (
+    checks["obsolete_dataset_absent_from_mainline"] = not (
         PROJECT_ROOT / "data" / "agent_model_cases"
     ).exists()
     checks["archive_documented"] = (ARCHIVE_ROOT / "README.md").is_file()

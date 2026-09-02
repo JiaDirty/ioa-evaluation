@@ -21,7 +21,7 @@ from src.evaluation.scenario_generation.orchestrator import (  # noqa: E402
     TaskProvenance,
 )
 from scripts.migrations.reference_case_conversion import (  # noqa: E402
-    canonicalize_legacy_case,
+    convert_reference_case,
 )
 
 
@@ -46,7 +46,7 @@ def _task_id(origin: str, source: Path, case_id: str) -> str:
 def _historical_tasks(source: Path) -> list[ScenarioTask]:
     tasks: list[ScenarioTask] = []
     for case_id, case in sorted(load_business_cases(source).items()):
-        case = canonicalize_legacy_case(case)
+        case = convert_reference_case(case)
         file_candidates = sorted(source.glob("*.jsonl"))
         source_path = next(
             (path for path in file_candidates if case_id in path.read_text(encoding="utf-8")),

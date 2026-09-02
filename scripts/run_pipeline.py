@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Operate the canonical ScenarioTask -> CompiledCase pipeline."""
+"""Operate the ScenarioTask -> CompiledCase pipeline."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def _task_paths(args: argparse.Namespace, root: Path) -> list[Path]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", type=Path, default=ROOT / "data" / "unified_cases")
+    parser.add_argument("--root", type=Path, default=ROOT / "data" / "pipeline_cases")
     parser.add_argument("--task-file", type=Path)
     parser.add_argument("--task-dir", type=Path)
     parser.add_argument("--task-id")
@@ -60,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
 
     stages = Counter(orchestrator.registry.get(task_id).stage for task_id in task_ids)
     payload = {
-        "status": "CANONICAL_PIPELINE_COMPLETED",
+        "status": "PIPELINE_COMPLETED",
         "orchestrator_version": "scenario_orchestrator_v1",
         "registry": str(orchestrator.registry.path),
         "task_count": len(task_ids),
@@ -76,7 +76,7 @@ if __name__ == "__main__":
     except Exception as exc:
         print(
             json.dumps(
-                {"status": "CANONICAL_PIPELINE_FAILED", "error_type": type(exc).__name__, "error": str(exc)},
+                {"status": "PIPELINE_FAILED", "error_type": type(exc).__name__, "error": str(exc)},
                 ensure_ascii=False,
             ),
             file=sys.stderr,

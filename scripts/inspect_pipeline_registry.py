@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Inspect the canonical single Registry and optionally resume its tasks."""
+"""Inspect the single PipelineRegistry and optionally resume its tasks."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from src.evaluation.scenario_generation.orchestrator import PipelineOrchestrator
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", type=Path, default=ROOT / "data" / "unified_cases")
+    parser.add_argument("--root", type=Path, default=ROOT / "data" / "pipeline_cases")
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args(argv)
     orchestrator = PipelineOrchestrator(args.root.expanduser().resolve())

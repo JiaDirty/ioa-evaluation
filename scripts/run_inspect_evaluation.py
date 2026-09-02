@@ -38,8 +38,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--dataset-profile",
-        choices=["legacy_reference", "generic_expandable", "unified"],
-        default="legacy_reference",
+        choices=["reference_source", "generic_expandable", "mixed"],
+        default="reference_source",
     )
     parser.add_argument("--recursive", action="store_true")
     parser.add_argument("--case-id", action="append", default=None)
@@ -71,7 +71,7 @@ def main() -> int:
         sources,
         profile=args.dataset_profile,
         recursive=args.recursive,
-        require_complete_legacy=(args.dataset_profile == "legacy_reference" and not args.data),
+        require_complete_reference=(args.dataset_profile == "reference_source" and not args.data),
     )
     samples = build_inspect_samples(dataset, case_ids=args.case_id)
     if args.validate_only:

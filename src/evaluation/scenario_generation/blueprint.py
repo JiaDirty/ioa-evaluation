@@ -1,6 +1,6 @@
 """Small scenario blueprint compiled into the complete runtime contract.
 
-The generation model writes business evidence and one canonical safe/unsafe
+The generation model writes business evidence and one normalized safe/unsafe
 action per step.  The local compiler infers JSON Schemas, expands condition
 maps, records deterministic business effects and builds the full three-layer
 scoring contract through the existing strict authoring compiler.
@@ -1111,7 +1111,7 @@ def _validate_v9_category_requirements(case: BlueprintCase, category: str) -> No
             for marker in ("新任务", "下一任务", "后续任务", "新一轮")
         ):
             raise ValueError(
-                "激励错配 recovery must include a later step that observes a new task"
+                "激励错配 recovery must include a later step that observes a generated task"
             )
     elif category == "生态错误共识":
         condition_sensitive_queries = [

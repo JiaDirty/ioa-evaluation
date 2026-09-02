@@ -1,6 +1,6 @@
 """Conversion and compilation helpers for the two-stage scenario pipeline.
 
-This module deliberately does not alter source candidates.  Legacy runtime
+This module deliberately does not alter source candidates.  Reference-source runtime
 cases can be *extracted* into a kernel/effect draft, while newly generated
 kernel/effect pairs can be compiled through the existing authoring compiler.
 The distinction is recorded in the resulting manifest so a draft is never
@@ -42,7 +42,7 @@ from .pipeline_models import (
     KernelStep,
     ScenarioKernel,
     ScenarioKernelDraft,
-    canonical_json,
+    stable_json,
     seal_effect_spec,
     seal_kernel,
     verify_effect_kernel_binding,
@@ -95,7 +95,7 @@ def sha256_file(path: str | Path) -> str:
 
 
 def sha256_case(case: BusinessCaseSpec) -> str:
-    return hashlib.sha256(canonical_json(case).encode("utf-8")).hexdigest()
+    return hashlib.sha256(stable_json(case).encode("utf-8")).hexdigest()
 
 
 def kernel_id_for_candidate(candidate_uid: str) -> str:
@@ -204,7 +204,7 @@ def _source_from_record(record: CandidateRecord, source_sha256: str | None) -> K
     metadata = record.case.metadata.get("generation_provenance", {})
     if not isinstance(metadata, dict):
         metadata = {}
-    # A legacy candidate can be extracted repeatedly during resume/repair.
+    # A source candidate can be extracted repeatedly during resume/repair.
     # Use the immutable source file mtime for provenance instead of ``now`` so
     # the semantic kernel/effect digest remains stable across those runs.
     try:
@@ -215,7 +215,7 @@ def _source_from_record(record: CandidateRecord, source_sha256: str | None) -> K
     except OSError:
         extracted_at = "1970-01-01T00:00:00+00:00"
     return KernelSource(
-        source_kind="legacy_extracted",
+        source_kind="reference_extracted",
         source_candidate_uid=record.candidate_uid,
         source_case_id=record.case.case_id,
         source_path=str(record.source_path),
@@ -302,7 +302,7 @@ def extract_scenario_kernel(
     *,
     source_sha256: str | None = None,
 ) -> ScenarioKernel:
-    """Extract business semantics from a legacy candidate without guessing effects."""
+    """Extract business semantics from a source candidate without guessing effects."""
 
     case = record.case
     roles: dict[str, KernelRole] = {}
@@ -459,8 +459,8 @@ def extract_scenario_kernel(
         source=_source_from_record(record, source_sha256),
         metadata={
             **metadata,
-            "extraction_version": "legacy_case_to_kernel_v1",
-            "legacy_case_sha256": sha256_case(case),
+            "extraction_version": "reference_case_to_kernel_v1",
+            "source_case_sha256": sha256_case(case),
         },
     )
     return seal_kernel(kernel)
@@ -483,7 +483,7 @@ def _runtime_tool_to_effect(tool: Any) -> EffectToolSpec:
     """Convert an expanded runtime tool while preserving non-compressible effects."""
 
     available = list(tool.available_conditions)
-    # Pick a deterministic existing condition as the shared response.  Legacy
+    # Pick a deterministic existing condition as the shared response.  Reference-source
     # candidates occasionally expose only ``mechanism`` or list conditions in
     # a different order; assuming baseline in those cases would silently lose
     # a provider response.
@@ -508,7 +508,7 @@ def _runtime_tool_to_effect(tool: Any) -> EffectToolSpec:
     }
     flattened = {condition: _flatten_values(value) for condition, value in state_maps.items()}
     fixed_state: dict[str, Any] = {}
-    legacy_effects: dict[str, Any] | None = None
+    source_effects: dict[str, Any] | None = None
     all_paths_valid = all(
         PATH_PATTERN.fullmatch(path)
         for values in flattened.values()
@@ -525,12 +525,12 @@ def _runtime_tool_to_effect(tool: Any) -> EffectToolSpec:
     if same_effect and all_paths_valid and binding_paths_valid:
         fixed_state = deepcopy(next(iter(flattened.values())))
     elif any(flattened.values()) or not all_paths_valid or not binding_paths_valid:
-        legacy_effects = {
+        source_effects = {
             "responses": deepcopy(tool.responses),
             "state_updates": state_maps,
             "available_conditions": available,
             "reason": (
-                "non-canonical state path or condition-specific effect"
+                "unsupported state path or condition-specific effect"
                 if not all_paths_valid or not binding_paths_valid
                 else "condition-specific state effects"
             ),
@@ -546,7 +546,7 @@ def _runtime_tool_to_effect(tool: Any) -> EffectToolSpec:
         state_bindings=deepcopy(tool.state_bindings),
         conditional_state_updates=deepcopy(tool.conditional_state_updates),
         risk_level=tool.risk_level,
-        legacy_condition_effects=legacy_effects,
+        condition_effects=source_effects,
     )
 
 
@@ -613,9 +613,9 @@ def _infer_recovery_behavior(step: Any) -> StepBehaviorOracle | None:
 
 
 def extract_effect_spec(record: CandidateRecord, kernel: ScenarioKernel) -> EffectSpec:
-    """Extract an explicit draft; never fabricate a ready contract for legacy data.
+    """Extract an explicit draft; never fabricate a ready contract for source data.
 
-    The old candidates do not declare a general scoring oracle.  It is tempting
+    The source candidates do not declare a general scoring oracle.  It is tempting
     to infer a safe call from the first low-risk tool and an unsafe call from
     the first high-risk tool, but that changes the experiment when a tool is
     merely preparatory or when the decisive argument is meaningful.  We keep
@@ -630,14 +630,14 @@ def extract_effect_spec(record: CandidateRecord, kernel: ScenarioKernel) -> Effe
     notes: list[str] = []
     for step in [*record.case.steps, *record.case.recovery_steps]:
         # Intentionally do not infer a scoring pattern from risk_level or tool
-        # order.  A legacy case must be semantically repaired before it can be
+        # order. A source case must be semantically repaired before it can be
         # marked READY_FOR_COMPILE.
         behavior = None
         notes.append(
             f"step {step.step_id}: 旧候选没有可验证的通用安全/危险行为契约，需语义修复"
         )
         effect_tools = [_runtime_tool_to_effect(tool) for tool in step.tools]
-        if any(tool.legacy_condition_effects is not None for tool in effect_tools):
+        if any(tool.condition_effects is not None for tool in effect_tools):
             notes.append(f"step {step.step_id}: 条件相关状态效果无法安全压缩，需要重写 EffectSpec")
         effect_steps.append(
             EffectStepSpec(
@@ -668,7 +668,7 @@ def extract_effect_spec(record: CandidateRecord, kernel: ScenarioKernel) -> Effe
         notes=notes or ["旧候选缺少通用判分契约，EffectSpec 仅为迁移草案。"],
         source=kernel.source,
         metadata={
-            "extraction_version": "legacy_case_to_effect_spec_v1",
+            "extraction_version": "reference_case_to_effect_spec_v1",
             "source_case_sha256": sha256_case(record.case),
         },
     )

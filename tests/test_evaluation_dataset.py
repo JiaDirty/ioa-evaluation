@@ -56,26 +56,26 @@ def _write_enveloped_case(path: Path, payload: dict) -> None:
     )
 
 
-def test_complete_legacy_reference_dataset_is_hash_locked():
+def test_complete_reference_source_dataset_is_hash_locked():
     cases = get_business_cases()
 
     report = validate_evaluation_dataset(
         cases,
-        profile="legacy_reference",
-        require_complete_legacy=True,
+        profile="reference_source",
+        require_complete_reference=True,
     )
 
     assert report.case_count == 11
-    assert report.contract_versions == {"legacy_fixed_rules_v1": 11}
+    assert report.contract_versions == {"reference_source_v1": 11}
     assert sum(report.category_counts.values()) == 11
 
 
-def test_modified_legacy_reference_is_rejected_even_with_same_case_id():
+def test_modified_reference_source_is_rejected_even_with_same_case_id():
     case = deepcopy(get_business_cases()["travel-scope-001"])
     case.purpose += " 已修改。"
 
     with pytest.raises(DatasetCompatibilityError, match="differs from the registered"):
-        validate_evaluation_dataset({case.case_id: case}, profile="legacy_reference")
+        validate_evaluation_dataset({case.case_id: case}, profile="reference_source")
 
 
 def test_generic_dataset_accepts_arbitrary_count_file_and_directory_sources(tmp_path):
@@ -130,35 +130,35 @@ def test_generic_dataset_rejects_initial_state_without_safe_impact_rule():
         validate_evaluation_dataset({case.case_id: case}, profile="generic_expandable")
 
 
-def test_generic_dataset_cannot_reuse_a_legacy_reference_id():
+def test_generic_dataset_cannot_reuse_a_reference_source_id():
     case = BusinessCaseSpec.model_validate(_generic_payload("travel-scope-001"))
 
-    with pytest.raises(DatasetCompatibilityError, match="must not reuse legacy"):
+    with pytest.raises(DatasetCompatibilityError, match="must not reuse reference"):
         validate_evaluation_dataset({case.case_id: case}, profile="generic_expandable")
 
 
-def test_unified_dataset_accepts_legacy_and_generic_cases_together():
-    legacy = get_business_cases()["travel-scope-001"]
+def test_mixed_dataset_accepts_reference_and_generic_cases_together():
+    reference = get_business_cases()["travel-scope-001"]
     generic = BusinessCaseSpec.model_validate(_generic_payload("new-unified-case-001"))
 
     report = validate_evaluation_dataset(
-        {legacy.case_id: legacy, generic.case_id: generic},
-        profile="unified",
+        {reference.case_id: reference, generic.case_id: generic},
+        profile="mixed",
     )
 
     assert report.case_count == 2
     assert report.contract_versions == {
         "generic_scoring_v1": 1,
-        "legacy_fixed_rules_v1": 1,
+        "reference_source_v1": 1,
     }
 
 
-def test_unified_dataset_rejects_unknown_contract_free_case():
+def test_mixed_dataset_rejects_unknown_contract_free_case():
     case = deepcopy(get_business_cases()["travel-scope-001"])
     case.case_id = "unknown-contract-free-case-001"
 
     with pytest.raises(DatasetCompatibilityError, match="registered case IDs"):
-        validate_evaluation_dataset({case.case_id: case}, profile="unified")
+        validate_evaluation_dataset({case.case_id: case}, profile="mixed")
 
 
 def test_loader_rejects_unknown_contract_version(tmp_path):
@@ -187,7 +187,7 @@ def test_expandable_cli_validates_without_provider_calls(tmp_path):
     completed = subprocess.run(
         [
             sys.executable,
-            "scripts/run_evaluation_dataset.py",
+            "scripts/run_evaluation.py",
             "--validate-only",
             "--data",
             str(path),
@@ -216,7 +216,7 @@ def test_expandable_cli_reports_contract_free_data_without_traceback(tmp_path):
     completed = subprocess.run(
         [
             sys.executable,
-            "scripts/run_evaluation_dataset.py",
+            "scripts/run_evaluation.py",
             "--validate-only",
             "--data",
             str(path),

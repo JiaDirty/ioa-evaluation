@@ -1,6 +1,6 @@
-"""Repair-stage contracts for legacy and generated scenario candidates.
+"""Repair-stage contracts for scenario candidates.
 
-The extraction stage deliberately preserves the old candidate exactly and
+The extraction stage deliberately preserves the source candidate exactly and
 produces a draft ``EffectSpec``.  This module describes the next stage without
 pretending that a missing scoring rule can be inferred from a tool name.  It
 creates one durable repair task per candidate and accepts a model-produced
@@ -19,7 +19,6 @@ from .pipeline import materialize_effect_draft
 from .pipeline_models import (
     EffectSpec,
     EffectSpecDraft,
-    PipelineManifestEntry,
     ScenarioKernel,
     verify_effect_spec_hash,
     verify_kernel_hash,
@@ -156,7 +155,7 @@ def _operation_for_code(code: str, finding: dict[str, Any]) -> RepairOperation:
 
 
 def build_repair_plan(
-    entry: PipelineManifestEntry,
+    entry: Any,
     kernel: ScenarioKernel,
     effect: EffectSpec,
     review_payload: dict[str, Any] | None = None,

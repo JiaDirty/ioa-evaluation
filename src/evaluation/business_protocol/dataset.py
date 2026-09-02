@@ -1,4 +1,4 @@
-"""Dataset-level compatibility gates for legacy and expandable evaluations."""
+"""Dataset-level compatibility gates for reference and expandable evaluations."""
 
 from __future__ import annotations
 
@@ -23,26 +23,26 @@ from .validation import validate_generated_case
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-LEGACY_REFERENCE_MANIFEST_PATH = PROJECT_ROOT / "data" / "legacy_reference_manifest.json"
-DatasetProfile = Literal["legacy_reference", "generic_expandable", "unified"]
+REFERENCE_SOURCE_MANIFEST_PATH = PROJECT_ROOT / "data" / "legacy_reference_manifest.json"
+DatasetProfile = Literal["reference_source", "generic_expandable", "mixed"]
 
 
 class DatasetCompatibilityError(ValueError):
     """Raised when cases do not satisfy the selected dataset profile."""
 
 
-class LegacyReferenceEntry(BaseModel):
+class ReferenceSourceEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     category: str = Field(pattern=r"^[A-Z]{3}$")
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
-class LegacyReferenceManifest(BaseModel):
+class ReferenceSourceManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: Literal["legacy_reference_manifest_v1"]
-    cases: dict[str, LegacyReferenceEntry]
+    cases: dict[str, ReferenceSourceEntry]
 
 
 @dataclass(frozen=True)
@@ -102,14 +102,14 @@ def case_fingerprint(case: BusinessCaseSpec) -> str:
 
 
 @lru_cache(maxsize=1)
-def load_legacy_reference_manifest(
-    path: str | Path = LEGACY_REFERENCE_MANIFEST_PATH,
-) -> LegacyReferenceManifest:
+def load_reference_source_manifest(
+    path: str | Path = REFERENCE_SOURCE_MANIFEST_PATH,
+) -> ReferenceSourceManifest:
     try:
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise DatasetCompatibilityError(f"cannot load legacy reference manifest: {exc}") from exc
-    return LegacyReferenceManifest.model_validate(payload)
+        raise DatasetCompatibilityError(f"cannot load reference source manifest: {exc}") from exc
+    return ReferenceSourceManifest.model_validate(payload)
 
 
 def discover_scenario_files(
@@ -146,7 +146,7 @@ def validate_evaluation_dataset(
     cases: dict[str, BusinessCaseSpec],
     *,
     profile: DatasetProfile,
-    require_complete_legacy: bool = False,
+    require_complete_reference: bool = False,
 ) -> DatasetValidationReport:
     """Validate one dataset without assuming a fixed category count or size."""
 
@@ -157,9 +157,9 @@ def validate_evaluation_dataset(
             raise DatasetCompatibilityError(
                 f"case mapping key does not match case_id: {case_id!r} != {case.case_id!r}"
             )
-    if profile == "legacy_reference":
-        _validate_legacy_reference_cases(cases, require_complete=require_complete_legacy)
-        versions = {"legacy_fixed_rules_v1": len(cases)}
+    if profile == "reference_source":
+        _validate_reference_source_cases(cases, require_complete=require_complete_reference)
+        versions = {"reference_source_v1": len(cases)}
     elif profile == "generic_expandable":
         _validate_generic_expandable_cases(cases)
         versions = dict(sorted(Counter(
@@ -167,8 +167,8 @@ def validate_evaluation_dataset(
             for case in cases.values()
             if case.scoring_contract is not None
         ).items()))
-    elif profile == "unified":
-        legacy_cases = {
+    elif profile == "mixed":
+        reference_cases = {
             case_id: case
             for case_id, case in cases.items()
             if case.scoring_contract is None
@@ -178,14 +178,14 @@ def validate_evaluation_dataset(
             for case_id, case in cases.items()
             if case.scoring_contract is not None
         }
-        if legacy_cases:
-            _validate_legacy_reference_cases(legacy_cases, require_complete=False)
+        if reference_cases:
+            _validate_reference_source_cases(reference_cases, require_complete=False)
         if generic_cases:
             _validate_generic_expandable_cases(generic_cases)
         versions = dict(
             sorted(
                 {
-                    **({"legacy_fixed_rules_v1": len(legacy_cases)} if legacy_cases else {}),
+                    **({"reference_source_v1": len(reference_cases)} if reference_cases else {}),
                     **dict(
                         Counter(
                             case.scoring_contract.contract_version
@@ -216,66 +216,61 @@ def load_evaluation_dataset(
     *,
     profile: DatasetProfile = "generic_expandable",
     recursive: bool = False,
-    require_complete_legacy: bool = False,
+    require_complete_reference: bool = False,
 ) -> EvaluationDataset:
     files = discover_scenario_files(sources, recursive=recursive)
     cases = load_business_cases_from_paths(files)
     report = validate_evaluation_dataset(
         cases,
         profile=profile,
-        require_complete_legacy=require_complete_legacy,
+        require_complete_reference=require_complete_reference,
     )
     return EvaluationDataset(cases=cases, source_files=files, report=report)
 
 
 def ensure_runtime_case_supported(case: BusinessCaseSpec) -> None:
-    """Stop unknown contract-free cases from falling into fixed legacy scoring."""
+    """Production runtime accepts only declarative scoring contracts."""
 
-    if case.scoring_contract is not None:
-        return
-    manifest = load_legacy_reference_manifest()
-    entry = manifest.cases.get(case.case_id)
-    if entry is None:
+    if case.scoring_contract is None:
         raise DatasetCompatibilityError(
-            f"case {case.case_id!r} has no generic scoring contract and is not a registered "
-            "legacy reference case"
-        )
-    actual = case_fingerprint(case)
-    if entry.category != case.category or entry.sha256 != actual:
-        raise DatasetCompatibilityError(
-            f"case {case.case_id!r} differs from the registered legacy reference; "
-            "add a generic_scoring_v1 contract instead of relying on fixed rules"
+            f"case {case.case_id!r} has no generic scoring contract; "
+            "convert reference source data before runtime execution"
         )
 
 
-def _validate_legacy_reference_cases(
+def _validate_reference_source_cases(
     cases: dict[str, BusinessCaseSpec],
     *,
     require_complete: bool,
 ) -> None:
-    manifest = load_legacy_reference_manifest()
+    manifest = load_reference_source_manifest()
     unknown = sorted(set(cases) - set(manifest.cases))
     if unknown:
         raise DatasetCompatibilityError(
-            f"legacy_reference accepts only registered case IDs; unknown={unknown}"
+            f"reference_source accepts only registered case IDs; unknown={unknown}"
         )
     if require_complete and set(cases) != set(manifest.cases):
         missing = sorted(set(manifest.cases) - set(cases))
-        raise DatasetCompatibilityError(f"legacy reference dataset is incomplete; missing={missing}")
+        raise DatasetCompatibilityError(f"reference source dataset is incomplete; missing={missing}")
     for case in cases.values():
         if case.scoring_contract is not None:
             raise DatasetCompatibilityError(
-                f"legacy reference case {case.case_id!r} unexpectedly has a generic contract"
+                f"reference source case {case.case_id!r} unexpectedly has a generic contract"
             )
-        ensure_runtime_case_supported(case)
+        entry = manifest.cases[case.case_id]
+        actual = case_fingerprint(case)
+        if entry.category != case.category or entry.sha256 != actual:
+            raise DatasetCompatibilityError(
+                f"case {case.case_id!r} differs from the registered reference source"
+            )
 
 
 def _validate_generic_expandable_cases(cases: dict[str, BusinessCaseSpec]) -> None:
-    reserved_ids = set(load_legacy_reference_manifest().cases)
+    reserved_ids = set(load_reference_source_manifest().cases)
     collisions = sorted(set(cases) & reserved_ids)
     if collisions:
         raise DatasetCompatibilityError(
-            f"generic_expandable case IDs must not reuse legacy reference IDs: {collisions}"
+            f"generic_expandable case IDs must not reuse reference source IDs: {collisions}"
         )
     for case in cases.values():
         try:
@@ -291,11 +286,11 @@ __all__ = [
     "DatasetProfile",
     "DatasetValidationReport",
     "EvaluationDataset",
-    "LEGACY_REFERENCE_MANIFEST_PATH",
+    "REFERENCE_SOURCE_MANIFEST_PATH",
     "case_fingerprint",
     "discover_scenario_files",
     "ensure_runtime_case_supported",
     "load_evaluation_dataset",
-    "load_legacy_reference_manifest",
+    "load_reference_source_manifest",
     "validate_evaluation_dataset",
 ]

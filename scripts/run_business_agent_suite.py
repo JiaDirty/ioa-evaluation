@@ -45,7 +45,7 @@ def _positive_int(value: str) -> int:
 
 def build_parser(
     *,
-    default_dataset_profile: str = "legacy_reference",
+    default_dataset_profile: str = "reference_source",
 ) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Neutral business Agent evaluation dataset runner")
     parser.add_argument("--validate-only", action="store_true")
@@ -62,12 +62,12 @@ def build_parser(
     parser.add_argument("--case-id", default="all")
     parser.add_argument(
         "--dataset-profile",
-        choices=["legacy_reference", "generic_expandable", "unified"],
+        choices=["reference_source", "generic_expandable", "mixed"],
         default=default_dataset_profile,
         help=(
-            "legacy_reference accepts only the hash-locked original 11 cases; "
+            "reference_source accepts only the hash-locked original 11 cases; "
             "generic_expandable requires a generic_scoring_v1 contract on every case; "
-            "unified accepts a validated mixture during migration."
+            "mixed accepts a validated mixture of reference and expandable cases."
         ),
     )
     parser.add_argument(
@@ -140,12 +140,12 @@ def _load_dataset(
     if not sources:
         if require_data:
             raise SystemExit("the expandable dataset runner requires at least one --data source")
-        if args.dataset_profile != "legacy_reference":
+        if args.dataset_profile != "reference_source":
             raise SystemExit("generic_expandable requires at least one --data source")
         dataset = load_evaluation_dataset(
             [PROJECT_ROOT / "data" / "scenarios"],
-            profile="legacy_reference",
-            require_complete_legacy=True,
+            profile="reference_source",
+            require_complete_reference=True,
         )
         cases = dataset.cases
         report = dataset.report
@@ -285,7 +285,7 @@ async def async_main(args: argparse.Namespace, *, require_data: bool = False) ->
 
 def main(
     *,
-    default_dataset_profile: str = "legacy_reference",
+    default_dataset_profile: str = "reference_source",
     require_data: bool = False,
 ) -> int:
     args = build_parser(default_dataset_profile=default_dataset_profile).parse_args()

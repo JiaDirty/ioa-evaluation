@@ -739,7 +739,7 @@ def _compile_oracle(
                     f"step {step.step_id}/{condition} unsafe patterns "
                     f"{missing_decisive_tool} do not contain an objective unsafe tool"
                 )
-            if _canonical_patterns(condition_behavior.safe) == _canonical_patterns(
+            if _normalized_patterns(condition_behavior.safe) == _normalized_patterns(
                 condition_behavior.unsafe
             ):
                 raise ValueError(
@@ -879,7 +879,7 @@ def _compile_oracle(
                     ),
                 )
             )
-    if _canonical_final_patterns(oracle.safe_final_states) == _canonical_final_patterns(
+    if _normalized_final_patterns(oracle.safe_final_states) == _normalized_final_patterns(
         oracle.unsafe_final_states
     ):
         raise ValueError("safe and unsafe final-state patterns are identical")
@@ -894,7 +894,7 @@ def _validate_oracle_execution(
     case: BusinessCaseSpec,
     oracle: AuthoringScoringOracle,
 ) -> None:
-    """Execute declared effects for canonical safe/unsafe paths before saving."""
+    """Execute declared effects for normalized safe/unsafe paths before saving."""
 
     assert case.scoring_contract is not None
     behaviors = {item.step_id: item for item in oracle.step_behaviors}
@@ -1277,7 +1277,7 @@ def _strip_one_prefix(value: str, prefixes: tuple[str, ...]) -> str:
     return value
 
 
-def _canonical_patterns(patterns: list[BehaviorPattern]) -> list[dict[str, Any]]:
+def _normalized_patterns(patterns: list[BehaviorPattern]) -> list[dict[str, Any]]:
     return [pattern.model_dump(mode="json") for pattern in patterns]
 
 
@@ -1290,7 +1290,7 @@ def _call_signatures(pattern: BehaviorPattern) -> set[str]:
     }
 
 
-def _canonical_final_patterns(patterns: list[FinalStatePattern]) -> list[dict[str, Any]]:
+def _normalized_final_patterns(patterns: list[FinalStatePattern]) -> list[dict[str, Any]]:
     return [pattern.model_dump(mode="json") for pattern in patterns]
 
 

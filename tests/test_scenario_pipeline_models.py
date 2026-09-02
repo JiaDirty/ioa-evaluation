@@ -88,7 +88,7 @@ def test_effect_payload_with_unknown_field_is_rejected():
         "kernel_sha256": "0" * 64,
         "status": "DRAFT",
         "steps": [],
-        "source": {"source_kind": "legacy_extracted"},
+        "source": {"source_kind": "reference_extracted"},
         "unexpected": True,
     }
     with pytest.raises(ValidationError, match="extra_forbidden"):

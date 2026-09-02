@@ -7,7 +7,7 @@ import pytest
 from src.evaluation.business_protocol.loader import load_business_cases
 from src.evaluation.candidate_review import discover_candidates
 from src.evaluation.scenario_generation.pipeline import sha256_file
-from src.evaluation.scenario_generation.unified_architecture import (
+from src.evaluation.scenario_generation.orchestrator import (
     ArtifactRef,
     PipelineOrchestrator,
     ScenarioTask,
@@ -15,7 +15,8 @@ from src.evaluation.scenario_generation.unified_architecture import (
     validate_transition,
     verify_task_hash,
 )
-from src.evaluation.scenario_generation.legacy_conversion import canonicalize_legacy_case
+from scripts.migrations.migrate_registry_stages_v1 import migrate_registry
+from scripts.migrations.reference_case_conversion import convert_reference_case
 from src.evaluation.scenario_generation.path_validation import SixPathValidationReport
 from src.evaluation.scenario_generation.pipeline_models import EffectSpec, ScenarioKernel
 from src.evaluation.scenario_generation.quality_records import (
@@ -56,9 +57,9 @@ def test_scenario_task_is_the_single_input_envelope():
 def test_registry_transition_is_strict():
     validate_transition(None, "TASK_CREATED")
     validate_transition("TASK_CREATED", "KERNEL_READY")
-    with pytest.raises(ValueError, match="invalid canonical transition"):
+    with pytest.raises(ValueError, match="invalid pipeline transition"):
         validate_transition("TASK_CREATED", "COMPILED")
-    with pytest.raises(ValueError, match="invalid canonical transition"):
+    with pytest.raises(ValueError, match="invalid pipeline transition"):
         validate_transition("EFFECT_READY", "TASK_CREATED")
 
 
@@ -69,7 +70,7 @@ def test_artifact_refs_reject_absolute_and_traversal_paths():
 
 
 def test_migration_task_id_does_not_depend_on_checkout_absolute_path():
-    from scripts.migrate_to_unified_tasks import _task_id
+    from scripts.migrations.migrate_scenario_tasks_v1 import _task_id
 
     source = ROOT / "data" / "scenarios" / "sample.jsonl"
     expected = "task-" + hashlib.sha256(
@@ -80,13 +81,13 @@ def test_migration_task_id_does_not_depend_on_checkout_absolute_path():
 
 def test_orchestrator_writes_one_case_directory_and_single_registry(tmp_path):
     task = _candidate_task()
-    orchestrator = PipelineOrchestrator(tmp_path / "unified")
+    orchestrator = PipelineOrchestrator(tmp_path / "pipeline")
     first = orchestrator.submit(task)
     assert first.stage == "TASK_CREATED"
     processed = orchestrator.process(task.task_id)
     assert processed.stage == "EFFECT_DRAFT"
-    assert (tmp_path / "unified" / "registry.json").exists()
-    case_dirs = list((tmp_path / "unified" / "cases").iterdir())
+    assert (tmp_path / "pipeline" / "registry.json").exists()
+    case_dirs = list((tmp_path / "pipeline" / "cases").iterdir())
     assert len(case_dirs) == 1
     assert {path.name for path in case_dirs[0].iterdir()} >= {
         "scenario_task.json",
@@ -94,7 +95,7 @@ def test_orchestrator_writes_one_case_directory_and_single_registry(tmp_path):
         "effect_spec.json",
         "lineage.json",
     }
-    payload = json.loads((tmp_path / "unified" / "registry.json").read_text(encoding="utf-8"))
+    payload = json.loads((tmp_path / "pipeline" / "registry.json").read_text(encoding="utf-8"))
     assert "entries" in payload and "events" in payload
     assert "pipeline_manifest" not in payload
     refs = payload["entries"][task.task_id]["artifacts"]
@@ -106,11 +107,11 @@ def test_orchestrator_writes_one_case_directory_and_single_registry(tmp_path):
 
 def test_kernel_change_invalidates_downstream_artifacts(tmp_path):
     task = _candidate_task()
-    orchestrator = PipelineOrchestrator(tmp_path / "unified")
+    orchestrator = PipelineOrchestrator(tmp_path / "pipeline")
     orchestrator.submit(task)
     orchestrator.process(task.task_id)
     entry = orchestrator.registry.get(task.task_id)
-    kernel_path = (tmp_path / "unified" / entry.artifacts["kernel"].path)
+    kernel_path = (tmp_path / "pipeline" / entry.artifacts["kernel"].path)
     payload = json.loads(kernel_path.read_text(encoding="utf-8"))
     payload["title"] += " changed"
     kernel_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -124,7 +125,7 @@ def test_kernel_change_invalidates_downstream_artifacts(tmp_path):
     assert resumed.generation == 2
 
 
-def test_historical_case_can_be_wrapped_without_a_legacy_runtime_branch():
+def test_historical_case_can_be_wrapped_without_a_reference_runtime_branch():
     case = next(iter(load_business_cases(SCENARIOS).values()))
     task = ScenarioTask.from_case(
         case,
@@ -137,21 +138,21 @@ def test_historical_case_can_be_wrapped_without_a_legacy_runtime_branch():
 
 def test_historical_case_conversion_is_compilable_and_generic():
     case = next(iter(load_business_cases(SCENARIOS).values()))
-    converted = canonicalize_legacy_case(case)
+    converted = convert_reference_case(case)
     assert converted.scoring_contract is not None
     assert converted.scoring_contract.contract_version == "generic_scoring_v1"
-    assert "canonical_evidence" in converted.initial_state["baseline"]
+    assert "evaluation_evidence" in converted.initial_state["baseline"]
 
 
 def test_one_registry_controls_post_compile_quality_stages(tmp_path):
     case = next(iter(load_business_cases(SCENARIOS).values()))
-    converted = canonicalize_legacy_case(case)
+    converted = convert_reference_case(case)
     task = ScenarioTask.from_case(
         converted,
         task_id="task-" + hashlib.sha256((case.case_id + "-post").encode()).hexdigest()[:24],
         provenance=TaskProvenance(origin="historical", source_path="data/scenarios"),
     )
-    orchestrator = PipelineOrchestrator(tmp_path / "unified")
+    orchestrator = PipelineOrchestrator(tmp_path / "pipeline")
     orchestrator.submit(task)
     assert orchestrator.process(task.task_id).stage == "COMPILED"
     report = SixPathValidationReport.model_construct(
@@ -220,3 +221,24 @@ def test_generated_artifacts_and_retry_use_the_same_registry(tmp_path):
     resumed = target.resume(task.task_id)
     assert resumed.stage == "EFFECT_DRAFT"
     assert resumed.generation == 2
+
+
+def test_registry_stage_migration_corrects_draft_effect(tmp_path):
+    task = _candidate_task()
+    root = tmp_path / "pipeline"
+    orchestrator = PipelineOrchestrator(root)
+    orchestrator.submit(task)
+    assert orchestrator.process(task.task_id).stage == "EFFECT_DRAFT"
+
+    registry_path = root / "registry.json"
+    payload = json.loads(registry_path.read_text(encoding="utf-8"))
+    payload["entries"][task.task_id]["stage"] = "EFFECT_READY"
+    registry_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    result = migrate_registry(registry_path)
+    assert result["changed"] == 1
+    assert result["stage_counts"] == {"EFFECT_DRAFT": 1}
+    assert registry_path.with_suffix(".json.pre-stage-migration").is_file()

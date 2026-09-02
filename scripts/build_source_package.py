@@ -84,16 +84,16 @@ def _portable_pipeline_snapshot(pipeline_root: Path) -> dict[str, Any]:
 
     return {
         "schema_version": "source_package_pipeline_snapshot_v1",
-        "canonical_entrypoint": "scripts/run_pipeline.py",
-        "canonical_schema": [
+        "entrypoint": "scripts/run_pipeline.py",
+        "schema": [
             "ScenarioTask",
             "ScenarioKernel",
             "EffectSpec",
             "CompiledCase",
         ],
-        "canonical_registry": "registry.json",
+        "registry": "registry.json",
         "pipeline_version": manifest.get("pipeline_version"),
-        "source_kind": manifest.get("entries", [{}])[0].get("source_kind", "legacy"),
+        "source_kind": manifest.get("entries", [{}])[0].get("source_kind", "reference"),
         "source_root": "data/candidate_batches/批量生成-第01轮",
         "pipeline_root": "data/scenario_pipeline/场景生产流水线-第01轮",
         "candidate_count": validation.get("candidate_count", registry.get("candidate_count")),

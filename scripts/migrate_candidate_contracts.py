@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Migrate old candidates into the unified generic-scoring dataset.
+"""Migrate candidate records into the generic-scoring dataset.
 
 Original candidate evidence is never modified.  Only candidates for which a
 contract can be derived from explicit tool/state evidence and which pass the
