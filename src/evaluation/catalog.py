@@ -30,11 +30,11 @@ class EvaluationCatalog(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: Literal["1.0"]
-    canonical_track: Literal["ten_item_business_protocol"]
-    canonical_runner: str
-    canonical_case_factory: str
-    canonical_case_loader: str
-    canonical_result_fields: list[str]
+    formal_track: Literal["ten_item_business_protocol"]
+    formal_runner: str
+    formal_case_factory: str
+    formal_case_loader: str
+    formal_result_fields: list[str]
     categories: list[EvaluationCategory] = Field(min_length=10, max_length=10)
 
     @model_validator(mode="after")
@@ -55,10 +55,10 @@ class EvaluationCatalog(BaseModel):
             raise ValueError("category slugs must be unique")
         if len(case_ids) != len(set(case_ids)):
             raise ValueError("protocol case IDs must be unique")
-        if len(self.canonical_result_fields) != len(
-            set(self.canonical_result_fields)
+        if len(self.formal_result_fields) != len(
+            set(self.formal_result_fields)
         ):
-            raise ValueError("canonical result fields must be unique")
+            raise ValueError("formal result fields must be unique")
         return self
 
     @property

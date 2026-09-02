@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Validate or run the canonical neutral-business evaluation protocol.
+"""Validate or run the formal neutral-business evaluation protocol.
 
 No provider request is made unless both ``--execution-mode agentic-live`` and
 ``--allow-live-api`` are present.

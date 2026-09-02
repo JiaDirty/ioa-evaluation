@@ -17,7 +17,7 @@ from src.evaluation.business_protocol.validation import validate_case_catalog  #
 from src.evaluation.catalog import load_evaluation_catalog  # noqa: E402
 
 
-CANONICAL_PROMPT = PROJECT_ROOT / "docs" / "十项测评场景生成Prompt_作者版v3.md"
+AUTHOR_PROMPT = PROJECT_ROOT / "docs" / "十项测评场景生成Prompt_作者版v3.md"
 ARCHIVE_ROOT = PROJECT_ROOT / "archive"
 
 
@@ -40,7 +40,7 @@ def main() -> int:
         for case in protocol_cases.values()
     )
 
-    checks["canonical_prompt_exists"] = CANONICAL_PROMPT.is_file()
+    checks["author_prompt_exists"] = AUTHOR_PROMPT.is_file()
     checks["obsolete_runner_absent_from_mainline"] = not (
         PROJECT_ROOT / "scripts" / "run_agent_model_suite.py"
     ).exists()
@@ -51,13 +51,13 @@ def main() -> int:
 
     current_test_files = sorted((PROJECT_ROOT / "tests").glob("test_*.py"))
     details["current_test_file_count"] = len(current_test_files)
-    details["canonical_prompt"] = str(CANONICAL_PROMPT.relative_to(PROJECT_ROOT))
+    details["author_prompt"] = str(AUTHOR_PROMPT.relative_to(PROJECT_ROOT))
     details["archive_root"] = str(ARCHIVE_ROOT.relative_to(PROJECT_ROOT))
 
     failed = [name for name, passed in checks.items() if not passed]
     print(json.dumps({
         "status": "VALID" if not failed else "INVALID",
-        "canonical_track": catalog.canonical_track,
+        "formal_track": catalog.formal_track,
         "checks": checks,
         "details": details,
         "failed_checks": failed,

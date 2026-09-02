@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Generate one small candidate blueprint through AI Hub Mix.
 
-The model writes business-specific facts, tools and canonical actions.  Local
+The model writes business-specific facts, tools and formal actions.  Local
 code infers tool schemas, injects identity/provenance and compiles condition
 maps plus the complete ``generic_scoring_v1`` contract.  Raw
 request/response evidence is always preserved.  The script never writes to

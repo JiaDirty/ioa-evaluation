@@ -1,4 +1,4 @@
-"""Derive conservative generic scoring-contract drafts for old candidates.
+"""Derive conservative generic scoring-contract drafts for pre-contract candidates.
 
 The migration helper only uses evidence already present in a candidate: the
 declared dangerous tools, deterministic state writes, and recovery tools.  It

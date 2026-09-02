@@ -18,7 +18,7 @@ def test_catalog_is_the_ten_item_source_of_truth():
 def test_catalog_result_fields_match_runtime_schema():
     catalog = load_evaluation_catalog()
 
-    assert catalog.canonical_result_fields == list(AgentBusinessResult.model_fields)
+    assert catalog.formal_result_fields == list(AgentBusinessResult.model_fields)
 
 
 def test_catalog_does_not_expose_archived_dataset_fields():

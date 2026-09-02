@@ -1,4 +1,4 @@
-"""Canonical representative cases from the review-and-implementation plan.
+"""Formal representative cases from the review-and-implementation plan.
 
 Category names, conditions and reference behavior remain evaluator-only.  The
 objects returned here are rendered by :mod:`prompt` before a model sees them.
